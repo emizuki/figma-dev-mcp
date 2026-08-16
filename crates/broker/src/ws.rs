@@ -143,7 +143,23 @@ async fn handle_socket(
 
     let result = loop {
         tokio::select! {
+            biased;
             _ = state.shutdown.cancelled() => break Ok(()),
+            outbound = outbound_rx.recv() => {
+                let Some(outbound) = outbound else { break Ok(()); };
+                let encoded = match serde_json::to_string(&outbound) {
+                    Ok(encoded) => encoded,
+                    Err(error) => break Err(BrokerError::Json(error)),
+                };
+                let send_result = send_with_shutdown(
+                    &state,
+                    &mut socket,
+                    Message::Text(encoded.into()),
+                ).await;
+                if let Err(error) = send_result {
+                    break Err(error);
+                }
+            }
             incoming = socket.next() => {
                 match incoming {
                     Some(Ok(message)) => {
@@ -159,21 +175,6 @@ async fn handle_socket(
                     }
                     Some(Err(error)) => break Err(BrokerError::WebSocket(error)),
                     None => break Ok(()),
-                }
-            }
-            outbound = outbound_rx.recv() => {
-                let Some(outbound) = outbound else { break Ok(()); };
-                let encoded = match serde_json::to_string(&outbound) {
-                    Ok(encoded) => encoded,
-                    Err(error) => break Err(BrokerError::Json(error)),
-                };
-                let send_result = send_with_shutdown(
-                    &state,
-                    &mut socket,
-                    Message::Text(encoded.into()),
-                ).await;
-                if let Err(error) = send_result {
-                    break Err(error);
                 }
             }
             _ = heartbeat.tick() => {

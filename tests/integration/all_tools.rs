@@ -584,6 +584,16 @@ async fn recv_request(plugin: &mut ScriptedPlugin) -> (String, String, Value) {
     }
 }
 
+async fn expect_cancel(plugin: &mut ScriptedPlugin, request_id: &str) {
+    tokio::time::resume();
+    let received = tokio::time::timeout(Duration::from_secs(1), plugin.inbound.recv()).await;
+    tokio::time::pause();
+    match received {
+        Ok(Some(PluginInbound::Cancel(cancelled))) => assert_eq!(cancelled, request_id),
+        other => panic!("timeout must cancel the plugin request, got {other:?}"),
+    }
+}
+
 #[tokio::test]
 async fn every_tool_and_prompt_round_trips_through_mcp_service() {
     assert_eq!(TOOL_NAMES.len(), 14);
@@ -1002,10 +1012,7 @@ async fn inactivity_timeout_uses_the_stable_timeout_error() {
         .unwrap()
         .unwrap();
     assert_eq!(assert_tool_error(&result), "TIMEOUT");
-    match tokio::time::timeout(Duration::from_secs(1), plugin.inbound.recv()).await {
-        Ok(Some(PluginInbound::Cancel(cancelled))) => assert_eq!(cancelled, request_id),
-        other => panic!("timeout must cancel the plugin request, got {other:?}"),
-    }
+    expect_cancel(&mut plugin, &request_id).await;
     server_task.abort();
     broker_task.abort();
 }

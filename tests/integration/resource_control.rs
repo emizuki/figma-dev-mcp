@@ -174,6 +174,16 @@ async fn wait_for_session(broker: &Broker) {
     panic!("plugin session did not register");
 }
 
+async fn expect_cancel(plugin: &mut ScriptedPlugin, request_id: &str, what: &str) {
+    tokio::time::resume();
+    let received = tokio::time::timeout(Duration::from_secs(1), plugin.inbound.recv()).await;
+    tokio::time::pause();
+    match received {
+        Ok(Some(PluginInbound::Cancel(cancelled))) => assert_eq!(cancelled, request_id),
+        other => panic!("{what}, got {other:?}"),
+    }
+}
+
 async fn recv_requests(plugin: &mut ScriptedPlugin, count: usize) -> Vec<String> {
     let mut ids = Vec::with_capacity(count);
     while ids.len() < count {
@@ -363,10 +373,12 @@ async fn inactivity_deadline_is_fifteen_seconds_without_progress() {
         .unwrap()
         .unwrap();
     assert_eq!(tool_error_code(&result), "TIMEOUT");
-    match tokio::time::timeout(Duration::from_secs(1), plugin.inbound.recv()).await {
-        Ok(Some(PluginInbound::Cancel(cancelled))) => assert_eq!(cancelled, request_id),
-        other => panic!("timeout must cancel the same socket request, got {other:?}"),
-    }
+    expect_cancel(
+        &mut plugin,
+        &request_id,
+        "timeout must cancel the same socket request",
+    )
+    .await;
 
     server_task.abort();
     broker_task.abort();
@@ -409,10 +421,7 @@ async fn progress_resets_inactivity_but_not_the_total_deadline() {
         .unwrap()
         .unwrap();
     assert_eq!(tool_error_code(&result), "TIMEOUT");
-    match tokio::time::timeout(Duration::from_secs(1), plugin.inbound.recv()).await {
-        Ok(Some(PluginInbound::Cancel(cancelled))) => assert_eq!(cancelled, request_id),
-        other => panic!("total deadline must still cancel, got {other:?}"),
-    }
+    expect_cancel(&mut plugin, &request_id, "total deadline must still cancel").await;
 
     server_task.abort();
     broker_task.abort();
