@@ -289,7 +289,8 @@ export async function getComponents(
   }
 
   const lookupBatch = 16
-  const budgetMs = limits?.mainComponentBudgetMs ?? DEFAULT_MAIN_COMPONENT_BUDGET_MS
+  const budgetMs =
+    limits?.mainComponentBudgetMs ?? DEFAULT_MAIN_COMPONENT_BUDGET_MS
   const budgetStarted = Date.now()
   for (let start = 0; start < instanceOrder.length; start += lookupBatch) {
     throwIfAbortedAtBatch(signal, start, CANCEL_CHECK_BATCH)

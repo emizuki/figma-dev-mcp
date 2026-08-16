@@ -34,7 +34,7 @@ The TypeScript companion plugin runs only in Figma Dev Mode. Its hidden UI conne
 5. Run the plugin in each relevant Figma file.
 6. Call `list_files` to see live connections.
 
-Full operator steps: [docs/setup.md](docs/setup.md). Local verification: [docs/testing.md](docs/testing.md). Manual checklist: [docs/manual-acceptance.md](docs/manual-acceptance.md).
+Full operator steps: [docs/setup.md](docs/setup.md). Local verification: [docs/testing.md](docs/testing.md).
 
 ## Install in MCP clients
 
