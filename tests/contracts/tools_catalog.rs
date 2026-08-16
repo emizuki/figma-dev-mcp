@@ -113,8 +113,11 @@ fn schema_snapshots_are_stable() {
     let outputs = canonical(outputs);
     if std::env::var("UPDATE_SNAPSHOTS").as_deref() == Ok("1") {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("contracts/snapshots");
-        std::fs::write(dir.join("tools.json"), serde_json::to_string_pretty(&tools).unwrap() + "\n")
-            .unwrap();
+        std::fs::write(
+            dir.join("tools.json"),
+            serde_json::to_string_pretty(&tools).unwrap() + "\n",
+        )
+        .unwrap();
         std::fs::write(
             dir.join("input-schemas.json"),
             serde_json::to_string_pretty(&inputs).unwrap() + "\n",

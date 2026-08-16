@@ -5,8 +5,8 @@ use super::{
 };
 use schemars::JsonSchema;
 use serde::{
-    de::{Error as _, MapAccess, Visitor},
     Deserialize, Deserializer, Serialize,
+    de::{Error as _, MapAccess, Visitor},
 };
 use std::fmt;
 
