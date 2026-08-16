@@ -1,0 +1,12 @@
+{
+  "type": "request",
+  "requestId": "plugin-1",
+  "deadlineMs": 120000,
+  "target": {
+    "fileKey": "example-file-key"
+  },
+  "operation": {
+    "operation": "get_metadata",
+    "input": {}
+  }
+}

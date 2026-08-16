@@ -1,0 +1,16 @@
+{
+  "type": "error",
+  "requestId": "plugin-1",
+  "error": {
+    "code": "NODE_NOT_FOUND",
+    "retryable": false,
+    "items": [
+      {
+        "index": 0,
+        "id": "1:2",
+        "code": "NODE_NOT_FOUND",
+        "retryable": false
+      }
+    ]
+  }
+}

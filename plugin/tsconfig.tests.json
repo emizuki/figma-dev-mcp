@@ -1,0 +1,22 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "tsBuildInfoFile": "./node_modules/.cache/tsconfig.tests.tsbuildinfo",
+    "skipLibCheck": true,
+    "lib": ["ES2022"],
+    "types": ["bun"]
+  },
+  "include": [
+    "src/**/*.test.ts",
+    "src/shared/**/*.ts",
+    "src/main/cancellation.ts",
+    "src/main/dispatch.ts",
+    "src/main/progress.ts",
+    "src/main/traversal-gate.ts",
+    "src/read/**/*.ts",
+    "src/ui/hello.ts",
+    "tests/**/*.ts"
+  ],
+  "exclude": ["src/ui/**/*.test.ts"]
+}

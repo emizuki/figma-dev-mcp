@@ -1,0 +1,25 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "tsBuildInfoFile": "./node_modules/.cache/tsconfig.ui-tests.tsbuildinfo",
+    "skipLibCheck": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["bun"]
+  },
+  "include": [
+    "src/ui/socket.test.ts",
+    "src/ui/socket.ts",
+    "src/ui/relay.ts",
+    "src/ui/hello.ts",
+    "src/ui/uuid.ts",
+    "src/ui/uuid.test.ts",
+    "src/ui/css-syntax.ts",
+    "src/ui/css-syntax.test.ts",
+    "src/ui/raster.ts",
+    "src/ui/raster.test.ts",
+    "src/ui/svg.ts",
+    "src/ui/svg.test.ts",
+    "src/shared/**/*.ts"
+  ]
+}

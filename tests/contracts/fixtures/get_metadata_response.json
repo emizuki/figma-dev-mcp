@@ -1,0 +1,34 @@
+{
+  "type": "response",
+  "requestId": "plugin-1",
+  "result": {
+    "operation": "get_metadata",
+    "result": {
+      "file": {
+        "key": "example-file-key",
+        "name": "Checkout",
+        "editorType": "dev"
+      },
+      "pages": [
+        {
+          "id": "0:1",
+          "name": "Checkout flow"
+        }
+      ],
+      "currentPageId": "0:1",
+      "pluginVersion": "0.1.0",
+      "capabilities": {
+        "annotations": true,
+        "devResources": true,
+        "motion": true,
+        "svgStringExport": true,
+        "variableCodeSyntax": true
+      },
+      "truncated": false,
+      "observation": {
+        "startedAt": "2026-08-15T10:00:00Z",
+        "completedAt": "2026-08-15T10:00:00Z"
+      }
+    }
+  }
+}

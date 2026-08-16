@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "tsBuildInfoFile": "./node_modules/.cache/tsconfig.main.tsbuildinfo",
+    "lib": ["ES2022"],
+    "types": ["@figma/plugin-typings"]
+  },
+  "include": ["src/main/**/*.ts", "src/read/**/*.ts", "src/shared/**/*.ts"],
+  "exclude": ["src/**/*.test.ts"]
+}

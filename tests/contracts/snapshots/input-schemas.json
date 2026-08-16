@@ -1,0 +1,1816 @@
+{
+  "get_components": {
+    "$defs": {
+      "ConnectionId": {
+        "description": "RFC 4122 UUID connection identifier; bounded by UTF-8 encoded byte length",
+        "format": "uuid",
+        "maxLength": 36,
+        "minLength": 1,
+        "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+        "type": "string",
+        "x-maxUtf8Bytes": 36
+      },
+      "NodeId": {
+        "description": "node identifier; bounded by UTF-8 encoded byte length",
+        "maxLength": 256,
+        "minLength": 1,
+        "type": "string",
+        "x-maxUtf8Bytes": 256
+      },
+      "NodeIdList": {
+        "description": "node identifiers; decoder stops at item 2001",
+        "items": {
+          "$ref": "#/$defs/NodeId"
+        },
+        "maxItems": 2000,
+        "type": "array"
+      },
+      "NodeSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "nodeId": {
+            "$ref": "#/$defs/NodeId"
+          }
+        },
+        "required": [
+          "nodeId"
+        ],
+        "type": "object"
+      },
+      "NodesSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "nodeIds": {
+            "$ref": "#/$defs/NodeIdList"
+          }
+        },
+        "required": [
+          "nodeIds"
+        ],
+        "type": "object"
+      },
+      "PageId": {
+        "description": "page identifier; bounded by UTF-8 encoded byte length",
+        "maxLength": 256,
+        "minLength": 1,
+        "type": "string",
+        "x-maxUtf8Bytes": 256
+      },
+      "PageIdList": {
+        "description": "page identifiers; decoder stops at item 101",
+        "items": {
+          "$ref": "#/$defs/PageId"
+        },
+        "maxItems": 100,
+        "type": "array"
+      },
+      "PageSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "pageId": {
+            "$ref": "#/$defs/PageId"
+          }
+        },
+        "required": [
+          "pageId"
+        ],
+        "type": "object"
+      },
+      "PagesSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "pageIds": {
+            "$ref": "#/$defs/PageIdList"
+          }
+        },
+        "required": [
+          "pageIds"
+        ],
+        "type": "object"
+      },
+      "SelectionFlag": {
+        "const": true,
+        "type": "boolean"
+      },
+      "SelectionSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "selection": {
+            "$ref": "#/$defs/SelectionFlag"
+          }
+        },
+        "required": [
+          "selection"
+        ],
+        "type": "object"
+      },
+      "Selector": {
+        "oneOf": [
+          {
+            "$ref": "#/$defs/SelectionSelector"
+          },
+          {
+            "$ref": "#/$defs/PageSelector"
+          },
+          {
+            "$ref": "#/$defs/PagesSelector"
+          },
+          {
+            "$ref": "#/$defs/NodeSelector"
+          },
+          {
+            "$ref": "#/$defs/NodesSelector"
+          }
+        ]
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "connectionId": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ConnectionId"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "selector": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/Selector"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "type": "object"
+  },
+  "get_design_context": {
+    "$defs": {
+      "ConnectionId": {
+        "description": "RFC 4122 UUID connection identifier; bounded by UTF-8 encoded byte length",
+        "format": "uuid",
+        "maxLength": 36,
+        "minLength": 1,
+        "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+        "type": "string",
+        "x-maxUtf8Bytes": 36
+      },
+      "DetailLevel": {
+        "enum": [
+          "minimal",
+          "compact",
+          "full"
+        ],
+        "type": "string"
+      },
+      "NodeId": {
+        "description": "node identifier; bounded by UTF-8 encoded byte length",
+        "maxLength": 256,
+        "minLength": 1,
+        "type": "string",
+        "x-maxUtf8Bytes": 256
+      },
+      "NodeIdList": {
+        "description": "node identifiers; decoder stops at item 2001",
+        "items": {
+          "$ref": "#/$defs/NodeId"
+        },
+        "maxItems": 2000,
+        "type": "array"
+      },
+      "NodeSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "nodeId": {
+            "$ref": "#/$defs/NodeId"
+          }
+        },
+        "required": [
+          "nodeId"
+        ],
+        "type": "object"
+      },
+      "NodesSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "nodeIds": {
+            "$ref": "#/$defs/NodeIdList"
+          }
+        },
+        "required": [
+          "nodeIds"
+        ],
+        "type": "object"
+      },
+      "PageId": {
+        "description": "page identifier; bounded by UTF-8 encoded byte length",
+        "maxLength": 256,
+        "minLength": 1,
+        "type": "string",
+        "x-maxUtf8Bytes": 256
+      },
+      "PageIdList": {
+        "description": "page identifiers; decoder stops at item 101",
+        "items": {
+          "$ref": "#/$defs/PageId"
+        },
+        "maxItems": 100,
+        "type": "array"
+      },
+      "PageSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "pageId": {
+            "$ref": "#/$defs/PageId"
+          }
+        },
+        "required": [
+          "pageId"
+        ],
+        "type": "object"
+      },
+      "PagesSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "pageIds": {
+            "$ref": "#/$defs/PageIdList"
+          }
+        },
+        "required": [
+          "pageIds"
+        ],
+        "type": "object"
+      },
+      "SelectionFlag": {
+        "const": true,
+        "type": "boolean"
+      },
+      "SelectionSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "selection": {
+            "$ref": "#/$defs/SelectionFlag"
+          }
+        },
+        "required": [
+          "selection"
+        ],
+        "type": "object"
+      },
+      "Selector": {
+        "oneOf": [
+          {
+            "$ref": "#/$defs/SelectionSelector"
+          },
+          {
+            "$ref": "#/$defs/PageSelector"
+          },
+          {
+            "$ref": "#/$defs/PagesSelector"
+          },
+          {
+            "$ref": "#/$defs/NodeSelector"
+          },
+          {
+            "$ref": "#/$defs/NodesSelector"
+          }
+        ]
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "connectionId": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ConnectionId"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "dedupeComponents": {
+        "default": false,
+        "type": "boolean"
+      },
+      "depth": {
+        "format": "uint8",
+        "maximum": 6,
+        "minimum": 0,
+        "type": [
+          "integer",
+          "null"
+        ]
+      },
+      "detail": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/DetailLevel"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "includeHidden": {
+        "default": false,
+        "type": "boolean"
+      },
+      "selector": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/Selector"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "type": "object"
+  },
+  "get_dev_mode_data": {
+    "$defs": {
+      "ConnectionId": {
+        "description": "RFC 4122 UUID connection identifier; bounded by UTF-8 encoded byte length",
+        "format": "uuid",
+        "maxLength": 36,
+        "minLength": 1,
+        "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+        "type": "string",
+        "x-maxUtf8Bytes": 36
+      },
+      "NodeId": {
+        "description": "node identifier; bounded by UTF-8 encoded byte length",
+        "maxLength": 256,
+        "minLength": 1,
+        "type": "string",
+        "x-maxUtf8Bytes": 256
+      },
+      "NodeIdList": {
+        "description": "node identifiers; decoder stops at item 2001",
+        "items": {
+          "$ref": "#/$defs/NodeId"
+        },
+        "maxItems": 2000,
+        "type": "array"
+      },
+      "NodeSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "nodeId": {
+            "$ref": "#/$defs/NodeId"
+          }
+        },
+        "required": [
+          "nodeId"
+        ],
+        "type": "object"
+      },
+      "NodesSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "nodeIds": {
+            "$ref": "#/$defs/NodeIdList"
+          }
+        },
+        "required": [
+          "nodeIds"
+        ],
+        "type": "object"
+      },
+      "PageId": {
+        "description": "page identifier; bounded by UTF-8 encoded byte length",
+        "maxLength": 256,
+        "minLength": 1,
+        "type": "string",
+        "x-maxUtf8Bytes": 256
+      },
+      "PageIdList": {
+        "description": "page identifiers; decoder stops at item 101",
+        "items": {
+          "$ref": "#/$defs/PageId"
+        },
+        "maxItems": 100,
+        "type": "array"
+      },
+      "PageSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "pageId": {
+            "$ref": "#/$defs/PageId"
+          }
+        },
+        "required": [
+          "pageId"
+        ],
+        "type": "object"
+      },
+      "PagesSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "pageIds": {
+            "$ref": "#/$defs/PageIdList"
+          }
+        },
+        "required": [
+          "pageIds"
+        ],
+        "type": "object"
+      },
+      "SelectionFlag": {
+        "const": true,
+        "type": "boolean"
+      },
+      "SelectionSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "selection": {
+            "$ref": "#/$defs/SelectionFlag"
+          }
+        },
+        "required": [
+          "selection"
+        ],
+        "type": "object"
+      },
+      "Selector": {
+        "oneOf": [
+          {
+            "$ref": "#/$defs/SelectionSelector"
+          },
+          {
+            "$ref": "#/$defs/PageSelector"
+          },
+          {
+            "$ref": "#/$defs/PagesSelector"
+          },
+          {
+            "$ref": "#/$defs/NodeSelector"
+          },
+          {
+            "$ref": "#/$defs/NodesSelector"
+          }
+        ]
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "connectionId": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ConnectionId"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "selector": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/Selector"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "type": "object"
+  },
+  "get_fonts": {
+    "$defs": {
+      "ConnectionId": {
+        "description": "RFC 4122 UUID connection identifier; bounded by UTF-8 encoded byte length",
+        "format": "uuid",
+        "maxLength": 36,
+        "minLength": 1,
+        "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+        "type": "string",
+        "x-maxUtf8Bytes": 36
+      },
+      "NodeId": {
+        "description": "node identifier; bounded by UTF-8 encoded byte length",
+        "maxLength": 256,
+        "minLength": 1,
+        "type": "string",
+        "x-maxUtf8Bytes": 256
+      },
+      "NodeIdList": {
+        "description": "node identifiers; decoder stops at item 2001",
+        "items": {
+          "$ref": "#/$defs/NodeId"
+        },
+        "maxItems": 2000,
+        "type": "array"
+      },
+      "NodeSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "nodeId": {
+            "$ref": "#/$defs/NodeId"
+          }
+        },
+        "required": [
+          "nodeId"
+        ],
+        "type": "object"
+      },
+      "NodesSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "nodeIds": {
+            "$ref": "#/$defs/NodeIdList"
+          }
+        },
+        "required": [
+          "nodeIds"
+        ],
+        "type": "object"
+      },
+      "PageId": {
+        "description": "page identifier; bounded by UTF-8 encoded byte length",
+        "maxLength": 256,
+        "minLength": 1,
+        "type": "string",
+        "x-maxUtf8Bytes": 256
+      },
+      "PageIdList": {
+        "description": "page identifiers; decoder stops at item 101",
+        "items": {
+          "$ref": "#/$defs/PageId"
+        },
+        "maxItems": 100,
+        "type": "array"
+      },
+      "PageSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "pageId": {
+            "$ref": "#/$defs/PageId"
+          }
+        },
+        "required": [
+          "pageId"
+        ],
+        "type": "object"
+      },
+      "PagesSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "pageIds": {
+            "$ref": "#/$defs/PageIdList"
+          }
+        },
+        "required": [
+          "pageIds"
+        ],
+        "type": "object"
+      },
+      "SelectionFlag": {
+        "const": true,
+        "type": "boolean"
+      },
+      "SelectionSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "selection": {
+            "$ref": "#/$defs/SelectionFlag"
+          }
+        },
+        "required": [
+          "selection"
+        ],
+        "type": "object"
+      },
+      "Selector": {
+        "oneOf": [
+          {
+            "$ref": "#/$defs/SelectionSelector"
+          },
+          {
+            "$ref": "#/$defs/PageSelector"
+          },
+          {
+            "$ref": "#/$defs/PagesSelector"
+          },
+          {
+            "$ref": "#/$defs/NodeSelector"
+          },
+          {
+            "$ref": "#/$defs/NodesSelector"
+          }
+        ]
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "connectionId": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ConnectionId"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "selector": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/Selector"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "type": "object"
+  },
+  "get_metadata": {
+    "$defs": {
+      "ConnectionId": {
+        "description": "RFC 4122 UUID connection identifier; bounded by UTF-8 encoded byte length",
+        "format": "uuid",
+        "maxLength": 36,
+        "minLength": 1,
+        "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+        "type": "string",
+        "x-maxUtf8Bytes": 36
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "connectionId": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ConnectionId"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "type": "object"
+  },
+  "get_motion": {
+    "$defs": {
+      "ConnectionId": {
+        "description": "RFC 4122 UUID connection identifier; bounded by UTF-8 encoded byte length",
+        "format": "uuid",
+        "maxLength": 36,
+        "minLength": 1,
+        "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+        "type": "string",
+        "x-maxUtf8Bytes": 36
+      },
+      "NodeId": {
+        "description": "node identifier; bounded by UTF-8 encoded byte length",
+        "maxLength": 256,
+        "minLength": 1,
+        "type": "string",
+        "x-maxUtf8Bytes": 256
+      },
+      "NodeIdList": {
+        "description": "node identifiers; decoder stops at item 2001",
+        "items": {
+          "$ref": "#/$defs/NodeId"
+        },
+        "maxItems": 2000,
+        "type": "array"
+      },
+      "NodeSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "nodeId": {
+            "$ref": "#/$defs/NodeId"
+          }
+        },
+        "required": [
+          "nodeId"
+        ],
+        "type": "object"
+      },
+      "NodesSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "nodeIds": {
+            "$ref": "#/$defs/NodeIdList"
+          }
+        },
+        "required": [
+          "nodeIds"
+        ],
+        "type": "object"
+      },
+      "PageId": {
+        "description": "page identifier; bounded by UTF-8 encoded byte length",
+        "maxLength": 256,
+        "minLength": 1,
+        "type": "string",
+        "x-maxUtf8Bytes": 256
+      },
+      "PageIdList": {
+        "description": "page identifiers; decoder stops at item 101",
+        "items": {
+          "$ref": "#/$defs/PageId"
+        },
+        "maxItems": 100,
+        "type": "array"
+      },
+      "PageSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "pageId": {
+            "$ref": "#/$defs/PageId"
+          }
+        },
+        "required": [
+          "pageId"
+        ],
+        "type": "object"
+      },
+      "PagesSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "pageIds": {
+            "$ref": "#/$defs/PageIdList"
+          }
+        },
+        "required": [
+          "pageIds"
+        ],
+        "type": "object"
+      },
+      "SelectionFlag": {
+        "const": true,
+        "type": "boolean"
+      },
+      "SelectionSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "selection": {
+            "$ref": "#/$defs/SelectionFlag"
+          }
+        },
+        "required": [
+          "selection"
+        ],
+        "type": "object"
+      },
+      "Selector": {
+        "oneOf": [
+          {
+            "$ref": "#/$defs/SelectionSelector"
+          },
+          {
+            "$ref": "#/$defs/PageSelector"
+          },
+          {
+            "$ref": "#/$defs/PagesSelector"
+          },
+          {
+            "$ref": "#/$defs/NodeSelector"
+          },
+          {
+            "$ref": "#/$defs/NodesSelector"
+          }
+        ]
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "connectionId": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ConnectionId"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "includeAvailableStyles": {
+        "default": false,
+        "type": "boolean"
+      },
+      "selector": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/Selector"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "type": "object"
+  },
+  "get_nodes": {
+    "$defs": {
+      "ConnectionId": {
+        "description": "RFC 4122 UUID connection identifier; bounded by UTF-8 encoded byte length",
+        "format": "uuid",
+        "maxLength": 36,
+        "minLength": 1,
+        "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+        "type": "string",
+        "x-maxUtf8Bytes": 36
+      },
+      "DetailLevel": {
+        "enum": [
+          "minimal",
+          "compact",
+          "full"
+        ],
+        "type": "string"
+      },
+      "NodeId": {
+        "description": "node identifier; bounded by UTF-8 encoded byte length",
+        "maxLength": 256,
+        "minLength": 1,
+        "type": "string",
+        "x-maxUtf8Bytes": 256
+      },
+      "NodeIdList": {
+        "description": "node identifiers; decoder stops at item 2001",
+        "items": {
+          "$ref": "#/$defs/NodeId"
+        },
+        "maxItems": 2000,
+        "type": "array"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "connectionId": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ConnectionId"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "depth": {
+        "format": "uint8",
+        "maximum": 6,
+        "minimum": 0,
+        "type": [
+          "integer",
+          "null"
+        ]
+      },
+      "detail": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/DetailLevel"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "nodeIds": {
+        "$ref": "#/$defs/NodeIdList"
+      }
+    },
+    "required": [
+      "nodeIds"
+    ],
+    "type": "object"
+  },
+  "get_reactions": {
+    "$defs": {
+      "ConnectionId": {
+        "description": "RFC 4122 UUID connection identifier; bounded by UTF-8 encoded byte length",
+        "format": "uuid",
+        "maxLength": 36,
+        "minLength": 1,
+        "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+        "type": "string",
+        "x-maxUtf8Bytes": 36
+      },
+      "NodeId": {
+        "description": "node identifier; bounded by UTF-8 encoded byte length",
+        "maxLength": 256,
+        "minLength": 1,
+        "type": "string",
+        "x-maxUtf8Bytes": 256
+      },
+      "NodeIdList": {
+        "description": "node identifiers; decoder stops at item 2001",
+        "items": {
+          "$ref": "#/$defs/NodeId"
+        },
+        "maxItems": 2000,
+        "type": "array"
+      },
+      "NodeSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "nodeId": {
+            "$ref": "#/$defs/NodeId"
+          }
+        },
+        "required": [
+          "nodeId"
+        ],
+        "type": "object"
+      },
+      "NodesSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "nodeIds": {
+            "$ref": "#/$defs/NodeIdList"
+          }
+        },
+        "required": [
+          "nodeIds"
+        ],
+        "type": "object"
+      },
+      "PageId": {
+        "description": "page identifier; bounded by UTF-8 encoded byte length",
+        "maxLength": 256,
+        "minLength": 1,
+        "type": "string",
+        "x-maxUtf8Bytes": 256
+      },
+      "PageIdList": {
+        "description": "page identifiers; decoder stops at item 101",
+        "items": {
+          "$ref": "#/$defs/PageId"
+        },
+        "maxItems": 100,
+        "type": "array"
+      },
+      "PageSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "pageId": {
+            "$ref": "#/$defs/PageId"
+          }
+        },
+        "required": [
+          "pageId"
+        ],
+        "type": "object"
+      },
+      "PagesSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "pageIds": {
+            "$ref": "#/$defs/PageIdList"
+          }
+        },
+        "required": [
+          "pageIds"
+        ],
+        "type": "object"
+      },
+      "SelectionFlag": {
+        "const": true,
+        "type": "boolean"
+      },
+      "SelectionSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "selection": {
+            "$ref": "#/$defs/SelectionFlag"
+          }
+        },
+        "required": [
+          "selection"
+        ],
+        "type": "object"
+      },
+      "Selector": {
+        "oneOf": [
+          {
+            "$ref": "#/$defs/SelectionSelector"
+          },
+          {
+            "$ref": "#/$defs/PageSelector"
+          },
+          {
+            "$ref": "#/$defs/PagesSelector"
+          },
+          {
+            "$ref": "#/$defs/NodeSelector"
+          },
+          {
+            "$ref": "#/$defs/NodesSelector"
+          }
+        ]
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "connectionId": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ConnectionId"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "selector": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/Selector"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "type": "object"
+  },
+  "get_screenshot": {
+    "$defs": {
+      "ConnectionId": {
+        "description": "RFC 4122 UUID connection identifier; bounded by UTF-8 encoded byte length",
+        "format": "uuid",
+        "maxLength": 36,
+        "minLength": 1,
+        "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+        "type": "string",
+        "x-maxUtf8Bytes": 36
+      },
+      "NodeId": {
+        "description": "node identifier; bounded by UTF-8 encoded byte length",
+        "maxLength": 256,
+        "minLength": 1,
+        "type": "string",
+        "x-maxUtf8Bytes": 256
+      },
+      "NodeIdList": {
+        "description": "node identifiers; decoder stops at item 2001",
+        "items": {
+          "$ref": "#/$defs/NodeId"
+        },
+        "maxItems": 2000,
+        "type": "array"
+      },
+      "NodeSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "nodeId": {
+            "$ref": "#/$defs/NodeId"
+          }
+        },
+        "required": [
+          "nodeId"
+        ],
+        "type": "object"
+      },
+      "NodesSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "nodeIds": {
+            "$ref": "#/$defs/NodeIdList"
+          }
+        },
+        "required": [
+          "nodeIds"
+        ],
+        "type": "object"
+      },
+      "RasterScale": {
+        "format": "double",
+        "maximum": 4.0,
+        "minimum": 0.25,
+        "type": "number"
+      },
+      "ScreenshotSelector": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/SelectionSelector"
+          },
+          {
+            "$ref": "#/$defs/NodeSelector"
+          },
+          {
+            "$ref": "#/$defs/NodesSelector"
+          }
+        ]
+      },
+      "SelectionFlag": {
+        "const": true,
+        "type": "boolean"
+      },
+      "SelectionSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "selection": {
+            "$ref": "#/$defs/SelectionFlag"
+          }
+        },
+        "required": [
+          "selection"
+        ],
+        "type": "object"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "oneOf": [
+      {
+        "additionalProperties": false,
+        "properties": {
+          "connectionId": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ConnectionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "format": {
+            "const": "png",
+            "type": "string"
+          },
+          "scale": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RasterScale"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "selector": {
+            "$ref": "#/$defs/ScreenshotSelector"
+          }
+        },
+        "required": [
+          "format",
+          "selector"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "connectionId": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ConnectionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "format": {
+            "const": "jpeg",
+            "type": "string"
+          },
+          "scale": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RasterScale"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "selector": {
+            "$ref": "#/$defs/ScreenshotSelector"
+          }
+        },
+        "required": [
+          "format",
+          "selector"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "connectionId": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ConnectionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "format": {
+            "const": "svg",
+            "type": "string"
+          },
+          "selector": {
+            "$ref": "#/$defs/ScreenshotSelector"
+          },
+          "svgIdAttribute": {
+            "default": false,
+            "type": "boolean"
+          },
+          "svgOutlineText": {
+            "default": true,
+            "type": "boolean"
+          },
+          "svgSimplifyStroke": {
+            "default": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "format",
+          "selector"
+        ],
+        "type": "object"
+      }
+    ],
+    "type": "object"
+  },
+  "get_selection": {
+    "$defs": {
+      "ConnectionId": {
+        "description": "RFC 4122 UUID connection identifier; bounded by UTF-8 encoded byte length",
+        "format": "uuid",
+        "maxLength": 36,
+        "minLength": 1,
+        "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+        "type": "string",
+        "x-maxUtf8Bytes": 36
+      },
+      "DetailLevel": {
+        "enum": [
+          "minimal",
+          "compact",
+          "full"
+        ],
+        "type": "string"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "connectionId": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ConnectionId"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "depth": {
+        "format": "uint8",
+        "maximum": 6,
+        "minimum": 0,
+        "type": [
+          "integer",
+          "null"
+        ]
+      },
+      "detail": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/DetailLevel"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "type": "object"
+  },
+  "get_styles": {
+    "$defs": {
+      "ConnectionId": {
+        "description": "RFC 4122 UUID connection identifier; bounded by UTF-8 encoded byte length",
+        "format": "uuid",
+        "maxLength": 36,
+        "minLength": 1,
+        "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+        "type": "string",
+        "x-maxUtf8Bytes": 36
+      },
+      "NodeId": {
+        "description": "node identifier; bounded by UTF-8 encoded byte length",
+        "maxLength": 256,
+        "minLength": 1,
+        "type": "string",
+        "x-maxUtf8Bytes": 256
+      },
+      "NodeIdList": {
+        "description": "node identifiers; decoder stops at item 2001",
+        "items": {
+          "$ref": "#/$defs/NodeId"
+        },
+        "maxItems": 2000,
+        "type": "array"
+      },
+      "NodeSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "nodeId": {
+            "$ref": "#/$defs/NodeId"
+          }
+        },
+        "required": [
+          "nodeId"
+        ],
+        "type": "object"
+      },
+      "NodesSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "nodeIds": {
+            "$ref": "#/$defs/NodeIdList"
+          }
+        },
+        "required": [
+          "nodeIds"
+        ],
+        "type": "object"
+      },
+      "PageId": {
+        "description": "page identifier; bounded by UTF-8 encoded byte length",
+        "maxLength": 256,
+        "minLength": 1,
+        "type": "string",
+        "x-maxUtf8Bytes": 256
+      },
+      "PageIdList": {
+        "description": "page identifiers; decoder stops at item 101",
+        "items": {
+          "$ref": "#/$defs/PageId"
+        },
+        "maxItems": 100,
+        "type": "array"
+      },
+      "PageSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "pageId": {
+            "$ref": "#/$defs/PageId"
+          }
+        },
+        "required": [
+          "pageId"
+        ],
+        "type": "object"
+      },
+      "PagesSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "pageIds": {
+            "$ref": "#/$defs/PageIdList"
+          }
+        },
+        "required": [
+          "pageIds"
+        ],
+        "type": "object"
+      },
+      "SelectionFlag": {
+        "const": true,
+        "type": "boolean"
+      },
+      "SelectionSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "selection": {
+            "$ref": "#/$defs/SelectionFlag"
+          }
+        },
+        "required": [
+          "selection"
+        ],
+        "type": "object"
+      },
+      "Selector": {
+        "oneOf": [
+          {
+            "$ref": "#/$defs/SelectionSelector"
+          },
+          {
+            "$ref": "#/$defs/PageSelector"
+          },
+          {
+            "$ref": "#/$defs/PagesSelector"
+          },
+          {
+            "$ref": "#/$defs/NodeSelector"
+          },
+          {
+            "$ref": "#/$defs/NodesSelector"
+          }
+        ]
+      },
+      "StyleSource": {
+        "enum": [
+          "local",
+          "referenced",
+          "both"
+        ],
+        "type": "string"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "connectionId": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ConnectionId"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "selector": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/Selector"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "source": {
+        "$ref": "#/$defs/StyleSource",
+        "default": "both"
+      }
+    },
+    "type": "object"
+  },
+  "get_variables": {
+    "$defs": {
+      "ConnectionId": {
+        "description": "RFC 4122 UUID connection identifier; bounded by UTF-8 encoded byte length",
+        "format": "uuid",
+        "maxLength": 36,
+        "minLength": 1,
+        "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+        "type": "string",
+        "x-maxUtf8Bytes": 36
+      },
+      "NodeId": {
+        "description": "node identifier; bounded by UTF-8 encoded byte length",
+        "maxLength": 256,
+        "minLength": 1,
+        "type": "string",
+        "x-maxUtf8Bytes": 256
+      },
+      "NodeIdList": {
+        "description": "node identifiers; decoder stops at item 2001",
+        "items": {
+          "$ref": "#/$defs/NodeId"
+        },
+        "maxItems": 2000,
+        "type": "array"
+      },
+      "NodeSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "nodeId": {
+            "$ref": "#/$defs/NodeId"
+          }
+        },
+        "required": [
+          "nodeId"
+        ],
+        "type": "object"
+      },
+      "NodesSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "nodeIds": {
+            "$ref": "#/$defs/NodeIdList"
+          }
+        },
+        "required": [
+          "nodeIds"
+        ],
+        "type": "object"
+      },
+      "PageId": {
+        "description": "page identifier; bounded by UTF-8 encoded byte length",
+        "maxLength": 256,
+        "minLength": 1,
+        "type": "string",
+        "x-maxUtf8Bytes": 256
+      },
+      "PageIdList": {
+        "description": "page identifiers; decoder stops at item 101",
+        "items": {
+          "$ref": "#/$defs/PageId"
+        },
+        "maxItems": 100,
+        "type": "array"
+      },
+      "PageSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "pageId": {
+            "$ref": "#/$defs/PageId"
+          }
+        },
+        "required": [
+          "pageId"
+        ],
+        "type": "object"
+      },
+      "PagesSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "pageIds": {
+            "$ref": "#/$defs/PageIdList"
+          }
+        },
+        "required": [
+          "pageIds"
+        ],
+        "type": "object"
+      },
+      "SelectionFlag": {
+        "const": true,
+        "type": "boolean"
+      },
+      "SelectionSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "selection": {
+            "$ref": "#/$defs/SelectionFlag"
+          }
+        },
+        "required": [
+          "selection"
+        ],
+        "type": "object"
+      },
+      "Selector": {
+        "oneOf": [
+          {
+            "$ref": "#/$defs/SelectionSelector"
+          },
+          {
+            "$ref": "#/$defs/PageSelector"
+          },
+          {
+            "$ref": "#/$defs/PagesSelector"
+          },
+          {
+            "$ref": "#/$defs/NodeSelector"
+          },
+          {
+            "$ref": "#/$defs/NodesSelector"
+          }
+        ]
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "connectionId": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ConnectionId"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "resolveAliases": {
+        "default": false,
+        "type": "boolean"
+      },
+      "selector": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/Selector"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "type": "object"
+  },
+  "list_files": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "type": "object"
+  },
+  "search_nodes": {
+    "$defs": {
+      "ConnectionId": {
+        "description": "RFC 4122 UUID connection identifier; bounded by UTF-8 encoded byte length",
+        "format": "uuid",
+        "maxLength": 36,
+        "minLength": 1,
+        "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+        "type": "string",
+        "x-maxUtf8Bytes": 36
+      },
+      "NodeId": {
+        "description": "node identifier; bounded by UTF-8 encoded byte length",
+        "maxLength": 256,
+        "minLength": 1,
+        "type": "string",
+        "x-maxUtf8Bytes": 256
+      },
+      "NodeTypeList": {
+        "description": "node type names; decoder stops at item 2001",
+        "items": {
+          "$ref": "#/$defs/NodeTypeName"
+        },
+        "maxItems": 2000,
+        "minItems": 1,
+        "type": "array"
+      },
+      "NodeTypeName": {
+        "description": "node type name; bounded by UTF-8 encoded byte length",
+        "maxLength": 256,
+        "minLength": 1,
+        "type": "string",
+        "x-maxUtf8Bytes": 256
+      },
+      "PageId": {
+        "description": "page identifier; bounded by UTF-8 encoded byte length",
+        "maxLength": 256,
+        "minLength": 1,
+        "type": "string",
+        "x-maxUtf8Bytes": 256
+      },
+      "QueryText": {
+        "description": "query text; bounded by UTF-8 encoded byte length",
+        "maxLength": 1024,
+        "type": "string",
+        "x-maxUtf8Bytes": 1024
+      },
+      "SearchMatchMode": {
+        "enum": [
+          "exact",
+          "contains"
+        ],
+        "type": "string"
+      },
+      "SearchNodeScope": {
+        "additionalProperties": false,
+        "properties": {
+          "nodeId": {
+            "$ref": "#/$defs/NodeId"
+          }
+        },
+        "required": [
+          "nodeId"
+        ],
+        "type": "object"
+      },
+      "SearchPageScope": {
+        "additionalProperties": false,
+        "properties": {
+          "pageId": {
+            "$ref": "#/$defs/PageId"
+          }
+        },
+        "required": [
+          "pageId"
+        ],
+        "type": "object"
+      },
+      "SearchQuery": {
+        "additionalProperties": false,
+        "anyOf": [
+          {
+            "required": [
+              "name"
+            ]
+          },
+          {
+            "required": [
+              "nodeTypes"
+            ]
+          },
+          {
+            "required": [
+              "text"
+            ]
+          }
+        ],
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/SearchTerm"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "nodeTypes": {
+            "$ref": "#/$defs/NodeTypeList"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/SearchTerm"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "SearchScope": {
+        "oneOf": [
+          {
+            "$ref": "#/$defs/SearchPageScope"
+          },
+          {
+            "$ref": "#/$defs/SearchNodeScope"
+          }
+        ]
+      },
+      "SearchTerm": {
+        "additionalProperties": false,
+        "properties": {
+          "caseSensitive": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "mode": {
+            "$ref": "#/$defs/SearchMatchMode"
+          },
+          "value": {
+            "$ref": "#/$defs/QueryText"
+          }
+        },
+        "required": [
+          "value",
+          "mode"
+        ],
+        "type": "object"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "connectionId": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ConnectionId"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "query": {
+        "$ref": "#/$defs/SearchQuery"
+      },
+      "scope": {
+        "$ref": "#/$defs/SearchScope"
+      }
+    },
+    "required": [
+      "scope",
+      "query"
+    ],
+    "type": "object"
+  }
+}

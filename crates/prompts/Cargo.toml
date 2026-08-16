@@ -1,0 +1,13 @@
+[package]
+name = "figma-dev-mcp-prompts"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "figma_dev_mcp_prompts"
+path = "src/lib.rs"
+
+[dependencies]
+rmcp.workspace = true

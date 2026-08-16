@@ -1,0 +1,17 @@
+/target/
+/plugin/node_modules/
+/plugin/dist/
+/conformance/node_modules/
+
+# Do not ignore Cargo.lock, plugin/bun.lock, conformance/bun.lock,
+# tests/contracts/fixtures/, or tests/contracts/snapshots/.
+
+# Local editor and operating-system files.
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.superpowers/
+docs/superpowers/

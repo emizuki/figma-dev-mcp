@@ -1,0 +1,21 @@
+{
+  "type": "hello",
+  "protocolVersion": "1",
+  "connectionId": "123e4567-e89b-42d3-a456-426614174000",
+  "displayName": "Quynh's Figma",
+  "fileKey": "example-file-key",
+  "fileName": "Checkout",
+  "currentPage": {
+    "id": "0:1",
+    "name": "Checkout flow"
+  },
+  "editorType": "dev",
+  "pluginVersion": "0.1.0",
+  "capabilities": {
+    "annotations": true,
+    "devResources": true,
+    "motion": true,
+    "svgStringExport": true,
+    "variableCodeSyntax": true
+  }
+}

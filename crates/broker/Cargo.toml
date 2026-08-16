@@ -1,0 +1,22 @@
+[package]
+name = "figma-dev-mcp-broker"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "figma_dev_mcp_broker"
+path = "src/lib.rs"
+
+[dependencies]
+figma-dev-mcp-protocol = { path = "../protocol" }
+futures-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+uuid.workspace = true

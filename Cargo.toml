@@ -1,0 +1,37 @@
+[workspace]
+members = [
+    "crates/figma-dev-mcp",
+    "crates/protocol",
+    "crates/broker",
+    "crates/tools",
+    "crates/prompts",
+    "tests",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "MIT"
+
+[workspace.dependencies]
+anyhow = "1"
+async-trait = "0.1"
+axum = "0.8"
+base64 = "0.22"
+clap = { version = "4", features = ["derive"] }
+futures-util = "0.3"
+jsonschema = { version = "0.49.9", default-features = false }
+rmcp = { version = "=3.0.0", features = ["client", "server", "macros", "schemars", "transport-io"] }
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value"] }
+thiserror = "2"
+tokio = { version = "1", features = ["full", "test-util"] }
+tokio-tungstenite = "0.30"
+tokio-util = { version = "0.7", features = ["codec", "rt"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+uuid = { version = "1", features = ["serde", "v4"] }
+walkdir = "2"

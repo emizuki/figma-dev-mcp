@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Figma Dev MCP</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        background: var(--figma-color-bg, #2c2c2c);
+        color: var(--figma-color-text, #fff);
+        font: 12px/1.4 Inter, system-ui, sans-serif;
+      }
+      main {
+        padding: 12px;
+      }
+      h1 {
+        margin: 0 0 6px;
+        font-size: 13px;
+        font-weight: 600;
+      }
+      #status {
+        margin: 0;
+        opacity: 0.8;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Figma Dev MCP</h1>
+      <p id="status">Starting…</p>
+    </main>
+    <script type="module" src="./index.ts"></script>
+  </body>
+</html>

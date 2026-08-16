@@ -1,0 +1,14 @@
+{
+  "name": "Figma Dev MCP",
+  "id": "figma-dev-mcp",
+  "api": "1.0.0",
+  "main": "dist/code.js",
+  "ui": "dist/index.html",
+  "editorType": ["dev"],
+  "capabilities": ["inspect"],
+  "documentAccess": "dynamic-page",
+  "networkAccess": {
+    "allowedDomains": ["ws://localhost:3056"],
+    "reasoning": "Connects only to the local figma-dev-mcp broker for read-only developer inspection."
+  }
+}

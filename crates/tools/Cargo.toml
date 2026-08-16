@@ -1,0 +1,23 @@
+[package]
+name = "figma-dev-mcp-tools"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "figma_dev_mcp_tools"
+path = "src/lib.rs"
+
+[dependencies]
+figma-dev-mcp-broker = { path = "../broker" }
+figma-dev-mcp-prompts = { path = "../prompts" }
+figma-dev-mcp-protocol = { path = "../protocol" }
+rmcp.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+uuid.workspace = true

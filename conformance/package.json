@@ -1,0 +1,13 @@
+{
+  "name": "figma-dev-mcp-conformance",
+  "private": true,
+  "packageManager": "bun@1.3.14",
+  "scripts": {
+    "modern": "bun ./node_modules/conformance-modern/dist/index.js server --url http://127.0.0.1:3060/mcp --scenario server-stateless --spec-version 2026-07-28",
+    "legacy": "bun ./node_modules/conformance-legacy/dist/index.js server --url http://127.0.0.1:3060/mcp --scenario server-initialize"
+  },
+  "devDependencies": {
+    "conformance-modern": "npm:@modelcontextprotocol/conformance@0.2.0-alpha.11",
+    "conformance-legacy": "npm:@modelcontextprotocol/conformance@0.1.16"
+  }
+}

@@ -1,0 +1,306 @@
+use figma_dev_mcp_broker::{Broker, BrokerConfig, Limits};
+use figma_dev_mcp_tools::{McpService, SearchNodesInput, tools_catalog};
+use futures_util::{SinkExt, StreamExt};
+use rmcp::ServiceExt;
+use serde_json::{Value, json};
+use std::net::SocketAddr;
+use tokio::net::TcpListener;
+use tokio_tungstenite::{
+    connect_async, tungstenite::Message, tungstenite::client::IntoClientRequest,
+};
+
+async fn running_broker() -> (SocketAddr, Broker, tokio::task::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let broker = Broker::new(BrokerConfig::for_test(Limits::reduced_for_test()).unwrap());
+    let server = broker.clone();
+    let task = tokio::spawn(async move { server.serve(listener).await.unwrap() });
+    (address, broker, task)
+}
+
+fn hello(connection_id: &str) -> Message {
+    Message::Text(
+        json!({
+            "type": "hello", "protocolVersion": "1", "connectionId": connection_id,
+            "displayName": "Checkout flow", "fileName": "Checkout flow",
+            "currentPage": {"id": "0:2", "name": "Checkout"},
+            "editorType": "dev", "pluginVersion": "0.1.0", "capabilities": {}
+        })
+        .to_string()
+        .into(),
+    )
+}
+
+fn observation() -> Value {
+    json!({
+        "startedAt": "2026-08-16T10:00:00.000Z",
+        "completedAt": "2026-08-16T10:00:00.001Z"
+    })
+}
+
+fn search_schema() -> jsonschema::Validator {
+    let schema = tools_catalog()
+        .tools
+        .into_iter()
+        .find(|tool| tool.name == "search_nodes")
+        .expect("search_nodes must be cataloged")
+        .input_schema;
+    jsonschema::validator_for(&Value::Object((*schema).clone()))
+        .expect("search_nodes schema must be a valid JSON Schema")
+}
+
+#[test]
+fn search_nodes_schema_requires_one_scope_and_at_least_one_predicate() {
+    let validator = search_schema();
+    let schema = tools_catalog()
+        .tools
+        .into_iter()
+        .find(|tool| tool.name == "search_nodes")
+        .expect("search_nodes must be cataloged")
+        .input_schema;
+    let rendered = Value::Object((*schema).clone());
+    let rendered = rendered.to_string();
+    assert!(
+        rendered.contains("\"oneOf\""),
+        "scope schema must be a oneOf: {rendered}"
+    );
+    assert!(
+        rendered.contains("\"required\":[\"name\"]")
+            || rendered.contains("\"required\": [\"name\"]"),
+        "predicate anyOf must require name: {rendered}"
+    );
+    assert!(
+        rendered.contains("\"required\":[\"nodeTypes\"]")
+            || rendered.contains("\"required\": [\"nodeTypes\"]"),
+        "predicate anyOf must require nodeTypes: {rendered}"
+    );
+    assert!(
+        rendered.contains("\"required\":[\"text\"]")
+            || rendered.contains("\"required\": [\"text\"]"),
+        "predicate anyOf must require text: {rendered}"
+    );
+
+    let name = json!({"value": "Card", "mode": "contains"});
+    let text = json!({"value": "Pay", "mode": "exact", "caseSensitive": true});
+    assert!(validator.is_valid(&json!({"scope":{"pageId":"0:1"},"query":{"name": name}})));
+    assert!(validator.is_valid(&json!({"scope":{"nodeId":"1:1"},"query":{"nodeTypes":["FRAME"]}})));
+    assert!(validator.is_valid(&json!({"scope":{"pageId":"0:1"},"query":{"text": text}})));
+    assert!(!validator.is_valid(&json!({"scope":{"pageId":"0:1"},"query":{"name":"Card"}})));
+    assert!(!validator.is_valid(&json!({"scope":{"pageId":"0:1"},"query":{"text":"Pay"}})));
+
+    for invalid in [
+        json!({"query":{"name": name}}),
+        json!({"scope":{"pageId":"0:1","nodeId":"1:1"},"query":{"name": name}}),
+        json!({"scope":{"pageIds":["0:1"]},"query":{"name": name}}),
+        json!({"scope":{"pageIds":["0:1","0:2"]},"query":{"name": name}}),
+        json!({"scope":{"document":true},"query":{"name": name}}),
+        json!({"scope":{"pageId":"0:1"},"query":{}}),
+    ] {
+        assert!(
+            !validator.is_valid(&invalid),
+            "schema accepted invalid search input {invalid}"
+        );
+    }
+}
+
+#[test]
+fn search_nodes_public_contract_trims_and_rejects_blank_node_types() {
+    assert!(
+        serde_json::from_value::<SearchNodesInput>(json!({
+            "scope": {"pageId": "0:1"},
+            "query": {"nodeTypes": ["   "]}
+        }))
+        .is_err()
+    );
+    let parsed = serde_json::from_value::<SearchNodesInput>(json!({
+        "scope": {"pageId": "0:1"},
+        "query": {"nodeTypes": ["FRAME "]}
+    }))
+    .expect("padded node type must deserialize");
+    assert_eq!(
+        serde_json::to_value(parsed).unwrap()["query"]["nodeTypes"],
+        json!(["FRAME"])
+    );
+}
+
+#[tokio::test]
+async fn search_nodes_round_trips_and_rejects_invalid_scopes_before_dispatch() {
+    let (address, broker, broker_task) = running_broker().await;
+    let mut request = format!("ws://{address}/").into_client_request().unwrap();
+    request
+        .headers_mut()
+        .insert("Origin", "null".parse().unwrap());
+    let (mut plugin, _) = connect_async(request).await.unwrap();
+    plugin
+        .send(hello("123e4567-e89b-42d3-a456-426614174000"))
+        .await
+        .unwrap();
+    for _ in 0..20 {
+        if broker.live_file_count().await == 1 {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+
+    let (server_io, client_io) = tokio::io::duplex(64 * 1024);
+    let server_task = tokio::spawn(async move {
+        McpService::new(broker.clone())
+            .serve(server_io)
+            .await
+            .unwrap()
+    });
+    let client = ().serve(client_io).await.unwrap();
+
+    let plugin_task = tokio::spawn(async move {
+        let request = loop {
+            let Some(Ok(Message::Text(frame))) = plugin.next().await else {
+                panic!("plugin did not receive request")
+            };
+            let request: Value = serde_json::from_str(&frame).unwrap();
+            if request["type"] == "request" {
+                break request;
+            }
+        };
+        assert_eq!(request["operation"]["operation"], "search_nodes");
+        assert_eq!(
+            request["operation"]["input"]["scope"],
+            json!({"pageId": "0:1"})
+        );
+        assert_eq!(
+            request["operation"]["input"]["query"],
+            json!({"name": {"value": "Card", "mode": "exact", "caseSensitive": true}})
+        );
+        let request_id = request["requestId"].as_str().unwrap();
+        plugin
+            .send(Message::Text(
+                json!({
+                    "type": "response",
+                    "requestId": request_id,
+                    "result": {
+                        "operation": "search_nodes",
+                        "result": {
+                            "matches": [{
+                                "node": {
+                                    "id": "1:2",
+                                    "name": "Card",
+                                    "nodeType": "FRAME",
+                                    "visible": true
+                                },
+                                "reasons": ["name"]
+                            }],
+                            "truncated": false,
+                            "observation": observation()
+                        }
+                    }
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .unwrap();
+    });
+
+    let connection = (
+        "connectionId".to_owned(),
+        json!("123e4567-e89b-42d3-a456-426614174000"),
+    );
+    let name = json!({"value": "Card", "mode": "exact", "caseSensitive": true});
+
+    for (label, arguments) in [
+        (
+            "omitted scope",
+            serde_json::Map::from_iter([
+                connection.clone(),
+                ("query".to_owned(), json!({"name": name})),
+            ]),
+        ),
+        (
+            "both scopes",
+            serde_json::Map::from_iter([
+                connection.clone(),
+                (
+                    "scope".to_owned(),
+                    json!({"pageId": "0:1", "nodeId": "1:1"}),
+                ),
+                ("query".to_owned(), json!({"name": name})),
+            ]),
+        ),
+        (
+            "pageIds",
+            serde_json::Map::from_iter([
+                connection.clone(),
+                ("scope".to_owned(), json!({"pageIds": ["0:1"]})),
+                ("query".to_owned(), json!({"name": name})),
+            ]),
+        ),
+        (
+            "document scope",
+            serde_json::Map::from_iter([
+                connection.clone(),
+                ("scope".to_owned(), json!({"document": true})),
+                ("query".to_owned(), json!({"name": name})),
+            ]),
+        ),
+        (
+            "multi-page scope",
+            serde_json::Map::from_iter([
+                connection.clone(),
+                ("scope".to_owned(), json!({"pageIds": ["0:1", "0:2"]})),
+                ("query".to_owned(), json!({"name": name})),
+            ]),
+        ),
+        (
+            "string name predicate",
+            serde_json::Map::from_iter([
+                connection.clone(),
+                ("scope".to_owned(), json!({"pageId": "0:1"})),
+                ("query".to_owned(), json!({"name": "Card"})),
+            ]),
+        ),
+        (
+            "empty query",
+            serde_json::Map::from_iter([
+                connection.clone(),
+                ("scope".to_owned(), json!({"pageId": "0:1"})),
+                ("query".to_owned(), json!({})),
+            ]),
+        ),
+        (
+            "whitespace nodeTypes",
+            serde_json::Map::from_iter([
+                connection.clone(),
+                ("scope".to_owned(), json!({"pageId": "0:1"})),
+                ("query".to_owned(), json!({"nodeTypes": ["   "]})),
+            ]),
+        ),
+    ] {
+        let result = client
+            .call_tool(
+                rmcp::model::CallToolRequestParams::new("search_nodes").with_arguments(arguments),
+            )
+            .await;
+        assert!(result.is_err(), "{label} must fail before broker dispatch");
+    }
+
+    let search = client
+        .call_tool(
+            rmcp::model::CallToolRequestParams::new("search_nodes").with_arguments(
+                serde_json::Map::from_iter([
+                    connection,
+                    ("scope".to_owned(), json!({"pageId": "0:1"})),
+                    ("query".to_owned(), json!({"name": name})),
+                ]),
+            ),
+        )
+        .await
+        .unwrap();
+    let value = search.structured_content.clone().unwrap();
+    assert_ne!(search.is_error, Some(true));
+    assert_eq!(value["matches"][0]["node"]["id"], "1:2");
+    assert_eq!(value["matches"][0]["reasons"], json!(["name"]));
+    assert_eq!(value["truncated"], false);
+
+    plugin_task.await.unwrap();
+    server_task.abort();
+    broker_task.abort();
+}

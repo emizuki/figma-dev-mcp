@@ -1,0 +1,42 @@
+# Read a Figma design efficiently
+
+Use only this server's 14 read-only tools. Do not mutate the Figma document, change the current page or selection, or create local files.
+
+## Sequence
+
+1. Resolve the target file. When more than one plugin connection may be live, call `list_files` and pass that `connectionId` on later calls. Omit `connectionId` only when exactly one file is connected.
+2. Start with `get_metadata` plus one bounded `get_design_context` call.
+   - `get_metadata` returns file, page, editor, and capability information. It does not serialize page contents.
+   - Prefer the current selection or an explicit node/page selector the user named.
+   - Use `detail: "compact"` and a small `depth` (2 is typical) so the first tree stays token-efficient.
+   - Set `dedupeComponents: true` when the screen repeats component instances.
+3. Prefer targeted `search_nodes` inside exactly one `pageId` or `nodeId` scope, then batched `get_nodes` for the IDs you still need. Do not issue one-id-at-a-time reads when a batch will do.
+4. Request specialized handoff data only when it is relevant to the implementation task:
+   - `get_styles` for paint, text, effect, and grid styles
+   - `get_variables` for collections, modes, aliases, and code syntax
+   - `get_components` for component sets, variants, and documentation
+   - `get_fonts` for families used in the same bounded scope
+   - `get_dev_mode_data` for annotations, documentation links, and dev resources
+   - `get_reactions` for prototype interactions on the same screen
+5. Call `get_screenshot` last, and only for visual confirmation of a specific node, an ordered node list, or the captured selection.
+
+If you need to confirm what is selected, `get_selection` is a successful empty list when nothing is selected. Ask the user for a node or page instead of loading every page.
+
+## Detail levels
+
+- `minimal`: identity, hierarchy references, type, name, visibility, and bounds.
+- `compact`: minimal plus layout, text summary, style references, and component metadata. Use this for the first structural read.
+- `full`: compact plus resolved paint, effect, layout values, and tool-specific developer metadata. Use only on a small, explicit scope.
+
+No detail level is an unbounded recursive walk. Honor depth, node-count, and truncation metadata.
+
+## Component deduplication
+
+When `dedupeComponents` is true, repeated component definitions are serialized once and later instances reference that definition. Use this for lists, tables, and repeated cards so you do not reserialize the same component tree.
+
+## Rules
+
+- Stay inside the selector you chose. Do not widen to other pages automatically.
+- `search_nodes` is single-scope only; do not request document-wide or multi-page search.
+- Treat `connectionId` as an ephemeral handle from `list_files`. Rediscover it after a reconnect.
+- This catalog has no document dump, viewport read, text scan, or local export tool. Do not invent those calls.
