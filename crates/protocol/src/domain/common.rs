@@ -5,7 +5,8 @@ use crate::{
     error::ToolError,
     limits::{
         MAX_DEPTH, MAX_DISPLAY_TEXT_BYTES, MAX_IDENTIFIER_BYTES, MAX_INPUT_IDS, MAX_PAGE_IDS,
-        MAX_QUERY_BYTES, MAX_RASTER_BASE64_BYTES, MAX_RETURNED_NODES, MAX_SVG_BYTES,
+        MAX_QUERY_BYTES, MAX_RASTER_BASE64_BYTES, MAX_RETURNED_NODES, MAX_SEARCH_CURSOR_BYTES,
+        MAX_SVG_BYTES,
     },
 };
 use schemars::{JsonSchema, Schema, SchemaGenerator};
@@ -200,6 +201,12 @@ bounded_string_newtype!(
     false
 );
 bounded_string_newtype!(QueryText, MAX_QUERY_BYTES, "query text", true);
+bounded_string_newtype!(
+    SearchCursor,
+    MAX_SEARCH_CURSOR_BYTES,
+    "opaque search cursor",
+    false
+);
 bounded_string_newtype!(DisplayText, MAX_DISPLAY_TEXT_BYTES, "display text", true);
 bounded_string_newtype!(
     RasterBase64,
@@ -556,6 +563,19 @@ where
     let value = Option::<u8>::deserialize(deserializer)?;
     if value.is_some_and(|depth| depth > MAX_DEPTH) {
         return Err(D::Error::custom(format_args!("depth exceeds {MAX_DEPTH}")));
+    }
+    Ok(value)
+}
+
+pub(crate) fn deserialize_search_limit<'de, D>(deserializer: D) -> Result<u16, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = u16::deserialize(deserializer)?;
+    if value == 0 || usize::from(value) > MAX_RETURNED_NODES {
+        return Err(D::Error::custom(format_args!(
+            "limit must be between 1 and {MAX_RETURNED_NODES}"
+        )));
     }
     Ok(value)
 }

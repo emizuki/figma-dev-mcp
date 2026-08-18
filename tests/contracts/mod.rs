@@ -10,8 +10,9 @@ use figma_dev_mcp_protocol::{
     domain::{
         ConnectionId, DesignNode, GetDesignContextResult, GetMotionResult, GetNodesResult,
         GetReactionsResult, GetSelectionResult, ItemIdentifier, MinimalNodeDetails, NodeForest,
-        NodeId, NodeTypeName, NodesSelector, PageId, PagesSelector, PaintValue, RasterScale,
-        ReactionAction, RequestId, ReturnedList, ScreenshotAsset, SearchQuery, Selector,
+        NodeId, NodeTypeList, NodeTypeName, NodesSelector, PageId, PagesSelector, PaintValue,
+        RasterScale, ReactionAction, RequestId, ReturnedList, ScreenshotAsset, SearchNodesInput,
+        Selector,
     },
     error::{ErrorCode, ItemError, PluginFailure, ToolError},
     limits::{
@@ -148,7 +149,7 @@ fn read_operation_and_result_tags_are_closed_and_exact() {
         json!({}),
         json!({}),
         json!({"nodeIds": []}),
-        json!({"scope": {"pageId": "0:1"}, "query": {}}),
+        json!({"scope": {"pageId": "0:1"}, "query": "Card", "match": "contains", "limit": 50}),
         json!({}),
         json!({}),
         json!({}),
@@ -276,6 +277,7 @@ fn stable_error_codes_are_exact_and_screaming_snake_case() {
         ErrorCode::UnsupportedNode,
         ErrorCode::CapabilityUnavailable,
         ErrorCode::UnsafeSvg,
+        ErrorCode::InvalidCursor,
         ErrorCode::LimitExceeded,
         ErrorCode::Timeout,
         ErrorCode::Cancelled,
@@ -302,6 +304,7 @@ fn stable_error_codes_are_exact_and_screaming_snake_case() {
             "UNSUPPORTED_NODE",
             "CAPABILITY_UNAVAILABLE",
             "UNSAFE_SVG",
+            "INVALID_CURSOR",
             "LIMIT_EXCEEDED",
             "TIMEOUT",
             "CANCELLED",
@@ -371,7 +374,7 @@ fn boundary_decoders_reject_oversized_inputs_before_dispatch() {
         serde_json::from_value::<BrokerToPlugin>(json!({
             "type": "request", "requestId": "plugin-1", "deadlineMs": 100,
             "target": {}, "operation": {"operation": "search_nodes", "input": {
-                "scope": {"pageId": "0:1"}, "query": {"text": {"value": oversized_query, "mode": "contains"}}
+                "scope": {"pageId": "0:1"}, "query": oversized_query, "match": "contains", "limit": 50
             }}
         }))
         .is_err()
@@ -833,19 +836,14 @@ fn minimal_results_preserve_recursive_depth_and_reject_flat_summaries() {
 #[test]
 fn search_node_types_are_count_and_utf8_byte_bounded() {
     let too_many = vec!["FRAME"; MAX_INPUT_IDS + 1];
-    assert!(serde_json::from_value::<SearchQuery>(json!({"nodeTypes": too_many})).is_err());
+    assert!(serde_json::from_value::<NodeTypeList>(json!(too_many)).is_err());
 
     let over_bytes_but_not_chars = "é".repeat((MAX_IDENTIFIER_BYTES / 2) + 1);
     assert!(over_bytes_but_not_chars.chars().count() < MAX_IDENTIFIER_BYTES);
     assert!(over_bytes_but_not_chars.len() > MAX_IDENTIFIER_BYTES);
-    assert!(
-        serde_json::from_value::<SearchQuery>(json!({
-            "nodeTypes": [over_bytes_but_not_chars]
-        }))
-        .is_err()
-    );
+    assert!(serde_json::from_value::<NodeTypeList>(json!([over_bytes_but_not_chars])).is_err());
 
-    let schema = serde_json::to_value(schemars::schema_for!(SearchQuery))
+    let schema = serde_json::to_value(schemars::schema_for!(NodeTypeList))
         .unwrap()
         .to_string();
     assert!(schema.contains("\"maxItems\":2000"));
@@ -937,11 +935,6 @@ fn bounded_collection_decoders_stop_at_max_plus_one_and_frame_encoding_is_stream
         deserialize_counted_sequence::<PagesSelector>("pageIds", MAX_PAGE_IDS + 5, "0:1");
     assert!(pages.is_err());
     assert_eq!(consumed, MAX_PAGE_IDS + 1);
-
-    let (query, consumed) =
-        deserialize_counted_sequence::<SearchQuery>("nodeTypes", MAX_INPUT_IDS + 5, "FRAME");
-    assert!(query.is_err());
-    assert_eq!(consumed, MAX_INPUT_IDS + 1);
 
     let (returned, consumed) = deserialize_counted_returned_list(MAX_RETURNED_NODES + 5, "item");
     assert!(returned.is_err());
@@ -1219,18 +1212,23 @@ fn schemas_and_decoders_agree_on_utf8_byte_limits() {
     assert!(id_schema.contains("\"format\":\"uuid\""));
     assert!(id_schema.contains("\"pattern\":\"^[0-9a-fA-F]{8}-"));
 
-    let query_schema = serde_json::to_value(schemars::schema_for!(SearchQuery))
+    let query_schema = serde_json::to_value(schemars::schema_for!(SearchNodesInput))
         .unwrap()
         .to_string();
     assert!(query_schema.contains("\"x-maxUtf8Bytes\":1024"));
     assert!(
-        serde_json::from_value::<SearchQuery>(json!({
-            "text": {"value": "Pay", "mode": "contains"}
+        serde_json::from_value::<SearchNodesInput>(json!({
+            "scope": {"pageId": "0:1"}, "query": "Pay", "match": "contains", "limit": 50
         }))
         .is_ok()
     );
-    assert!(serde_json::from_value::<SearchQuery>(json!({"text": "Pay"})).is_err());
-
+    assert!(
+        serde_json::from_value::<SearchNodesInput>(json!({
+            "scope": {"pageId": "0:1"},
+            "types": ["FRAME"]
+        }))
+        .is_ok()
+    );
     let hello_schema =
         serde_json::to_value(schemars::schema_for!(figma_dev_mcp_protocol::wire::Hello))
             .unwrap()
@@ -1251,12 +1249,11 @@ fn schemas_and_decoders_agree_on_utf8_byte_limits() {
     assert_eq!(multibyte_query.chars().count(), 513);
     assert!(multibyte_query.len() > MAX_QUERY_BYTES);
     assert!(
-        serde_json::from_value::<SearchQuery>(json!({
-            "text": {"value": multibyte_query, "mode": "contains"}
+        serde_json::from_value::<SearchNodesInput>(json!({
+            "scope": {"pageId": "0:1"}, "query": multibyte_query, "match": "contains", "limit": 50
         }))
         .is_err()
     );
-    assert!(serde_json::from_value::<SearchQuery>(json!({"text": multibyte_query})).is_err());
 
     let multibyte_display = "é".repeat(513);
     assert!(
@@ -1517,6 +1514,7 @@ fn error_code_tag(code: ErrorCode) -> &'static str {
         ErrorCode::UnsupportedNode => "UNSUPPORTED_NODE",
         ErrorCode::CapabilityUnavailable => "CAPABILITY_UNAVAILABLE",
         ErrorCode::UnsafeSvg => "UNSAFE_SVG",
+        ErrorCode::InvalidCursor => "INVALID_CURSOR",
         ErrorCode::LimitExceeded => "LIMIT_EXCEEDED",
         ErrorCode::Timeout => "TIMEOUT",
         ErrorCode::Cancelled => "CANCELLED",

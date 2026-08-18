@@ -256,8 +256,8 @@ describe("closed plugin transport validation", () => {
     ).toThrow()
   })
 
-  test("normalizes skipped empty search node types like Rust serialization", () => {
-    expect(
+  test("rejects a search without query or non-empty types", () => {
+    expect(() =>
       parseBrokerToPlugin({
         type: "request",
         requestId: "plugin-1",
@@ -265,22 +265,17 @@ describe("closed plugin transport validation", () => {
         target: {},
         operation: {
           operation: "search_nodes",
-          input: { scope: { pageId: "0:1" }, query: { nodeTypes: [] } },
+          input: {
+            scope: { pageId: "0:1" },
+            match: "contains",
+            limit: 50,
+          },
         },
       }),
-    ).toEqual({
-      type: "request",
-      requestId: "plugin-1",
-      deadlineMs: 1,
-      target: {},
-      operation: {
-        operation: "search_nodes",
-        input: { scope: { pageId: "0:1" }, query: {} },
-      },
-    })
+    ).toThrow(/query or types/)
   })
 
-  test("decodes object search terms and rejects bare string predicates", () => {
+  test("decodes the flat search contract and rejects legacy nested terms", () => {
     expect(
       parseBrokerToPlugin({
         type: "request",
@@ -291,10 +286,11 @@ describe("closed plugin transport validation", () => {
           operation: "search_nodes",
           input: {
             scope: { pageId: "0:1" },
-            query: {
-              name: { value: "Card", mode: "exact", caseSensitive: true },
-              text: { value: "Pay", mode: "contains" },
-            },
+            query: "Commission",
+            types: ["TEXT"],
+            match: "exact",
+            limit: 25,
+            cursor: "opaque",
           },
         },
       }),
@@ -307,10 +303,11 @@ describe("closed plugin transport validation", () => {
         operation: "search_nodes",
         input: {
           scope: { pageId: "0:1" },
-          query: {
-            name: { value: "Card", mode: "exact", caseSensitive: true },
-            text: { value: "Pay", mode: "contains" },
-          },
+          query: "Commission",
+          types: ["TEXT"],
+          match: "exact",
+          limit: 25,
+          cursor: "opaque",
         },
       },
     })
@@ -322,7 +319,10 @@ describe("closed plugin transport validation", () => {
         target: {},
         operation: {
           operation: "search_nodes",
-          input: { scope: { pageId: "0:1" }, query: { name: "Card" } },
+          input: {
+            scope: { pageId: "0:1" },
+            query: { name: { value: "Card", mode: "contains" } },
+          },
         },
       }),
     ).toThrow()
@@ -478,7 +478,9 @@ describe("closed plugin transport validation", () => {
           operation: "search_nodes",
           input: {
             scope: { pageId: "0:1" },
-            query: { nodeTypes: ["FRAME "] },
+            types: ["FRAME "],
+            match: "contains",
+            limit: 50,
           },
         },
       }),
@@ -491,7 +493,9 @@ describe("closed plugin transport validation", () => {
         operation: "search_nodes",
         input: {
           scope: { pageId: "0:1" },
-          query: { nodeTypes: ["FRAME"] },
+          types: ["FRAME"],
+          match: "contains",
+          limit: 50,
         },
       },
     })
@@ -505,7 +509,9 @@ describe("closed plugin transport validation", () => {
           operation: "search_nodes",
           input: {
             scope: { pageId: "0:1" },
-            query: { nodeTypes: ["   "] },
+            types: ["   "],
+            match: "contains",
+            limit: 50,
           },
         },
       }),
@@ -696,7 +702,7 @@ describe("closed plugin transport validation", () => {
           ...common,
         },
       ],
-      ["search_nodes", { matches: [], ...common }],
+      ["search_nodes", { matches: [], nextCursor: "opaque-cursor", ...common }],
       [
         "get_design_context",
         {

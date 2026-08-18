@@ -23,8 +23,6 @@ import {
   type ScopedInput,
   type SearchMatchMode,
   type SearchNodesInput,
-  type SearchQuery,
-  type SearchTerm,
   type Selector,
 } from "./protocol"
 import {
@@ -34,6 +32,8 @@ import {
   MAX_INPUT_IDS,
   MAX_PAGE_IDS,
   MAX_QUERY_BYTES,
+  MAX_RETURNED_NODES,
+  MAX_SEARCH_CURSOR_BYTES,
 } from "./limits"
 import { parseReadResult, parseU32 } from "./result-validation"
 
@@ -272,63 +272,56 @@ function parseSearchMatchMode(value: unknown, label: string): SearchMatchMode {
   return fail(`${label} must be exact or contains`)
 }
 
-function parseSearchTerm(value: unknown, label: string): SearchTerm {
-  const object = exact(value, label, ["value", "mode"], ["caseSensitive"])
-  const result: SearchTerm = {
-    value: boundedString(object.value, `${label}.value`, MAX_QUERY_BYTES, true),
-    mode: parseSearchMatchMode(object.mode, `${label}.mode`),
-  }
-  if (Object.hasOwn(object, "caseSensitive")) {
-    result.caseSensitive = boolean(
-      object.caseSensitive,
-      `${label}.caseSensitive`,
-    )
-  }
-  return result
-}
-
-function parseSearchQuery(value: unknown): SearchQuery {
-  const object = exact(value, "search query", [], ["name", "nodeTypes", "text"])
-  const result: SearchQuery = {}
-  if (Object.hasOwn(object, "nodeTypes")) {
-    const nodeTypes = stringList(
-      object.nodeTypes,
-      "nodeTypes",
-      MAX_INPUT_IDS,
-    ).map((type, index) => {
-      const trimmed = type.trim()
-      if (trimmed.length === 0) {
-        return fail(`nodeTypes[${index}] must be non-empty after trimming`)
-      }
-      return trimmed
-    })
-    if (nodeTypes.length > 0) result.nodeTypes = nodeTypes
-  }
-  if (Object.hasOwn(object, "name")) {
-    result.name = parseSearchTerm(object.name, "name")
-  }
-  if (Object.hasOwn(object, "text")) {
-    result.text = parseSearchTerm(object.text, "text")
-  }
-  return result
-}
-
 function parseSearchNodesInput(value: unknown): SearchNodesInput {
   const object = exact(
     value,
     "search_nodes input",
-    ["scope", "query"],
-    ["connectionId"],
+    ["scope", "match", "limit"],
+    ["connectionId", "query", "types", "cursor"],
   )
   const scope = parseSelector(object.scope)
   if (!("pageId" in scope) && !("nodeId" in scope)) {
     return fail("search scope must contain exactly one pageId or nodeId")
   }
-  return {
+  const result: SearchNodesInput = {
     ...copyFileScope(object),
     scope,
-    query: parseSearchQuery(object.query),
+    match: parseSearchMatchMode(object.match, "match"),
+    limit: unsignedInteger(object.limit, "limit"),
   }
+  if (result.limit < 1 || result.limit > MAX_RETURNED_NODES)
+    return fail(`limit must be between 1 and ${MAX_RETURNED_NODES}`)
+  if (Object.hasOwn(object, "query")) {
+    const query = boundedString(
+      object.query,
+      "query",
+      MAX_QUERY_BYTES,
+      true,
+    ).trim()
+    if (query.length === 0)
+      return fail("query must be non-empty after trimming")
+    result.query = query
+  }
+  if (Object.hasOwn(object, "types")) {
+    const types = stringList(object.types, "types", MAX_INPUT_IDS).map(
+      (type, index) => {
+        const trimmed = type.trim()
+        if (trimmed.length === 0)
+          return fail(`types[${index}] must be non-empty after trimming`)
+        return trimmed
+      },
+    )
+    if (types.length > 0) result.types = types
+  }
+  if (result.query === undefined && result.types === undefined)
+    return fail("search must include query or types")
+  if (Object.hasOwn(object, "cursor"))
+    result.cursor = boundedString(
+      object.cursor,
+      "cursor",
+      MAX_SEARCH_CURSOR_BYTES,
+    ).trim()
+  return result
 }
 
 function parseGetDesignContextInput(value: unknown): GetDesignContextInput {

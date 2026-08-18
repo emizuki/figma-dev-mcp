@@ -63,70 +63,55 @@ function installFigma(options: {
   return { currentPage: options.currentPage, lookedUp }
 }
 
-const nameTerm = (
-  value: string,
-  mode: "exact" | "contains" = "contains",
-  caseSensitive?: boolean,
-) =>
-  caseSensitive === undefined ? { value, mode } : { value, mode, caseSensitive }
-
 describe("search predicate", () => {
-  test("requires at least one non-empty predicate member and keeps caller mode", () => {
-    expect(() => compilePredicate({})).toThrow(/name, nodeTypes, or text/)
-    expect(() =>
-      compilePredicate({ name: nameTerm("   ", "contains") }),
-    ).toThrow(/non-empty/)
-    expect(() => compilePredicate({ text: nameTerm("", "exact") })).toThrow(
+  test("requires query or types, trims them, and keeps match mode", () => {
+    expect(() => compilePredicate({ match: "contains" })).toThrow(
+      /query or types/,
+    )
+    expect(() => compilePredicate({ query: "   ", match: "contains" })).toThrow(
       /non-empty/,
     )
-    expect(() => compilePredicate({ nodeTypes: [] })).toThrow(
-      /name, nodeTypes, or text/,
-    )
-    expect(() => compilePredicate({ nodeTypes: ["   "] })).toThrow(/non-empty/)
-    expect(compilePredicate({ nodeTypes: ["FRAME "] })).toEqual({
-      nodeTypes: ["FRAME"],
-    })
+    expect(() =>
+      compilePredicate({ types: ["   "], match: "contains" }),
+    ).toThrow(/non-empty/)
     expect(
       compilePredicate({
-        name: nameTerm("  Card  ", "exact", true),
+        types: ["FRAME ", "FRAME"],
+        match: "contains",
       }),
-    ).toEqual({
-      name: { value: "Card", mode: "exact", caseSensitive: true },
+    ).toEqual({ types: ["FRAME"], match: "contains" })
+    expect(compilePredicate({ query: "  Card  ", match: "exact" })).toEqual({
+      query: "Card",
+      match: "exact",
     })
   })
 
-  test("matches exact and contains name predicates with case sensitivity", () => {
+  test("matches exact and contains case-insensitively across name and text", () => {
     const card = node("1:1", "Card", "FRAME")
     const titled = node("1:2", "Card Title", "FRAME")
+    const text = node("1:3", "Label", "TEXT", { characters: "CARD" })
 
-    const exact: SearchPredicate = {
-      name: { value: "Card", mode: "exact" },
-    }
-    const contains: SearchPredicate = {
-      name: { value: "card", mode: "contains" },
-    }
-    const sensitive: SearchPredicate = {
-      name: { value: "card", mode: "contains", caseSensitive: true },
-    }
+    const exact: SearchPredicate = { query: "card", match: "exact" }
+    const contains: SearchPredicate = { query: "card", match: "contains" }
 
     expect(matchReasons(card, exact)).toEqual(["name"])
     expect(matchReasons(titled, exact)).toEqual([])
     expect(matchReasons(card, contains)).toEqual(["name"])
     expect(matchReasons(titled, contains)).toEqual(["name"])
-    expect(matchReasons(card, sensitive)).toEqual([])
+    expect(matchReasons(text, exact)).toEqual(["text"])
   })
 
-  test("emits every applicable reason once and requires every provided predicate", () => {
+  test("emits every applicable reason and ANDs query with types", () => {
     const pay = node("1:3", "Pay now", "TEXT", { characters: "Pay now" })
     const frame = node("1:4", "Pay now", "FRAME")
 
     const predicate: SearchPredicate = {
-      name: { value: "Pay now", mode: "exact" },
-      nodeTypes: ["TEXT", "TEXT"],
-      text: { value: "Pay", mode: "contains" },
+      query: "Pay now",
+      types: ["TEXT"],
+      match: "exact",
     }
 
-    expect(matchReasons(pay, predicate)).toEqual(["name", "nodeType", "text"])
+    expect(matchReasons(pay, predicate)).toEqual(["nodeType", "name", "text"])
     expect(matchReasons(frame, predicate)).toEqual([])
   })
 
@@ -137,11 +122,9 @@ describe("search predicate", () => {
         throw new Error("font not loaded")
       },
     })
-    const frame = node("1:6", "Pay", "FRAME", { characters: "Pay" })
+    const frame = node("1:6", "Container", "FRAME", { characters: "Pay" })
     const text = node("1:7", "Label", "TEXT", { characters: "Pay now" })
-    const predicate: SearchPredicate = {
-      text: { value: "Pay", mode: "contains" },
-    }
+    const predicate: SearchPredicate = { query: "Pay", match: "contains" }
 
     expect(matchReasons(throwingText, predicate)).toEqual([])
     expect(matchReasons(frame, predicate)).toEqual([])
@@ -154,6 +137,143 @@ describe("search_nodes handler", () => {
     installFigma({
       currentPage: page("0:2", "Current"),
     })
+  })
+
+  test("accepts a flat query and searches names plus TEXT characters", async () => {
+    const text = node("1:2", "Label", "TEXT", { characters: "Commission" })
+    const frame = node("1:3", "Commission card", "FRAME")
+    const requested = page("0:1", "Requested", [text, frame])
+    installFigma({ currentPage: requested, pages: [requested] })
+
+    const result = await searchNodes({
+      scope: { nodeId: requested.id },
+      query: "commission",
+      match: "contains",
+      limit: 50,
+    })
+
+    expect(result.matches.map((item) => [item.node.id, item.reasons])).toEqual([
+      ["1:2", ["text"]],
+      ["1:3", ["name"]],
+    ])
+  })
+
+  test("paginates without duplicates and rejects a changed query", async () => {
+    const requested = page("0:1", "Requested", [
+      node("1:1", "Card one", "FRAME"),
+      node("1:2", "Card two", "FRAME"),
+      node("1:3", "Card three", "FRAME"),
+    ])
+    installFigma({ currentPage: requested, pages: [requested] })
+
+    const first = await searchNodes({
+      scope: { pageId: requested.id },
+      query: "Card",
+      match: "contains",
+      limit: 2,
+    })
+    expect(first.matches.map((item) => item.node.id)).toEqual(["1:1", "1:2"])
+    expect(first.nextCursor).toBeString()
+    expect(first.truncated).toBe(false)
+    const cursor = first.nextCursor
+    if (cursor === undefined) throw new Error("expected next cursor")
+
+    const second = await searchNodes({
+      scope: { pageId: requested.id },
+      query: "Card",
+      match: "contains",
+      limit: 2,
+      cursor,
+    })
+    expect(second.matches.map((item) => item.node.id)).toEqual(["1:3"])
+    expect(second.nextCursor).toBeUndefined()
+    await expect(
+      searchNodes({
+        scope: { pageId: requested.id },
+        query: "Other",
+        match: "contains",
+        limit: 2,
+        cursor,
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_CURSOR" })
+  })
+
+  test("returns a continuation without scanning the whole tree after reaching the limit", async () => {
+    const requested = page(
+      "0:1",
+      "Property",
+      Array.from({ length: 10_000 }, (_, index) =>
+        node(`1:${index}`, "Unrelated", "FRAME"),
+      ),
+    )
+    installFigma({ currentPage: requested, pages: [requested] })
+
+    const first = await searchNodes({
+      scope: { pageId: requested.id },
+      query: "Property",
+      match: "exact",
+      limit: 1,
+    })
+
+    expect(first.matches.map((item) => item.node.id)).toEqual(["0:1"])
+    expect(first.nextCursor).toBeString()
+    expect(first.truncated).toBe(false)
+  })
+
+  test("does not reload the already-current page before searching", async () => {
+    const requested = page("0:1", "Current", [])
+    requested.loadAsync = async () => {
+      throw new Error("current page should already be loaded")
+    }
+    installFigma({ currentPage: requested, pages: [requested] })
+
+    const result = await searchNodes({
+      scope: { pageId: requested.id },
+      types: ["PAGE"],
+      match: "contains",
+      limit: 1,
+    })
+
+    expect(result.matches.map((item) => item.node.id)).toEqual(["0:1"])
+  })
+
+  test("uses the already-current page without looking it up again", async () => {
+    const requested = page("0:1", "Current", [])
+    installFigma({
+      currentPage: requested,
+      pages: [requested],
+      getNodeByIdAsync: async () => {
+        throw new Error("current page should not be looked up")
+      },
+    })
+
+    const result = await searchNodes({
+      scope: { pageId: requested.id },
+      types: ["PAGE"],
+      match: "contains",
+      limit: 1,
+    })
+
+    expect(result.matches.map((item) => item.node.id)).toEqual(["0:1"])
+  })
+
+  test("checks a matching node before reading its dynamic children", async () => {
+    const requested = page("0:1", "Current", [])
+    Object.defineProperty(requested, "children", {
+      get() {
+        throw new Error("children should not be read after the limit is met")
+      },
+    })
+    installFigma({ currentPage: requested, pages: [requested] })
+
+    const result = await searchNodes({
+      scope: { pageId: requested.id },
+      types: ["PAGE"],
+      match: "contains",
+      limit: 1,
+    })
+
+    expect(result.matches.map((item) => item.node.id)).toEqual(["0:1"])
   })
 
   test("searches one explicit page in document order without changing the current page", async () => {
@@ -170,7 +290,9 @@ describe("search_nodes handler", () => {
 
     const result = await searchNodes({
       scope: { pageId: requested.id },
-      query: { name: nameTerm("Card") },
+      query: "Card",
+      match: "contains",
+      limit: 50,
     })
 
     expect(result.matches.map((match) => match.node.id)).toEqual(["1:2", "1:3"])
@@ -197,11 +319,15 @@ describe("search_nodes handler", () => {
 
     const nodeResult = await searchNodes({
       scope: { nodeId: target.id },
-      query: { nodeTypes: ["RECTANGLE"] },
+      types: ["RECTANGLE"],
+      match: "contains",
+      limit: 50,
     })
     const pageAsNode = await searchNodes({
       scope: { nodeId: requested.id },
-      query: { name: nameTerm("Card", "exact") },
+      query: "Card",
+      match: "exact",
+      limit: 50,
     })
 
     expect(nodeResult.matches.map((match) => match.node.id)).toEqual([
@@ -226,20 +352,26 @@ describe("search_nodes handler", () => {
 
     await expect(
       searchNodes({
-        scope: { pageId: "0:1" },
-        query: { name: nameTerm("Card") },
+        scope: { pageId: "missing" },
+        query: "Card",
+        match: "contains",
+        limit: 50,
       }),
     ).rejects.toMatchObject({ code: "PAGE_NOT_FOUND" })
     await expect(
       searchNodes({
         scope: { pageId: rectangle.id },
-        query: { name: nameTerm("Card") },
+        query: "Card",
+        match: "contains",
+        limit: 50,
       }),
     ).rejects.toMatchObject({ code: "PAGE_NOT_FOUND" })
     await expect(
       searchNodes({
         scope: { nodeId: "missing" },
-        query: { name: nameTerm("Card") },
+        query: "Card",
+        match: "contains",
+        limit: 50,
       }),
     ).rejects.toMatchObject({ code: "NODE_NOT_FOUND" })
     expect(PluginReadError).toBeDefined()
@@ -254,8 +386,10 @@ describe("search_nodes handler", () => {
 
     await expect(
       searchNodes({
-        scope: { pageId: "0:1" },
-        query: { name: nameTerm("Card") },
+        scope: { pageId: "0:2" },
+        query: "Card",
+        match: "contains",
+        limit: 50,
       }),
     ).rejects.toMatchObject({ code: "CAPABILITY_UNAVAILABLE" })
   })
@@ -273,7 +407,9 @@ describe("search_nodes handler", () => {
     const result = await searchNodes(
       {
         scope: { pageId: requested.id },
-        query: { name: nameTerm("Card") },
+        query: "Card",
+        match: "contains",
+        limit: 50,
       },
       undefined,
       { returnedNodes: 1, visitedNodes: 4, encodedBytes: 8 * 1024 * 1024 },
@@ -311,7 +447,9 @@ describe("search_nodes handler", () => {
       searchNodes(
         {
           scope: { pageId: requested.id },
-          query: { name: nameTerm("Item") },
+          query: "Item",
+          match: "contains",
+          limit: 50,
         },
         cancellation.signal,
       ),

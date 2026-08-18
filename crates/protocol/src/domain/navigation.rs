@@ -3,7 +3,7 @@
 use super::{
     CapabilitySet, CompactNodeData, ConnectionId, DetailLevel, DisplayText, FileKey, FullNodeData,
     MinimalNodeDetails, NodeBatch, NodeForest, NodeId, NodeIdList, NodeSummary, NodeTypeList,
-    ObservationWindow, PageId, QueryText, ReturnedList, Selector, Truncation,
+    ObservationWindow, PageId, QueryText, ReturnedList, SearchCursor, Selector, Truncation,
     deserialize_optional_depth,
 };
 use crate::deferred::decode_raw;
@@ -244,31 +244,16 @@ pub struct SearchNodeScope {
     pub node_id: NodeId,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum SearchMatchMode {
-    Exact,
+    #[default]
     Contains,
+    Exact,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct SearchTerm {
-    pub value: QueryText,
-    pub mode: SearchMatchMode,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub case_sensitive: Option<bool>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct SearchQuery {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub name: Option<SearchTerm>,
-    #[serde(default, skip_serializing_if = "NodeTypeList::is_empty")]
-    pub node_types: NodeTypeList,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub text: Option<SearchTerm>,
+const fn default_search_limit() -> u16 {
+    50
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -277,7 +262,20 @@ pub struct SearchNodesInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connection_id: Option<ConnectionId>,
     pub scope: SearchScope,
-    pub query: SearchQuery,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query: Option<QueryText>,
+    #[serde(default, skip_serializing_if = "NodeTypeList::is_empty")]
+    pub types: NodeTypeList,
+    #[serde(default)]
+    pub r#match: SearchMatchMode,
+    #[serde(
+        default = "default_search_limit",
+        deserialize_with = "super::common::deserialize_search_limit"
+    )]
+    #[schemars(range(min = 1, max = 2000))]
+    pub limit: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<SearchCursor>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -291,6 +289,8 @@ pub struct NodeMatch {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SearchNodesResult {
     pub matches: ReturnedList<NodeMatch>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<SearchCursor>,
     pub truncated: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub truncation: Option<Truncation>,

@@ -643,7 +643,7 @@ async fn every_tool_and_prompt_round_trips_through_mcp_service() {
                 FIRST,
                 json!({
                     "scope": {"pageId": "0:1"},
-                    "query": {"name": {"value": "Card", "mode": "exact"}}
+                    "query": "Card", "match": "exact", "limit": 50
                 }),
             )),
         )

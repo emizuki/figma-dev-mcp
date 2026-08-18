@@ -58,6 +58,7 @@ const MESSAGES: Record<ErrorCode, string> = {
   UNSUPPORTED_NODE: "The requested node type is not supported.",
   CAPABILITY_UNAVAILABLE: "The required Figma capability is unavailable.",
   UNSAFE_SVG: "The SVG was rejected by the safety policy.",
+  INVALID_CURSOR: "The search cursor is invalid or stale.",
   LIMIT_EXCEEDED: "The operation exceeded a safety limit.",
   TIMEOUT: "The operation timed out.",
   CANCELLED: "The operation was cancelled.",

@@ -10,7 +10,7 @@ Use only this server's 14 read-only tools. Do not mutate the Figma document, cha
    - Prefer the current selection or an explicit node/page selector the user named.
    - Use `detail: "compact"` and a small `depth` (2 is typical) so the first tree stays token-efficient.
    - Set `dedupeComponents: true` when the screen repeats component instances.
-3. Prefer targeted `search_nodes` inside exactly one `pageId` or `nodeId` scope, then batched `get_nodes` for the IDs you still need. Do not issue one-id-at-a-time reads when a batch will do.
+3. Prefer targeted `search_nodes` inside exactly one `pageId` or `nodeId` scope, using a simple string `query` plus optional `types`, `match`, and `limit`. When `nextCursor` is present, repeat the same scope/query/filters with that cursor before widening the scope. Then batch `get_nodes` for the IDs you still need; do not issue one-id-at-a-time reads.
 4. Request specialized handoff data only when it is relevant to the implementation task:
    - `get_styles` for paint, text, effect, and grid styles
    - `get_variables` for collections, modes, aliases, and code syntax
@@ -38,5 +38,6 @@ When `dedupeComponents` is true, repeated component definitions are serialized o
 
 - Stay inside the selector you chose. Do not widen to other pages automatically.
 - `search_nodes` is single-scope only; do not request document-wide or multi-page search.
+- `search_nodes.query` is a case-insensitive substring over node names and TEXT characters by default; use `match: "exact"` only when needed.
 - Treat `connectionId` as an ephemeral handle from `list_files`. Rediscover it after a reconnect.
 - This catalog has no document dump, viewport read, text scan, or local export tool. Do not invent those calls.

@@ -3,6 +3,7 @@ export const MAX_INPUT_IDS = 2_000
 export const MAX_PAGE_IDS = 100
 export const MAX_IDENTIFIER_BYTES = 256
 export const MAX_QUERY_BYTES = 1_024
+export const MAX_SEARCH_CURSOR_BYTES = 64 * 1_024
 export const MAX_DISPLAY_TEXT_BYTES = 1_024
 export const MAX_VISITED_NODES = 10_000
 export const MAX_RETURNED_NODES = 2_000

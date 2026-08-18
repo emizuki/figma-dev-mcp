@@ -71,21 +71,13 @@ export type SearchScope = { pageId: string } | { nodeId: string }
 
 export type SearchMatchMode = "exact" | "contains"
 
-export interface SearchTerm {
-  value: string
-  mode: SearchMatchMode
-  caseSensitive?: boolean
-}
-
-export interface SearchQuery {
-  name?: SearchTerm
-  nodeTypes?: string[]
-  text?: SearchTerm
-}
-
 export interface SearchNodesInput extends FileScopedInput {
   scope: SearchScope
-  query: SearchQuery
+  query?: string
+  types?: string[]
+  match: SearchMatchMode
+  limit: number
+  cursor?: string
 }
 
 export interface GetDesignContextInput extends ScopedInput {
@@ -194,6 +186,7 @@ export const ERROR_CODES: readonly [
   "UNSUPPORTED_NODE",
   "CAPABILITY_UNAVAILABLE",
   "UNSAFE_SVG",
+  "INVALID_CURSOR",
   "LIMIT_EXCEEDED",
   "TIMEOUT",
   "CANCELLED",
@@ -209,6 +202,7 @@ export const ERROR_CODES: readonly [
   "UNSUPPORTED_NODE",
   "CAPABILITY_UNAVAILABLE",
   "UNSAFE_SVG",
+  "INVALID_CURSOR",
   "LIMIT_EXCEEDED",
   "TIMEOUT",
   "CANCELLED",

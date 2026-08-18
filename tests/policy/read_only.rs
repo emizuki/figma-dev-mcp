@@ -137,7 +137,7 @@ fn snapshots_lock_tools_annotations_prompts_and_wire_variants() {
         } else if tag == "get_nodes" {
             json!({"nodeIds": []})
         } else if tag == "search_nodes" {
-            json!({"scope": {"pageId": "0:1"}, "query": {"name": {"value": "Card", "mode": "contains"}}})
+            json!({"scope": {"pageId": "0:1"}, "query": "Card"})
         } else {
             json!({})
         };

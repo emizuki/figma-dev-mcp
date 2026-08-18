@@ -5,6 +5,7 @@ pub const MAX_INPUT_IDS: usize = 2_000;
 pub const MAX_PAGE_IDS: usize = 100;
 pub const MAX_IDENTIFIER_BYTES: usize = 256;
 pub const MAX_QUERY_BYTES: usize = 1_024;
+pub const MAX_SEARCH_CURSOR_BYTES: usize = 64 * 1_024;
 pub const MAX_DISPLAY_TEXT_BYTES: usize = 1_024;
 pub const MAX_VISITED_NODES: usize = 10_000;
 pub const MAX_RETURNED_NODES: usize = 2_000;

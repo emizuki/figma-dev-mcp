@@ -50,7 +50,7 @@ fn search_schema() -> jsonschema::Validator {
 }
 
 #[test]
-fn search_nodes_schema_requires_one_scope_and_at_least_one_predicate() {
+fn search_nodes_schema_exposes_flat_query_filters_limit_and_cursor() {
     let validator = search_schema();
     let schema = tools_catalog()
         .tools
@@ -65,36 +65,64 @@ fn search_nodes_schema_requires_one_scope_and_at_least_one_predicate() {
         "scope schema must be a oneOf: {rendered}"
     );
     assert!(
-        rendered.contains("\"required\":[\"name\"]")
-            || rendered.contains("\"required\": [\"name\"]"),
-        "predicate anyOf must require name: {rendered}"
+        rendered.contains("\"query\""),
+        "query must be public: {rendered}"
     );
     assert!(
-        rendered.contains("\"required\":[\"nodeTypes\"]")
-            || rendered.contains("\"required\": [\"nodeTypes\"]"),
-        "predicate anyOf must require nodeTypes: {rendered}"
+        rendered.contains("\"types\""),
+        "types must be public: {rendered}"
     );
     assert!(
-        rendered.contains("\"required\":[\"text\"]")
-            || rendered.contains("\"required\": [\"text\"]"),
-        "predicate anyOf must require text: {rendered}"
+        rendered.contains("\"match\""),
+        "match must be public: {rendered}"
+    );
+    assert!(
+        rendered.contains("\"limit\""),
+        "limit must be public: {rendered}"
+    );
+    assert!(
+        rendered.contains("\"cursor\""),
+        "cursor must be public: {rendered}"
     );
 
-    let name = json!({"value": "Card", "mode": "contains"});
-    let text = json!({"value": "Pay", "mode": "exact", "caseSensitive": true});
-    assert!(validator.is_valid(&json!({"scope":{"pageId":"0:1"},"query":{"name": name}})));
-    assert!(validator.is_valid(&json!({"scope":{"nodeId":"1:1"},"query":{"nodeTypes":["FRAME"]}})));
-    assert!(validator.is_valid(&json!({"scope":{"pageId":"0:1"},"query":{"text": text}})));
-    assert!(!validator.is_valid(&json!({"scope":{"pageId":"0:1"},"query":{"name":"Card"}})));
-    assert!(!validator.is_valid(&json!({"scope":{"pageId":"0:1"},"query":{"text":"Pay"}})));
+    assert!(validator.is_valid(&json!({
+        "scope": {"pageId": "0:1"},
+        "query": "Commission"
+    })));
+    assert!(validator.is_valid(&json!({
+        "scope": {"nodeId": "1:1"},
+        "types": ["FRAME", "COMPONENT"],
+        "match": "exact",
+        "limit": 25,
+        "cursor": "opaque-cursor"
+    })));
+    assert!(!validator.is_valid(&json!({
+        "scope": {"pageId": "0:1"},
+        "query": {"text": {"value": "Commission", "mode": "contains"}}
+    })));
+    assert!(!validator.is_valid(&json!({
+        "scope": {"pageId": "0:1"},
+        "query": "Commission",
+        "caseSensitive": true
+    })));
+    assert!(!validator.is_valid(&json!({
+        "scope": {"pageId": "0:1"},
+        "query": "Commission",
+        "limit": 0
+    })));
+    assert!(!validator.is_valid(&json!({
+        "scope": {"pageId": "0:1"},
+        "query": "Commission",
+        "limit": 2001
+    })));
 
     for invalid in [
-        json!({"query":{"name": name}}),
-        json!({"scope":{"pageId":"0:1","nodeId":"1:1"},"query":{"name": name}}),
-        json!({"scope":{"pageIds":["0:1"]},"query":{"name": name}}),
-        json!({"scope":{"pageIds":["0:1","0:2"]},"query":{"name": name}}),
-        json!({"scope":{"document":true},"query":{"name": name}}),
-        json!({"scope":{"pageId":"0:1"},"query":{}}),
+        json!({"query": "Card"}),
+        json!({"scope":{"pageId":"0:1","nodeId":"1:1"},"query": "Card"}),
+        json!({"scope":{"pageIds":["0:1"]},"query": "Card"}),
+        json!({"scope":{"pageIds":["0:1","0:2"]},"query": "Card"}),
+        json!({"scope":{"document":true},"query": "Card"}),
+        json!({"scope":{"pageId":"0:1"}}),
     ] {
         assert!(
             !validator.is_valid(&invalid),
@@ -104,22 +132,31 @@ fn search_nodes_schema_requires_one_scope_and_at_least_one_predicate() {
 }
 
 #[test]
-fn search_nodes_public_contract_trims_and_rejects_blank_node_types() {
+fn search_nodes_public_contract_trims_defaults_and_rejects_invalid_values() {
     assert!(
         serde_json::from_value::<SearchNodesInput>(json!({
             "scope": {"pageId": "0:1"},
-            "query": {"nodeTypes": ["   "]}
+            "types": ["   "]
         }))
         .is_err()
     );
     let parsed = serde_json::from_value::<SearchNodesInput>(json!({
         "scope": {"pageId": "0:1"},
-        "query": {"nodeTypes": ["FRAME "]}
+        "query": " Commission ",
+        "types": ["FRAME "],
+        "cursor": " cursor-token "
     }))
     .expect("padded node type must deserialize");
     assert_eq!(
-        serde_json::to_value(parsed).unwrap()["query"]["nodeTypes"],
-        json!(["FRAME"])
+        serde_json::to_value(parsed).unwrap(),
+        json!({
+            "scope": {"pageId": "0:1"},
+            "query": "Commission",
+            "types": ["FRAME"],
+            "match": "contains",
+            "limit": 50,
+            "cursor": "cursor-token"
+        })
     );
 }
 
@@ -166,10 +203,9 @@ async fn search_nodes_round_trips_and_rejects_invalid_scopes_before_dispatch() {
             request["operation"]["input"]["scope"],
             json!({"pageId": "0:1"})
         );
-        assert_eq!(
-            request["operation"]["input"]["query"],
-            json!({"name": {"value": "Card", "mode": "exact", "caseSensitive": true}})
-        );
+        assert_eq!(request["operation"]["input"]["query"], json!("Card"));
+        assert_eq!(request["operation"]["input"]["match"], "exact");
+        assert_eq!(request["operation"]["input"]["limit"], 25);
         let request_id = request["requestId"].as_str().unwrap();
         plugin
             .send(Message::Text(
@@ -204,15 +240,10 @@ async fn search_nodes_round_trips_and_rejects_invalid_scopes_before_dispatch() {
         "connectionId".to_owned(),
         json!("123e4567-e89b-42d3-a456-426614174000"),
     );
-    let name = json!({"value": "Card", "mode": "exact", "caseSensitive": true});
-
     for (label, arguments) in [
         (
             "omitted scope",
-            serde_json::Map::from_iter([
-                connection.clone(),
-                ("query".to_owned(), json!({"name": name})),
-            ]),
+            serde_json::Map::from_iter([connection.clone(), ("query".to_owned(), json!("Card"))]),
         ),
         (
             "both scopes",
@@ -222,7 +253,7 @@ async fn search_nodes_round_trips_and_rejects_invalid_scopes_before_dispatch() {
                     "scope".to_owned(),
                     json!({"pageId": "0:1", "nodeId": "1:1"}),
                 ),
-                ("query".to_owned(), json!({"name": name})),
+                ("query".to_owned(), json!("Card")),
             ]),
         ),
         (
@@ -230,7 +261,7 @@ async fn search_nodes_round_trips_and_rejects_invalid_scopes_before_dispatch() {
             serde_json::Map::from_iter([
                 connection.clone(),
                 ("scope".to_owned(), json!({"pageIds": ["0:1"]})),
-                ("query".to_owned(), json!({"name": name})),
+                ("query".to_owned(), json!("Card")),
             ]),
         ),
         (
@@ -238,7 +269,7 @@ async fn search_nodes_round_trips_and_rejects_invalid_scopes_before_dispatch() {
             serde_json::Map::from_iter([
                 connection.clone(),
                 ("scope".to_owned(), json!({"document": true})),
-                ("query".to_owned(), json!({"name": name})),
+                ("query".to_owned(), json!("Card")),
             ]),
         ),
         (
@@ -246,15 +277,18 @@ async fn search_nodes_round_trips_and_rejects_invalid_scopes_before_dispatch() {
             serde_json::Map::from_iter([
                 connection.clone(),
                 ("scope".to_owned(), json!({"pageIds": ["0:1", "0:2"]})),
-                ("query".to_owned(), json!({"name": name})),
+                ("query".to_owned(), json!("Card")),
             ]),
         ),
         (
-            "string name predicate",
+            "legacy nested query",
             serde_json::Map::from_iter([
                 connection.clone(),
                 ("scope".to_owned(), json!({"pageId": "0:1"})),
-                ("query".to_owned(), json!({"name": "Card"})),
+                (
+                    "query".to_owned(),
+                    json!({"name": {"value": "Card", "mode": "contains"}}),
+                ),
             ]),
         ),
         (
@@ -262,7 +296,7 @@ async fn search_nodes_round_trips_and_rejects_invalid_scopes_before_dispatch() {
             serde_json::Map::from_iter([
                 connection.clone(),
                 ("scope".to_owned(), json!({"pageId": "0:1"})),
-                ("query".to_owned(), json!({})),
+                ("query".to_owned(), json!("   ")),
             ]),
         ),
         (
@@ -270,7 +304,7 @@ async fn search_nodes_round_trips_and_rejects_invalid_scopes_before_dispatch() {
             serde_json::Map::from_iter([
                 connection.clone(),
                 ("scope".to_owned(), json!({"pageId": "0:1"})),
-                ("query".to_owned(), json!({"nodeTypes": ["   "]})),
+                ("types".to_owned(), json!(["   "])),
             ]),
         ),
     ] {
@@ -288,7 +322,9 @@ async fn search_nodes_round_trips_and_rejects_invalid_scopes_before_dispatch() {
                 serde_json::Map::from_iter([
                     connection,
                     ("scope".to_owned(), json!({"pageId": "0:1"})),
-                    ("query".to_owned(), json!({"name": name})),
+                    ("query".to_owned(), json!("Card")),
+                    ("match".to_owned(), json!("exact")),
+                    ("limit".to_owned(), json!(25)),
                 ]),
             ),
         )

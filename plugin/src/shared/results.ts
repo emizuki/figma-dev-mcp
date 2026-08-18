@@ -302,6 +302,7 @@ export interface NodeMatch {
 
 export interface SearchNodesResult {
   matches: NodeMatch[]
+  nextCursor?: string
   truncated: boolean
   truncation?: Truncation
   observation: ObservationWindow

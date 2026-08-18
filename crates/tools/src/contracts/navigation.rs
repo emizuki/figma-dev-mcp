@@ -36,25 +36,16 @@ impl<'de> Deserialize<'de> for SearchNodesInput {
         D: Deserializer<'de>,
     {
         let mut input = domain::SearchNodesInput::deserialize(deserializer)?;
-        if input
-            .query
-            .name
-            .as_ref()
-            .is_some_and(|term| term.value.as_str().trim().is_empty())
-        {
-            return Err(D::Error::custom("name must be non-empty after trimming"));
+        if let Some(query) = input.query.take() {
+            let trimmed = query.as_str().trim();
+            if trimmed.is_empty() {
+                return Err(D::Error::custom("query must be non-empty after trimming"));
+            }
+            input.query = Some(domain::QueryText::try_from(trimmed).map_err(D::Error::custom)?);
         }
-        if input
-            .query
-            .text
-            .as_ref()
-            .is_some_and(|term| term.value.as_str().trim().is_empty())
-        {
-            return Err(D::Error::custom("text must be non-empty after trimming"));
-        }
-        if !input.query.node_types.is_empty() {
-            let mut types = Vec::with_capacity(input.query.node_types.len());
-            for type_name in input.query.node_types.as_slice() {
+        if !input.types.is_empty() {
+            let mut types = Vec::with_capacity(input.types.len());
+            for type_name in input.types.as_slice() {
                 let trimmed = type_name.as_str().trim();
                 if trimmed.is_empty() {
                     return Err(D::Error::custom(
@@ -63,23 +54,14 @@ impl<'de> Deserialize<'de> for SearchNodesInput {
                 }
                 types.push(domain::NodeTypeName::try_from(trimmed).map_err(D::Error::custom)?);
             }
-            input.query.node_types =
-                domain::NodeTypeList::try_from(types).map_err(D::Error::custom)?;
+            input.types = domain::NodeTypeList::try_from(types).map_err(D::Error::custom)?;
         }
-        let has_name = input
-            .query
-            .name
-            .as_ref()
-            .is_some_and(|term| !term.value.as_str().trim().is_empty());
-        let has_text = input
-            .query
-            .text
-            .as_ref()
-            .is_some_and(|term| !term.value.as_str().trim().is_empty());
-        if !has_name && input.query.node_types.is_empty() && !has_text {
-            return Err(D::Error::custom(
-                "search query must include name, nodeTypes, or text",
-            ));
+        if input.query.is_none() && input.types.is_empty() {
+            return Err(D::Error::custom("search must include query or types"));
+        }
+        if let Some(cursor) = input.cursor.take() {
+            let trimmed = cursor.as_str().trim();
+            input.cursor = Some(domain::SearchCursor::try_from(trimmed).map_err(D::Error::custom)?);
         }
         Ok(Self(input))
     }
@@ -95,27 +77,21 @@ impl JsonSchema for SearchNodesInput {
         schema
             .ensure_object()
             .insert("type".to_owned(), "object".into());
-        apply_search_contract_schema(generator);
+        apply_search_contract_schema(&mut schema, generator);
         schema
     }
 }
 
-fn apply_search_contract_schema(generator: &mut SchemaGenerator) {
+fn apply_search_contract_schema(schema: &mut Schema, generator: &mut SchemaGenerator) {
+    schema.ensure_object().insert(
+        "anyOf".to_owned(),
+        json!([{"required": ["query"]}, {"required": ["types"]}]),
+    );
     let defs = generator.definitions_mut();
     if let Some(scope) = defs.get_mut("SearchScope").and_then(Value::as_object_mut)
         && let Some(variants) = scope.remove("anyOf")
     {
         scope.insert("oneOf".to_owned(), variants);
-    }
-    if let Some(query) = defs.get_mut("SearchQuery").and_then(Value::as_object_mut) {
-        query.insert(
-            "anyOf".to_owned(),
-            json!([
-                {"required": ["name"]},
-                {"required": ["nodeTypes"]},
-                {"required": ["text"]}
-            ]),
-        );
     }
     if let Some(types) = defs.get_mut("NodeTypeList").and_then(Value::as_object_mut) {
         types.entry("minItems".to_owned()).or_insert(1.into());

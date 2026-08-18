@@ -23,7 +23,9 @@ const EMPTY_INPUTS: Record<
   get_nodes: { nodeIds: [] },
   search_nodes: {
     scope: { pageId: "0:1" },
-    query: { name: { value: "Card", mode: "contains" } },
+    query: "Card",
+    match: "contains",
+    limit: 50,
   },
   get_design_context: {},
   get_styles: {},

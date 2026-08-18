@@ -259,6 +259,7 @@ const CANONICAL_MESSAGES: Record<ErrorCode, string> = {
   UNSUPPORTED_NODE: "The requested node type is not supported.",
   CAPABILITY_UNAVAILABLE: "The required Figma capability is unavailable.",
   UNSAFE_SVG: "The SVG was rejected by the safety policy.",
+  INVALID_CURSOR: "The search cursor is invalid or stale.",
   LIMIT_EXCEEDED: "The operation exceeded a safety limit.",
   TIMEOUT: "The operation timed out.",
   CANCELLED: "The operation was cancelled.",
@@ -1198,11 +1199,16 @@ function parseSearchResult(value: unknown, label: string): SearchNodesResult {
     value,
     label,
     ["matches", "truncated", "observation"],
-    ["truncation"],
+    ["truncation", "nextCursor"],
   )
   return withResultMetadata(
     object,
-    { matches: arrayOf(object.matches, `${label}.matches`, parseNodeMatch) },
+    {
+      matches: arrayOf(object.matches, `${label}.matches`, parseNodeMatch),
+      ...(Object.hasOwn(object, "nextCursor")
+        ? { nextCursor: string(object.nextCursor, `${label}.nextCursor`) }
+        : {}),
+    },
     label,
   )
 }

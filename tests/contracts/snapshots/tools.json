@@ -2338,6 +2338,7 @@
             "UNSUPPORTED_NODE",
             "CAPABILITY_UNAVAILABLE",
             "UNSAFE_SVG",
+            "INVALID_CURSOR",
             "LIMIT_EXCEEDED",
             "TIMEOUT",
             "CANCELLED",
@@ -3648,6 +3649,7 @@
             "UNSUPPORTED_NODE",
             "CAPABILITY_UNAVAILABLE",
             "UNSAFE_SVG",
+            "INVALID_CURSOR",
             "LIMIT_EXCEEDED",
             "TIMEOUT",
             "CANCELLED",
@@ -4956,6 +4958,7 @@
             "UNSUPPORTED_NODE",
             "CAPABILITY_UNAVAILABLE",
             "UNSAFE_SVG",
+            "INVALID_CURSOR",
             "LIMIT_EXCEEDED",
             "TIMEOUT",
             "CANCELLED",
@@ -6260,6 +6263,7 @@
             "UNSUPPORTED_NODE",
             "CAPABILITY_UNAVAILABLE",
             "UNSAFE_SVG",
+            "INVALID_CURSOR",
             "LIMIT_EXCEEDED",
             "TIMEOUT",
             "CANCELLED",
@@ -7226,6 +7230,7 @@
             "UNSUPPORTED_NODE",
             "CAPABILITY_UNAVAILABLE",
             "UNSAFE_SVG",
+            "INVALID_CURSOR",
             "LIMIT_EXCEEDED",
             "TIMEOUT",
             "CANCELLED",
@@ -10034,6 +10039,7 @@
             "UNSUPPORTED_NODE",
             "CAPABILITY_UNAVAILABLE",
             "UNSAFE_SVG",
+            "INVALID_CURSOR",
             "LIMIT_EXCEEDED",
             "TIMEOUT",
             "CANCELLED",
@@ -10687,10 +10693,17 @@
           "type": "string",
           "x-maxUtf8Bytes": 1024
         },
+        "SearchCursor": {
+          "description": "opaque search cursor; bounded by UTF-8 encoded byte length",
+          "maxLength": 65536,
+          "minLength": 1,
+          "type": "string",
+          "x-maxUtf8Bytes": 65536
+        },
         "SearchMatchMode": {
           "enum": [
-            "exact",
-            "contains"
+            "contains",
+            "exact"
           ],
           "type": "string"
         },
@@ -10718,52 +10731,6 @@
           ],
           "type": "object"
         },
-        "SearchQuery": {
-          "additionalProperties": false,
-          "anyOf": [
-            {
-              "required": [
-                "name"
-              ]
-            },
-            {
-              "required": [
-                "nodeTypes"
-              ]
-            },
-            {
-              "required": [
-                "text"
-              ]
-            }
-          ],
-          "properties": {
-            "name": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/SearchTerm"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "nodeTypes": {
-              "$ref": "#/$defs/NodeTypeList"
-            },
-            "text": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/SearchTerm"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            }
-          },
-          "type": "object"
-        },
         "SearchScope": {
           "oneOf": [
             {
@@ -10773,32 +10740,22 @@
               "$ref": "#/$defs/SearchNodeScope"
             }
           ]
-        },
-        "SearchTerm": {
-          "additionalProperties": false,
-          "properties": {
-            "caseSensitive": {
-              "type": [
-                "boolean",
-                "null"
-              ]
-            },
-            "mode": {
-              "$ref": "#/$defs/SearchMatchMode"
-            },
-            "value": {
-              "$ref": "#/$defs/QueryText"
-            }
-          },
-          "required": [
-            "value",
-            "mode"
-          ],
-          "type": "object"
         }
       },
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "query"
+          ]
+        },
+        {
+          "required": [
+            "types"
+          ]
+        }
+      ],
       "properties": {
         "connectionId": {
           "anyOf": [
@@ -10810,16 +10767,46 @@
             }
           ]
         },
+        "cursor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SearchCursor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "limit": {
+          "default": 50,
+          "format": "uint16",
+          "maximum": 2000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "match": {
+          "$ref": "#/$defs/SearchMatchMode",
+          "default": "contains"
+        },
         "query": {
-          "$ref": "#/$defs/SearchQuery"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QueryText"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "scope": {
           "$ref": "#/$defs/SearchScope"
+        },
+        "types": {
+          "$ref": "#/$defs/NodeTypeList"
         }
       },
       "required": [
-        "scope",
-        "query"
+        "scope"
       ],
       "type": "object"
     },
@@ -10977,6 +10964,13 @@
           "maxItems": 2000,
           "type": "array"
         },
+        "SearchCursor": {
+          "description": "opaque search cursor; bounded by UTF-8 encoded byte length",
+          "maxLength": 65536,
+          "minLength": 1,
+          "type": "string",
+          "x-maxUtf8Bytes": 65536
+        },
         "Truncation": {
           "additionalProperties": false,
           "properties": {
@@ -11028,6 +11022,16 @@
       "properties": {
         "matches": {
           "$ref": "#/$defs/ReturnedList_of_NodeMatch"
+        },
+        "nextCursor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SearchCursor"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "observation": {
           "$ref": "#/$defs/ObservationWindow"

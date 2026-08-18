@@ -252,6 +252,7 @@ fn error_code_name(code: figma_dev_mcp_protocol::error::ErrorCode) -> &'static s
         figma_dev_mcp_protocol::error::ErrorCode::UnsupportedNode => "UNSUPPORTED_NODE",
         figma_dev_mcp_protocol::error::ErrorCode::CapabilityUnavailable => "CAPABILITY_UNAVAILABLE",
         figma_dev_mcp_protocol::error::ErrorCode::UnsafeSvg => "UNSAFE_SVG",
+        figma_dev_mcp_protocol::error::ErrorCode::InvalidCursor => "INVALID_CURSOR",
         figma_dev_mcp_protocol::error::ErrorCode::LimitExceeded => "LIMIT_EXCEEDED",
         figma_dev_mcp_protocol::error::ErrorCode::Timeout => "TIMEOUT",
         figma_dev_mcp_protocol::error::ErrorCode::Cancelled => "CANCELLED",
