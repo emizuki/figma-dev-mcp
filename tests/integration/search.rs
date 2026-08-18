@@ -9,6 +9,11 @@ use tokio_tungstenite::{
     connect_async, tungstenite::Message, tungstenite::client::IntoClientRequest,
 };
 
+use super::multi_client::connect_plugin;
+
+const FIRST_CONNECTION: &str = "123e4567-e89b-42d3-a456-426614174000";
+const SECOND_CONNECTION: &str = "123e4567-e89b-42d3-a456-426614174001";
+
 async fn running_broker() -> (SocketAddr, Broker, tokio::task::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -16,6 +21,16 @@ async fn running_broker() -> (SocketAddr, Broker, tokio::task::JoinHandle<()>) {
     let server = broker.clone();
     let task = tokio::spawn(async move { server.serve(listener).await.unwrap() });
     (address, broker, task)
+}
+
+async fn wait_for_sessions(broker: &Broker, count: usize) {
+    for _ in 0..50 {
+        if broker.live_file_count().await == count {
+            return;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(broker.live_file_count().await, count);
 }
 
 fn hello(connection_id: &str) -> Message {
@@ -161,17 +176,15 @@ fn search_nodes_public_contract_trims_defaults_and_rejects_invalid_values() {
 }
 
 #[tokio::test]
-async fn search_nodes_round_trips_and_rejects_invalid_scopes_before_dispatch() {
+async fn search_nodes_without_connection_id_round_trips_and_rejects_invalid_scopes_before_dispatch()
+{
     let (address, broker, broker_task) = running_broker().await;
     let mut request = format!("ws://{address}/").into_client_request().unwrap();
     request
         .headers_mut()
         .insert("Origin", "null".parse().unwrap());
     let (mut plugin, _) = connect_async(request).await.unwrap();
-    plugin
-        .send(hello("123e4567-e89b-42d3-a456-426614174000"))
-        .await
-        .unwrap();
+    plugin.send(hello(FIRST_CONNECTION)).await.unwrap();
     for _ in 0..20 {
         if broker.live_file_count().await == 1 {
             break;
@@ -236,10 +249,7 @@ async fn search_nodes_round_trips_and_rejects_invalid_scopes_before_dispatch() {
             .unwrap();
     });
 
-    let connection = (
-        "connectionId".to_owned(),
-        json!("123e4567-e89b-42d3-a456-426614174000"),
-    );
+    let connection = ("connectionId".to_owned(), json!(FIRST_CONNECTION));
     for (label, arguments) in [
         (
             "omitted scope",
@@ -320,7 +330,6 @@ async fn search_nodes_round_trips_and_rejects_invalid_scopes_before_dispatch() {
         .call_tool(
             rmcp::model::CallToolRequestParams::new("search_nodes").with_arguments(
                 serde_json::Map::from_iter([
-                    connection,
                     ("scope".to_owned(), json!({"pageId": "0:1"})),
                     ("query".to_owned(), json!("Card")),
                     ("match".to_owned(), json!("exact")),
@@ -335,6 +344,116 @@ async fn search_nodes_round_trips_and_rejects_invalid_scopes_before_dispatch() {
     assert_eq!(value["matches"][0]["node"]["id"], "1:2");
     assert_eq!(value["matches"][0]["reasons"], json!(["name"]));
     assert_eq!(value["truncated"], false);
+
+    plugin_task.await.unwrap();
+    server_task.abort();
+    broker_task.abort();
+}
+
+#[tokio::test]
+async fn search_nodes_without_connection_id_rejects_ambiguous_sessions() {
+    let (address, broker, broker_task) = running_broker().await;
+    let _first = connect_plugin(address, FIRST_CONNECTION, "First file").await;
+    let _second = connect_plugin(address, SECOND_CONNECTION, "Second file").await;
+    wait_for_sessions(&broker, 2).await;
+
+    let (server_io, client_io) = tokio::io::duplex(64 * 1024);
+    let server_task = tokio::spawn(async move {
+        McpService::new(broker.clone())
+            .serve(server_io)
+            .await
+            .unwrap()
+    });
+    let client = ().serve(client_io).await.unwrap();
+
+    let result = client
+        .call_tool(
+            rmcp::model::CallToolRequestParams::new("search_nodes").with_arguments(
+                serde_json::Map::from_iter([
+                    ("scope".to_owned(), json!({"pageId": "0:1"})),
+                    ("query".to_owned(), json!("Card")),
+                ]),
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.is_error, Some(true));
+    assert_eq!(
+        result.structured_content.unwrap()["code"],
+        "AMBIGUOUS_CONNECTION"
+    );
+
+    server_task.abort();
+    broker_task.abort();
+}
+
+#[tokio::test]
+async fn search_nodes_without_connection_id_routes_to_the_reconnected_session() {
+    let (address, broker, broker_task) = running_broker().await;
+    let mut first = connect_plugin(address, FIRST_CONNECTION, "Before reconnect").await;
+    wait_for_sessions(&broker, 1).await;
+    first.close(None).await.unwrap();
+    wait_for_sessions(&broker, 0).await;
+
+    let mut second = connect_plugin(address, SECOND_CONNECTION, "After reconnect").await;
+    wait_for_sessions(&broker, 1).await;
+
+    let (server_io, client_io) = tokio::io::duplex(64 * 1024);
+    let server_task = tokio::spawn(async move {
+        McpService::new(broker.clone())
+            .serve(server_io)
+            .await
+            .unwrap()
+    });
+    let client = ().serve(client_io).await.unwrap();
+
+    let plugin_task = tokio::spawn(async move {
+        let request = loop {
+            let Some(Ok(Message::Text(frame))) = second.next().await else {
+                panic!("reconnected plugin did not receive request")
+            };
+            let request: Value = serde_json::from_str(&frame).unwrap();
+            if request["type"] == "request" {
+                break request;
+            }
+        };
+        assert_eq!(request["operation"]["operation"], "search_nodes");
+        assert_eq!(request["operation"]["input"]["query"], "Card");
+        let request_id = request["requestId"].as_str().unwrap();
+        second
+            .send(Message::Text(
+                json!({
+                    "type": "response",
+                    "requestId": request_id,
+                    "result": {
+                        "operation": "search_nodes",
+                        "result": {
+                            "matches": [],
+                            "truncated": false,
+                            "observation": observation()
+                        }
+                    }
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .unwrap();
+    });
+
+    let result = client
+        .call_tool(
+            rmcp::model::CallToolRequestParams::new("search_nodes").with_arguments(
+                serde_json::Map::from_iter([
+                    ("scope".to_owned(), json!({"pageId": "0:1"})),
+                    ("query".to_owned(), json!("Card")),
+                ]),
+            ),
+        )
+        .await
+        .unwrap();
+    assert_ne!(result.is_error, Some(true));
+    assert_eq!(result.structured_content.unwrap()["matches"], json!([]));
 
     plugin_task.await.unwrap();
     server_task.abort();
