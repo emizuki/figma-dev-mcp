@@ -8,11 +8,11 @@ mod tools_catalog;
 
 use figma_dev_mcp_protocol::{
     domain::{
-        ConnectionId, DesignNode, GetDesignContextResult, GetMotionResult, GetNodesResult,
-        GetReactionsResult, GetSelectionResult, ItemIdentifier, MinimalNodeDetails, NodeForest,
-        NodeId, NodeTypeList, NodeTypeName, NodesSelector, PageId, PagesSelector, PaintValue,
-        RasterScale, ReactionAction, RequestId, ReturnedList, ScreenshotAsset, SearchNodesInput,
-        Selector,
+        ComponentValue, ConnectionId, DesignNode, GetDesignContextResult, GetMotionResult,
+        GetNodesResult, GetReactionsResult, GetSelectionResult, InstanceValue, ItemIdentifier,
+        MinimalNodeDetails, NodeForest, NodeId, NodeTypeList, NodeTypeName, NodesSelector, PageId,
+        PagesSelector, PaintValue, RasterScale, ReactionAction, RequestId, ReturnedList,
+        ScreenshotAsset, SearchNodesInput, Selector,
     },
     error::{ErrorCode, ItemError, PluginFailure, ToolError},
     limits::{
@@ -1648,6 +1648,95 @@ fn full_node_fixture() -> Value {
         },
         "children": [], "childrenTruncated": false
     })
+}
+
+/// Clones `full_node_fixture()` and replaces its `data.instance` with a populated
+/// (non-empty `properties`) instance value. Does not modify `full_node_fixture()` itself.
+fn full_node_fixture_with_populated_instance_properties() -> Value {
+    let mut node = full_node_fixture();
+    node["data"]["instance"] = json!({
+        "componentId": "C:1",
+        "componentSetId": "CS:1",
+        "properties": [
+            {"name": "ButtonText#0:1", "value": {"kind": "text", "value": "Save"}},
+            {"name": "Size", "value": {"kind": "variant", "value": "Large"}}
+        ]
+    });
+    node
+}
+
+#[test]
+fn full_node_results_carry_populated_instance_properties_past_the_serializer() {
+    let node = full_node_fixture_with_populated_instance_properties();
+
+    for branch in ["selection", "nodes", "context"] {
+        let wrapped = result_with_node(branch, "full", node.clone());
+        let decoded =
+            decode_detail_result(branch, wrapped).expect("populated instance properties decode");
+        let properties = match branch {
+            "selection" => &decoded["nodes"][0]["data"]["instance"]["properties"],
+            "nodes" => &decoded["items"][0]["value"]["data"]["instance"]["properties"],
+            "context" => &decoded["roots"][0]["data"]["instance"]["properties"],
+            _ => unreachable!(),
+        };
+        assert_eq!(
+            *properties,
+            json!([
+                {"name": "ButtonText#0:1", "value": {"kind": "text", "value": "Save"}},
+                {"name": "Size", "value": {"kind": "variant", "value": "Large"}}
+            ]),
+            "{branch} must round-trip populated instance properties unchanged"
+        );
+    }
+
+    let schema = serde_json::to_value(schemars::schema_for!(GetSelectionResult))
+        .unwrap()
+        .to_string();
+    assert!(schema.contains("NamedComponentProperty"));
+    assert!(schema.contains("\"instance\""));
+}
+
+#[test]
+fn component_property_values_round_trip_and_reject_unknown_kinds() {
+    let value = json!({
+        "componentId": "C:1",
+        "componentSetId": "CS:1",
+        "properties": [
+            {"name": "ButtonText#0:1", "value": {"kind": "text", "value": "Save"}},
+            {"name": "IconSwap#0:2", "value": {"kind": "instanceSwap", "value": "9:9"}},
+            {"name": "IconVisible#0:0", "value": {"kind": "boolean", "value": false}},
+            {"name": "Size", "value": {"kind": "variant", "value": "Large"}}
+        ]
+    });
+
+    let parsed: ComponentValue = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(serde_json::to_value(parsed).unwrap(), value);
+
+    // InstanceValue is the type this feature actually populates; keep it in lockstep
+    // with ComponentValue even though the two are structurally identical today.
+    let parsed: InstanceValue = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(serde_json::to_value(parsed).unwrap(), value);
+
+    assert!(
+        serde_json::from_value::<ComponentValue>(json!({
+            "componentId": "C:1",
+            "properties": [
+                {"name": "Slot#0:3", "value": {"kind": "slot", "value": ""}}
+            ]
+        }))
+        .is_err(),
+        "component property union must stay closed"
+    );
+    assert!(
+        serde_json::from_value::<InstanceValue>(json!({
+            "componentId": "C:1",
+            "properties": [
+                {"name": "Slot#0:3", "value": {"kind": "slot", "value": ""}}
+            ]
+        }))
+        .is_err(),
+        "instance property union must stay closed"
+    );
 }
 
 fn motion_observation() -> Value {
