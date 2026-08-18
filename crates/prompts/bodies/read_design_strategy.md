@@ -30,9 +30,11 @@ If you need to confirm what is selected, `get_selection` is a successful empty l
 
 No detail level is an unbounded recursive walk. Honor depth, node-count, and truncation metadata.
 
-## Component deduplication
+## Component instances
 
-When `dedupeComponents` is true, repeated component definitions are serialized once and later instances reference that definition. Use this for lists, tables, and repeated cards so you do not reserialize the same component tree.
+Every `INSTANCE` node carries its own component property values: variant selections, text property content, boolean toggles, and instance-swap targets. Read them from the instance node in the tree you already fetched instead of issuing another call. Property names keep their `#` suffix so they match the definitions returned by `get_components`; join on that name to see which values differ from the component default.
+
+When `dedupeComponents` is true, repeated component definitions are serialized once and later instances reference that definition. Use this for lists, tables, and repeated cards so you do not reserialize the same component tree. Each instance still reports its own property values.
 
 ## Rules
 

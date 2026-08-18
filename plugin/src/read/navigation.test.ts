@@ -6,6 +6,7 @@ import {
   readSelection,
 } from "./navigation"
 import { MAX_RETURNED_NODES } from "../shared/limits"
+import { parseReadResult } from "../shared/result-validation"
 
 const page = (id: string, name: string) => ({ id, name })
 
@@ -345,6 +346,9 @@ describe("node reader", () => {
       name: "Calendar pill",
       type: "INSTANCE",
       children: [],
+      componentProperties: {
+        "Label#0:1": { type: "TEXT", value: "Today" },
+      },
       getMainComponentAsync: async () => ({
         id: "2:1",
         type: "COMPONENT",
@@ -379,11 +383,27 @@ describe("node reader", () => {
           instance: {
             componentId: "2:1",
             componentSetId: "2:0",
-            properties: [],
+            properties: [
+              { name: "Label#0:1", value: { kind: "text", value: "Today" } },
+            ],
           },
         },
       },
     })
+
+    // Push the result back through the same validator that guards the wire
+    // boundary, so a populated properties array is actually exercised by it.
+    const validated = parseReadResult({ operation: "get_nodes", result })
+    expect(validated.operation).toBe("get_nodes")
+    const validatedResult = validated.result as {
+      items: readonly {
+        status: string
+        value?: { data?: { instance?: { properties?: unknown } } }
+      }[]
+    }
+    expect(validatedResult.items[0]?.value?.data?.instance?.properties).toEqual(
+      [{ name: "Label#0:1", value: { kind: "text", value: "Today" } }],
+    )
   })
 })
 

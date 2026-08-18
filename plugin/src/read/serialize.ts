@@ -7,12 +7,14 @@ import {
 import { settleOrSkip } from "./common"
 import type {
   CompactNodeData,
+  ComponentPropertyValue,
   ComponentValue,
   DesignNode,
   EffectValue,
   FullNodeData,
   InstanceValue,
   MinimalNodeDetails,
+  NamedComponentProperty,
   PaintValue,
   StyleReference,
   TextStyle,
@@ -352,6 +354,77 @@ function variableReferences(node: UnknownRecord): VariableReference[] {
   return refs
 }
 
+export const TEXT_CLAMP_LIMIT = 256
+
+// Slicing a string by UTF-16 code unit can land inside a surrogate pair, leaving a
+// trailing lone high surrogate. JSON.stringify happily emits it (e.g. "\ud83d"), but
+// serde_json rejects the escape as invalid Unicode and fails to decode the whole
+// response, not just this value. Only when truncation actually occurred do we drop a
+// dangling trailing high surrogate; a string already within the limit — even one that
+// ends in a pre-existing unpaired high surrogate — is returned untouched.
+export function clampText(
+  value: string,
+  limit: number = TEXT_CLAMP_LIMIT,
+): string {
+  if (value.length <= limit) return value
+  const sliced = value.slice(0, limit)
+  const lastCode = sliced.charCodeAt(sliced.length - 1)
+  return lastCode >= 0xd800 && lastCode <= 0xdbff ? sliced.slice(0, -1) : sliced
+}
+
+function clampPropertyValue(value: unknown): unknown {
+  return typeof value === "string" ? clampText(value) : value
+}
+
+// Clamping deliberately lives outside this function: get_components' propertyDefinitions
+// call this directly with unclamped defaultValue text, and must stay that way.
+export function componentPropertyValue(
+  type: string,
+  value: unknown,
+): ComponentPropertyValue | undefined {
+  switch (type) {
+    case "TEXT":
+      return typeof value === "string" ? { kind: "text", value } : undefined
+    case "BOOLEAN":
+      return typeof value === "boolean" ? { kind: "boolean", value } : undefined
+    case "INSTANCE_SWAP":
+      return typeof value === "string"
+        ? { kind: "instanceSwap", value }
+        : undefined
+    case "VARIANT":
+      return typeof value === "string" ? { kind: "variant", value } : undefined
+    default:
+      return undefined
+  }
+}
+
+export function namedComponentProperties(
+  node: UnknownRecord,
+): NamedComponentProperty[] {
+  const source = record(hostGet(node, "componentProperties"))
+  let entries: [string, unknown][]
+  try {
+    entries = Object.entries(source)
+  } catch {
+    return []
+  }
+  const properties: NamedComponentProperty[] = []
+  for (const [name, raw] of entries) {
+    const property = record(raw)
+    const value = componentPropertyValue(
+      string(hostGet(property, "type")),
+      clampPropertyValue(hostGet(property, "value")),
+    )
+    if (value === undefined) continue
+    properties.push({ name, value })
+  }
+  properties.sort((left, right) => {
+    if (left.name < right.name) return -1
+    return left.name > right.name ? 1 : 0
+  })
+  return properties
+}
+
 function componentValue(node: UnknownRecord): ComponentValue | undefined {
   if (node.type !== "COMPONENT" && node.type !== "COMPONENT_SET")
     return undefined
@@ -371,7 +444,10 @@ function instanceValue(
   // Never read mainComponent: it is write-only under documentAccess: dynamic-page.
   const componentId = hostString(node, "componentId")
   if (componentId.length === 0) return undefined
-  const value: InstanceValue = { componentId, properties: [] }
+  const value: InstanceValue = {
+    componentId,
+    properties: namedComponentProperties(node),
+  }
   const componentSetId = hostString(node, "componentSetId")
   if (componentSetId.length > 0) value.componentSetId = componentSetId
   return value
@@ -417,7 +493,7 @@ function nodeData(
     const characters = string(node.characters)
     compact.text = {
       characterCount: characters.length,
-      preview: characters.slice(0, 256),
+      preview: clampText(characters),
     }
   }
   if (detail === "compact") return compact
@@ -816,7 +892,10 @@ async function resolveInstanceIdentity(
     }
   }
   if (componentId.length === 0) return undefined
-  const value: InstanceValue = { componentId, properties: [] }
+  const value: InstanceValue = {
+    componentId,
+    properties: namedComponentProperties(node),
+  }
   if (componentSetId.length > 0) value.componentSetId = componentSetId
   return value
 }

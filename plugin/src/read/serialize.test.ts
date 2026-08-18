@@ -3,8 +3,11 @@ import { describe, expect, test } from "bun:test"
 import { LocalCancellationController } from "../main/cancellation"
 import { createProgressReporter, type ProgressFrame } from "../main/progress"
 import {
+  clampText,
   collectInstanceIdentities,
+  namedComponentProperties,
   serializeNodeForest,
+  TEXT_CLAMP_LIMIT,
   walkNodeForest,
 } from "./serialize"
 
@@ -431,5 +434,293 @@ describe("bounded node serializer", () => {
       serializeFrames.every((frame) => frame.message === "serializing"),
     ).toBe(true)
     expect(serializeFrames.at(-1)?.completed).toBe(2)
+  })
+})
+
+describe("instance component properties", () => {
+  test("keeps suffixed names, sorts by name, and drops unsupported kinds", () => {
+    const instance = base({
+      id: "4:1",
+      type: "INSTANCE",
+      componentProperties: {
+        "ButtonText#0:1": { type: "TEXT", value: "Save" },
+        Size: { type: "VARIANT", value: "Large" },
+        "IconVisible#0:0": { type: "BOOLEAN", value: false },
+        "IconSwap#0:2": { type: "INSTANCE_SWAP", value: "9:9" },
+        "Slot#0:3": { type: "SLOT", value: "" },
+      },
+    })
+
+    expect(namedComponentProperties(instance)).toEqual([
+      { name: "ButtonText#0:1", value: { kind: "text", value: "Save" } },
+      { name: "IconSwap#0:2", value: { kind: "instanceSwap", value: "9:9" } },
+      { name: "IconVisible#0:0", value: { kind: "boolean", value: false } },
+      { name: "Size", value: { kind: "variant", value: "Large" } },
+    ])
+  })
+
+  test("survives a throwing host getter and clamps long string values", () => {
+    const throwing = base({ id: "4:2", type: "INSTANCE" })
+    Object.defineProperty(throwing, "componentProperties", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        throw new Error("componentProperties is not readable")
+      },
+    })
+
+    expect(namedComponentProperties(throwing)).toEqual([])
+
+    const long = base({
+      id: "4:3",
+      type: "INSTANCE",
+      componentProperties: {
+        "Body#1:0": { type: "TEXT", value: "x".repeat(300) },
+      },
+    })
+
+    expect(namedComponentProperties(long)).toEqual([
+      { name: "Body#1:0", value: { kind: "text", value: "x".repeat(256) } },
+    ])
+  })
+
+  test("ignores properties whose value type does not match the declared kind", () => {
+    const mismatched = base({
+      id: "4:4",
+      type: "INSTANCE",
+      componentProperties: {
+        "Label#0:1": { type: "TEXT", value: 42 },
+        "Toggle#0:2": { type: "BOOLEAN", value: "true" },
+        Size: { type: "VARIANT", value: "Large" },
+      },
+    })
+
+    expect(namedComponentProperties(mismatched)).toEqual([
+      { name: "Size", value: { kind: "variant", value: "Large" } },
+    ])
+  })
+
+  test("identity path carries properties without extra main component lookups", async () => {
+    let lookups = 0
+    const instance = base({
+      id: "4:1",
+      name: "Primary button",
+      type: "INSTANCE",
+      componentProperties: {
+        Size: { type: "VARIANT", value: "Large" },
+        "ButtonText#0:1": { type: "TEXT", value: "Save" },
+      },
+      getMainComponentAsync: async () => {
+        lookups += 1
+        return {
+          id: "8055:10274",
+          type: "COMPONENT",
+          parent: { id: "8055:10286", type: "COMPONENT_SET" },
+        }
+      },
+    })
+
+    const identities = await collectInstanceIdentities([instance])
+    const result = serializeNodeForest([instance], {
+      detail: "compact",
+      depth: 0,
+      dedupeComponents: false,
+      instanceIdentities: identities,
+    })
+
+    expect(lookups).toBe(1)
+    expect((result.nodes[0]?.data as { instance?: unknown }).instance).toEqual({
+      componentId: "8055:10274",
+      componentSetId: "8055:10286",
+      properties: [
+        { name: "ButtonText#0:1", value: { kind: "text", value: "Save" } },
+        { name: "Size", value: { kind: "variant", value: "Large" } },
+      ],
+    })
+  })
+
+  test("fallback path fills properties while components stay empty", () => {
+    const instance = base({
+      id: "4:4",
+      type: "INSTANCE",
+      componentId: "2:1",
+      componentProperties: {
+        "Label#0:1": { type: "TEXT", value: "Buy" },
+      },
+    })
+    const component = base({
+      id: "2:1",
+      type: "COMPONENT",
+      componentProperties: {
+        "Label#0:1": { type: "TEXT", value: "Buy" },
+      },
+    })
+
+    const result = serializeNodeForest([instance, component], {
+      detail: "compact",
+      depth: 0,
+      dedupeComponents: false,
+    })
+
+    expect((result.nodes[0]?.data as { instance?: unknown }).instance).toEqual({
+      componentId: "2:1",
+      properties: [
+        { name: "Label#0:1", value: { kind: "text", value: "Buy" } },
+      ],
+    })
+    expect(
+      (result.nodes[1]?.data as { component?: unknown }).component,
+    ).toEqual({
+      componentId: "2:1",
+      properties: [],
+    })
+  })
+
+  test("dedupeComponents keeps per-instance property values", async () => {
+    const main = { id: "8055:10274", type: "COMPONENT", parent: { id: "0:1" } }
+    const first = base({
+      id: "4:5",
+      type: "INSTANCE",
+      componentProperties: { "Label#0:1": { type: "TEXT", value: "Save" } },
+      getMainComponentAsync: async () => main,
+    })
+    const second = base({
+      id: "4:6",
+      type: "INSTANCE",
+      componentProperties: { "Label#0:1": { type: "TEXT", value: "Cancel" } },
+      getMainComponentAsync: async () => main,
+    })
+    const root = base({ id: "1:1", children: [first, second] })
+
+    const identities = await collectInstanceIdentities([root])
+    const result = serializeNodeForest([root], {
+      detail: "compact",
+      depth: 2,
+      dedupeComponents: true,
+      instanceIdentities: identities,
+    })
+
+    const children = result.nodes[0]?.children ?? []
+    expect(
+      (children[0]?.data as { instance?: { properties: unknown } }).instance
+        ?.properties,
+    ).toEqual([{ name: "Label#0:1", value: { kind: "text", value: "Save" } }])
+    expect(
+      (children[1]?.data as { instance?: { properties: unknown } }).instance
+        ?.properties,
+    ).toEqual([{ name: "Label#0:1", value: { kind: "text", value: "Cancel" } }])
+  })
+})
+
+function endsWithLoneHighSurrogate(value: string): boolean {
+  const code = value.charCodeAt(value.length - 1)
+  return code >= 0xd800 && code <= 0xdbff
+}
+
+describe("text clamp helper", () => {
+  test("leaves strings shorter than or equal to the limit untouched", () => {
+    const at255 = "a".repeat(255)
+    const at256 = "a".repeat(256)
+    expect(clampText(at255)).toBe(at255)
+    expect(clampText(at255)).toHaveLength(255)
+    expect(clampText(at256)).toBe(at256)
+    expect(clampText(at256)).toHaveLength(256)
+  })
+
+  test("truncates a string one over the limit down to the limit", () => {
+    const at257 = "a".repeat(257)
+    const clamped = clampText(at257)
+    expect(clamped).toHaveLength(TEXT_CLAMP_LIMIT)
+    expect(clamped).toBe("a".repeat(256))
+  })
+
+  test("drops a trailing high surrogate left dangling by a mid-pair slice", () => {
+    // A surrogate pair ("😀", one emoji) straddles the 256/257 boundary:
+    // 255 filler units (indices 0-254) + the pair at indices 255-256.
+    const filler = "a".repeat(255)
+    const pair = "😀"
+    const value = filler + pair + "tail"
+
+    const clamped = clampText(value)
+
+    expect(endsWithLoneHighSurrogate(clamped)).toBe(false)
+    expect(clamped).toBe(filler)
+    expect(clamped).toHaveLength(255)
+    // JSON.stringify/parse must round-trip without corrupting the string.
+    expect(JSON.parse(JSON.stringify(clamped))).toBe(clamped)
+  })
+
+  test("keeps a surrogate pair that lands entirely within the limit", () => {
+    const filler = "a".repeat(254)
+    const pair = "😀"
+    const value = filler + pair
+
+    const clamped = clampText(value)
+
+    expect(clamped).toBe(value)
+    expect(endsWithLoneHighSurrogate(clamped)).toBe(false)
+  })
+
+  test("returns a within-limit string byte-identical even with a pre-existing lone high surrogate", () => {
+    // No truncation occurs here: the input is already shorter than the limit, so a
+    // pre-existing (already broken) lone high surrogate must not be touched.
+    const value = "\ud800"
+    expect(clampText(value)).toBe(value)
+    expect(clampText(value)).toHaveLength(1)
+
+    const longer = "a".repeat(254) + "\ud800"
+    expect(clampText(longer)).toBe(longer)
+    expect(clampText(longer)).toHaveLength(255)
+  })
+
+  test("returns a string exactly at the limit byte-identical even with a pre-existing lone high surrogate", () => {
+    // No truncation occurs here either: the input is exactly at the limit.
+    const value = "a".repeat(255) + "\ud800"
+    expect(value).toHaveLength(TEXT_CLAMP_LIMIT)
+
+    expect(clampText(value)).toBe(value)
+    expect(clampText(value)).toHaveLength(TEXT_CLAMP_LIMIT)
+  })
+
+  test("namedComponentProperties clamps TEXT values without emitting a lone surrogate", () => {
+    const filler = "a".repeat(255)
+    const pair = "😀"
+    const instance = base({
+      id: "4:9",
+      type: "INSTANCE",
+      componentProperties: {
+        "Body#1:0": { type: "TEXT", value: filler + pair + "tail" },
+      },
+    })
+
+    const properties = namedComponentProperties(instance)
+    const value = properties[0]?.value
+
+    expect(value).toEqual({ kind: "text", value: filler })
+    if (value?.kind === "text") {
+      expect(endsWithLoneHighSurrogate(value.value)).toBe(false)
+      expect(JSON.parse(JSON.stringify(value))).toEqual(value)
+    }
+  })
+
+  test("text.preview clamps without emitting a lone surrogate", () => {
+    const filler = "a".repeat(255)
+    const pair = "😀"
+    const node = base({
+      id: "1:9",
+      type: "TEXT",
+      characters: filler + pair + "tail",
+    })
+
+    const result = serializeNodeForest([node], {
+      detail: "compact",
+      depth: 0,
+      dedupeComponents: false,
+    })
+
+    const text = (result.nodes[0]?.data as { text?: { preview: string } }).text
+    expect(text?.preview).toBe(filler)
+    expect(endsWithLoneHighSurrogate(text?.preview ?? "")).toBe(false)
+    expect(JSON.parse(JSON.stringify(result.nodes[0]))).toBeTruthy()
   })
 })

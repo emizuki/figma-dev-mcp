@@ -2,7 +2,6 @@ import type { GetComponentsInput } from "../shared/protocol"
 import type {
   ComponentDefinition,
   ComponentPropertyDefinition,
-  ComponentPropertyValue,
   DocumentationReference,
   GetComponentsResult,
   InstanceRelationship,
@@ -24,6 +23,7 @@ import { settleOrSkip } from "./common"
 import { PluginReadError, resolveDesignRoots } from "./navigation"
 import {
   byteLength,
+  componentPropertyValue,
   walkNodeForest,
   type ForestWalkOptions,
   type SerializerLimits,
@@ -95,26 +95,6 @@ function variantProperties(raw: unknown): NamedVariantProperty[] {
   }
 }
 
-function propertyValue(
-  type: string,
-  value: unknown,
-): ComponentPropertyValue | undefined {
-  switch (type) {
-    case "TEXT":
-      return typeof value === "string" ? { kind: "text", value } : undefined
-    case "BOOLEAN":
-      return typeof value === "boolean" ? { kind: "boolean", value } : undefined
-    case "INSTANCE_SWAP":
-      return typeof value === "string"
-        ? { kind: "instanceSwap", value }
-        : undefined
-    case "VARIANT":
-      return typeof value === "string" ? { kind: "variant", value } : undefined
-    default:
-      return undefined
-  }
-}
-
 function propertyDefinitions(raw: unknown): ComponentPropertyDefinition[] {
   if (!isRecord(raw)) return []
   const definitions: ComponentPropertyDefinition[] = []
@@ -127,7 +107,7 @@ function propertyDefinitions(raw: unknown): ComponentPropertyDefinition[] {
   for (const [name, value] of entries) {
     const definition = record(value)
     const type = string(definition.type)
-    const defaultValue = propertyValue(type, definition.defaultValue)
+    const defaultValue = componentPropertyValue(type, definition.defaultValue)
     if (defaultValue === undefined) continue
     const entry: ComponentPropertyDefinition = { name, defaultValue }
     if (type === "VARIANT") {
