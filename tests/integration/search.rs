@@ -28,7 +28,7 @@ async fn wait_for_sessions(broker: &Broker, count: usize) {
         if broker.live_file_count().await == count {
             return;
         }
-        tokio::task::yield_now().await;
+        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
     }
     assert_eq!(broker.live_file_count().await, count);
 }
@@ -390,9 +390,9 @@ async fn search_nodes_without_connection_id_rejects_ambiguous_sessions() {
 #[tokio::test]
 async fn search_nodes_without_connection_id_routes_to_the_reconnected_session() {
     let (address, broker, broker_task) = running_broker().await;
-    let mut first = connect_plugin(address, FIRST_CONNECTION, "Before reconnect").await;
+    let first = connect_plugin(address, FIRST_CONNECTION, "Before reconnect").await;
     wait_for_sessions(&broker, 1).await;
-    first.close(None).await.unwrap();
+    drop(first);
     wait_for_sessions(&broker, 0).await;
 
     let mut second = connect_plugin(address, SECOND_CONNECTION, "After reconnect").await;
