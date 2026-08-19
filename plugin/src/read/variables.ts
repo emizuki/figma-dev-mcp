@@ -18,9 +18,20 @@ import {
   throwIfAbortedAtBatch,
   type CancellationSignal,
 } from "../main/cancellation"
-import { PluginReadError } from "./navigation"
-import type { FigmaReadApi, FigmaVariablesApi } from "./common"
-import { byteLength, toColor, type SerializerLimits } from "./serialize"
+import { PluginReadError, resolveDesignRoots } from "./navigation"
+import {
+  settleOrSkip,
+  type FigmaReadApi,
+  type FigmaVariablesApi,
+} from "./common"
+import {
+  byteLength,
+  toColor,
+  variableIdsOf,
+  walkNodeForest,
+  type ForestWalkOptions,
+  type SerializerLimits,
+} from "./serialize"
 
 export interface ReadVariablesInput extends ScopedInput {
   resolveAliases?: boolean
@@ -56,17 +67,25 @@ function array(value: unknown): readonly unknown[] {
   return Array.isArray(value) ? value : []
 }
 
+// The scope walk resolves every bound id through getVariableByIdAsync and never
+// enumerates local storage, so that one method — not the local enumerators — is
+// what this tool cannot work without. Both live on figma.variables, not figma.
 function requireVariablesApi(): FigmaVariablesApi {
   const api = figma.variables
-  if (
-    api === undefined ||
-    api.getLocalVariableCollectionsAsync === undefined ||
-    api.getLocalVariablesAsync === undefined ||
-    api.getVariableByIdAsync === undefined
-  ) {
+  if (api === undefined || api.getVariableByIdAsync === undefined) {
     throw new PluginReadError("CAPABILITY_UNAVAILABLE", false)
   }
   return api
+}
+
+function walkOptions(
+  signal?: CancellationSignal,
+  limits?: Partial<SerializerLimits>,
+): ForestWalkOptions {
+  if (signal !== undefined && limits !== undefined) return { signal, limits }
+  if (signal !== undefined) return { signal }
+  if (limits !== undefined) return { limits }
+  return {}
 }
 
 function isAlias(value: unknown): value is { id: string } {
@@ -124,17 +143,10 @@ class VariableSession {
     this.api = requireVariablesApi()
   }
 
-  rememberVariable(raw: unknown): void {
-    const id = string(record(raw).id)
-    if (id.length > 0 && !this.variables.has(id)) this.variables.set(id, raw)
-  }
-
-  rememberCollection(raw: unknown): void {
-    const id = string(record(raw).id)
-    if (id.length > 0 && !this.collections.has(id))
-      this.collections.set(id, raw)
-  }
-
+  // Every host lookup below is wrapped in settleOrSkip: a bound id can name a
+  // variable in a library that is slow or unreachable, and one of those must
+  // not hang the read. A skipped lookup is cached as null like a genuine miss,
+  // so a stalled library costs the timeout once, not once per reference.
   async lookupVariable(
     id: string,
     signal?: CancellationSignal,
@@ -145,8 +157,7 @@ class VariableSession {
     if (lookup === undefined) {
       throw new PluginReadError("CAPABILITY_UNAVAILABLE", false)
     }
-    const raw = await lookup.call(this.api, id)
-    const value = raw ?? null
+    const value = await this.settle(() => lookup.call(this.api, id))
     this.variables.set(id, value)
     return value
   }
@@ -159,10 +170,20 @@ class VariableSession {
     if (this.collections.has(id)) return this.collections.get(id) ?? null
     const lookup = this.api.getVariableCollectionByIdAsync
     if (lookup === undefined) return null
-    const raw = await lookup.call(this.api, id)
-    const value = raw ?? null
+    const value = await this.settle(() => lookup.call(this.api, id))
     this.collections.set(id, value)
     return value
+  }
+
+  private async settle(call: () => Promise<unknown>): Promise<unknown | null> {
+    try {
+      // The host call is made inside the try on purpose: settleOrSkip only
+      // handles the rejection of an already-constructed promise, so a
+      // synchronous throw from the host API would escape it entirely.
+      return (await settleOrSkip(call())) ?? null
+    } catch {
+      return null
+    }
   }
 
   async resolve(
@@ -309,23 +330,23 @@ async function readDefinition(
   }
 }
 
+export interface GetVariablesLimits extends Partial<SerializerLimits> {
+  readonly variableLookupBudgetMs?: number
+}
+
+// The whole payload of this tool is host lookups, so it gets the same wall-clock
+// ceiling as get_components' main-component pass rather than the tighter one the
+// name pre-passes use, where a missing name is only a cosmetic loss.
+const DEFAULT_VARIABLE_LOOKUP_BUDGET_MS = 8_000
+
 export async function getVariables(
   input: ReadVariablesInput = {},
   signal?: CancellationSignal,
-  limits?: Partial<SerializerLimits>,
+  limits?: GetVariablesLimits,
 ): Promise<GetVariablesResult> {
   const startedAt = new Date().toISOString()
   const resolveAliases = input.resolveAliases === true
   const session = new VariableSession()
-  const readCollections = session.api.getLocalVariableCollectionsAsync
-  const readVariables = session.api.getLocalVariablesAsync
-  if (readCollections === undefined || readVariables === undefined) {
-    throw new PluginReadError("CAPABILITY_UNAVAILABLE", false)
-  }
-  const collections = await readCollections.call(session.api)
-  const variables = await readVariables.call(session.api)
-  for (const raw of collections) session.rememberCollection(raw)
-  for (const raw of variables) session.rememberVariable(raw)
 
   const emission = new VariableEmission({
     returnedNodes: limits?.returnedNodes ?? MAX_RETURNED_NODES,
@@ -333,14 +354,64 @@ export async function getVariables(
     encodedBytes: limits?.encodedBytes ?? MAX_TEXT_BYTES,
   })
 
-  for (let index = 0; index < collections.length; index += 1) {
+  // A caller asks get_variables what the design in front of them is built from.
+  // Local storage answers a different question: library variables are bound by
+  // the thousand and stored locally by none, so enumerating locally returned a
+  // set that provably did not intersect what the same scope actually binds.
+  const roots = await resolveDesignRoots(input.selector, signal)
+  const pending: string[] = []
+  const seen = new Set<string>()
+  const walked = walkNodeForest(roots, walkOptions(signal, limits), (raw) => {
+    // variableIdsOf is the single definition of "which variables does this node
+    // reference"; a second walker here would be free to drift from it.
+    for (const id of variableIdsOf(record(raw))) {
+      if (seen.has(id)) continue
+      seen.add(id)
+      pending.push(id)
+    }
+  })
+
+  const budgetMs =
+    limits?.variableLookupBudgetMs ?? DEFAULT_VARIABLE_LOOKUP_BUDGET_MS
+  const budgetStarted = Date.now()
+  let budgetTruncation: Truncation | undefined
+
+  // One lookup per unique id, grouped by the collection each variable declares.
+  const grouped = new Map<string, unknown[]>()
+  const collectionOrder: string[] = []
+  for (let index = 0; index < pending.length; index += 1) {
     throwIfAbortedAtBatch(signal, index, CANCEL_CHECK_BATCH)
-    const raw = collections[index]
+    signal?.throwIfAborted()
+    if (Date.now() - budgetStarted >= budgetMs) {
+      budgetTruncation = { reason: "nodeLimit", visitedNodes: index }
+      break
+    }
+    const raw = await session.lookupVariable(pending[index] as string, signal)
+    if (raw === null) continue
+    const collectionId = string(record(raw).variableCollectionId)
+    const group = grouped.get(collectionId)
+    if (group === undefined) {
+      grouped.set(collectionId, [raw])
+      collectionOrder.push(collectionId)
+    } else group.push(raw)
+  }
+
+  for (let index = 0; index < collectionOrder.length; index += 1) {
+    throwIfAbortedAtBatch(signal, index, CANCEL_CHECK_BATCH)
     signal?.throwIfAborted()
     if (!emission.consider()) break
-    const collection = record(raw)
-    const id = string(collection.id)
+    if (
+      budgetTruncation === undefined &&
+      Date.now() - budgetStarted >= budgetMs
+    ) {
+      budgetTruncation = { reason: "nodeLimit", visitedNodes: index }
+      break
+    }
+    const id = collectionOrder[index] as string
     if (id.length === 0) continue
+    // Resolved once per distinct collection id, and memoised on the session, so
+    // readDefinition's own lookup of the same id costs nothing.
+    const collection = record(await session.lookupCollection(id, signal))
     const definition: VariableCollection = {
       id,
       name: string(collection.name),
@@ -352,11 +423,8 @@ export async function getVariables(
       }),
       variables: [],
     }
-    for (const variableId of array(collection.variableIds)) {
-      if (typeof variableId !== "string" || variableId.length === 0) continue
+    for (const variable of grouped.get(id) ?? []) {
       signal?.throwIfAborted()
-      const variable = await session.lookupVariable(variableId, signal)
-      if (variable === null) continue
       const serialized = await readDefinition(
         session,
         variable,
@@ -368,11 +436,16 @@ export async function getVariables(
     if (!emission.pushCollection(definition)) break
   }
 
+  // A walk or budget that ran out named the reason the id set is incomplete,
+  // which outranks the emission cut for the same reason get_components orders
+  // them this way: it is the earlier, larger loss.
+  const truncation =
+    walked.truncation ?? budgetTruncation ?? emission.truncation
   const result: GetVariablesResult = {
     collections: emission.collections,
-    truncated: emission.truncation !== undefined,
+    truncated: truncation !== undefined,
     observation: observation(startedAt),
   }
-  if (emission.truncation !== undefined) result.truncation = emission.truncation
+  if (truncation !== undefined) result.truncation = truncation
   return result
 }

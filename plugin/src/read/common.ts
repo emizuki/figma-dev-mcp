@@ -1,6 +1,6 @@
+// Deliberately no getLocalVariable*Async: reads resolve variables by the ids the
+// design actually binds, which local enumeration cannot see for a library.
 export interface FigmaVariablesApi {
-  getLocalVariableCollectionsAsync?(): Promise<unknown[]>
-  getLocalVariablesAsync?(): Promise<unknown[]>
   getVariableByIdAsync?(id: string): Promise<unknown>
   getVariableCollectionByIdAsync?(id: string): Promise<unknown>
 }

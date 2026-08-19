@@ -576,8 +576,9 @@ function styleReferences(
 // arbitrary depth inside `boundVariables` — an array under `fills`, one more
 // level under `componentProperties`. This walk is the single definition of
 // "which variables does this node reference"; the name pre-pass reuses it so the
-// two can never drift apart and silently resolve a different set.
-function variableIdsOf(node: UnknownRecord): string[] {
+// two can never drift apart and silently resolve a different set. get_variables
+// collects its scope through this same function for exactly that reason.
+export function variableIdsOf(node: UnknownRecord): string[] {
   const values = record(hostGet(node, "boundVariables"))
   const seen = new Set<string>()
   const ids: string[] = []
