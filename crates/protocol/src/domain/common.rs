@@ -1169,14 +1169,42 @@ pub struct LayoutValue {
     pub padding_left: f64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "unit",
+    content = "value",
+    rename_all = "camelCase",
+    deny_unknown_fields
+)]
+pub enum LineHeightValue {
+    Pixels(f64),
+    Percent(f64),
+    Auto,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "unit",
+    content = "value",
+    rename_all = "camelCase",
+    deny_unknown_fields
+)]
+pub enum LetterSpacingValue {
+    Pixels(f64),
+    Percent(f64),
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TextStyle {
     pub font_family: String,
     pub font_style: String,
-    pub font_size: f64,
-    pub line_height: f64,
-    pub letter_spacing: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_size: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_height: Option<LineHeightValue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub letter_spacing: Option<LetterSpacingValue>,
     pub paints: ReturnedList<PaintValue>,
 }
 

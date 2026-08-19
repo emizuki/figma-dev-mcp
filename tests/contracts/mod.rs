@@ -10,9 +10,10 @@ use figma_dev_mcp_protocol::{
     domain::{
         ComponentValue, ConnectionId, DesignNode, GetDesignContextResult, GetMotionResult,
         GetNodesResult, GetReactionsResult, GetSelectionResult, InstanceValue, ItemIdentifier,
-        MinimalNodeDetails, NodeForest, NodeId, NodeTypeList, NodeTypeName, NodesSelector, PageId,
-        PagesSelector, PaintValue, RasterScale, ReactionAction, RequestId, ReturnedList,
-        ScreenshotAsset, SearchNodesInput, Selector,
+        LetterSpacingValue, LineHeightValue, MinimalNodeDetails, NodeForest, NodeId, NodeTypeList,
+        NodeTypeName, NodesSelector, PageId, PagesSelector, PaintValue, RasterScale,
+        ReactionAction, RequestId, ReturnedList, ScreenshotAsset, SearchNodesInput, Selector,
+        TextStyle,
     },
     error::{ErrorCode, ItemError, PluginFailure, ToolError},
     limits::{
@@ -1624,12 +1625,14 @@ fn full_node_fixture() -> Value {
             "text": {
                 "characters": "Card", "defaultStyle": {
                     "fontFamily": "Inter", "fontStyle": "Regular", "fontSize": 16.0,
-                    "lineHeight": 24.0, "letterSpacing": 0.0, "paints": []
+                    "lineHeight": {"unit": "pixels", "value": 24.0},
+                    "letterSpacing": {"unit": "pixels", "value": 0.0}, "paints": []
                 },
                 "styledRanges": [{
                     "start": 0, "end": 4, "style": {
                         "fontFamily": "Inter", "fontStyle": "Bold", "fontSize": 16.0,
-                        "lineHeight": 24.0, "letterSpacing": 0.0, "paints": []
+                        "lineHeight": {"unit": "pixels", "value": 24.0},
+                        "letterSpacing": {"unit": "pixels", "value": 0.0}, "paints": []
                     }
                 }]
             },
@@ -2042,5 +2045,37 @@ fn reaction_overlay_settings_are_closed_optional_and_camel_case() {
         encoded["items"][0]["value"]["reactions"][0]
             .get("overlay")
             .is_none()
+    );
+}
+
+#[test]
+fn text_style_units_round_trip_and_reject_unknown_units() {
+    let value = json!({
+        "fontFamily": "Inter",
+        "fontStyle": "Medium",
+        "fontSize": 14.0,
+        "lineHeight": {"unit": "percent", "value": 150.0},
+        "letterSpacing": {"unit": "pixels", "value": 0.5},
+        "paints": []
+    });
+    let parsed: TextStyle = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(serde_json::to_value(parsed).unwrap(), value);
+
+    let auto = json!({
+        "fontFamily": "Inter",
+        "fontStyle": "Medium",
+        "lineHeight": {"unit": "auto"},
+        "paints": []
+    });
+    let parsed: TextStyle = serde_json::from_value(auto.clone()).unwrap();
+    assert_eq!(serde_json::to_value(parsed).unwrap(), auto);
+
+    assert!(
+        serde_json::from_value::<LineHeightValue>(json!({"unit": "em", "value": 2.0})).is_err(),
+        "line height unit must stay closed"
+    );
+    assert!(
+        serde_json::from_value::<LetterSpacingValue>(json!({"unit": "auto"})).is_err(),
+        "letter spacing has no auto variant"
     );
 }

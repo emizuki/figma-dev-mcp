@@ -86,12 +86,21 @@ export interface LayoutValue {
   paddingLeft: number
 }
 
+export type LineHeightValue =
+  | { unit: "pixels"; value: number }
+  | { unit: "percent"; value: number }
+  | { unit: "auto" }
+
+export type LetterSpacingValue =
+  | { unit: "pixels"; value: number }
+  | { unit: "percent"; value: number }
+
 export interface TextStyle {
   fontFamily: string
   fontStyle: string
-  fontSize: number
-  lineHeight: number
-  letterSpacing: number
+  fontSize?: number
+  lineHeight?: LineHeightValue
+  letterSpacing?: LetterSpacingValue
   paints: PaintValue[]
 }
 

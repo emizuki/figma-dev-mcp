@@ -52,6 +52,8 @@ import type {
   LayoutMode,
   LayoutSizing,
   LayoutValue,
+  LetterSpacingValue,
+  LineHeightValue,
   ManualTrackBinding,
   MinimalNodeDetails,
   MotionEasing,
@@ -571,23 +573,64 @@ function parseLayout(value: unknown, label: string): LayoutValue {
   }
 }
 
+function parseLineHeight(value: unknown, label: string): LineHeightValue {
+  const object = exact(value, label, ["unit"], ["value"])
+  const hasValue = Object.hasOwn(object, "value")
+  switch (object.unit) {
+    case "pixels":
+      if (!hasValue) return fail(`${label} is missing value`)
+      return { unit: "pixels", value: finite(object.value, `${label}.value`) }
+    case "percent":
+      if (!hasValue) return fail(`${label} is missing value`)
+      return { unit: "percent", value: finite(object.value, `${label}.value`) }
+    case "auto":
+      if (hasValue) return fail(`${label} must not carry a value`)
+      return { unit: "auto" }
+    default:
+      return fail(`${label}.unit is not allowed`)
+  }
+}
+
+function parseLetterSpacing(value: unknown, label: string): LetterSpacingValue {
+  const object = exact(value, label, ["unit", "value"])
+  switch (object.unit) {
+    case "pixels":
+      return { unit: "pixels", value: finite(object.value, `${label}.value`) }
+    case "percent":
+      return { unit: "percent", value: finite(object.value, `${label}.value`) }
+    default:
+      return fail(`${label}.unit is not allowed`)
+  }
+}
+
 function parseTextStyle(value: unknown, label: string): TextStyle {
-  const object = exact(value, label, [
-    "fontFamily",
-    "fontStyle",
-    "fontSize",
-    "lineHeight",
-    "letterSpacing",
-    "paints",
-  ])
-  return {
+  const object = exact(
+    value,
+    label,
+    ["fontFamily", "fontStyle", "paints"],
+    ["fontSize", "lineHeight", "letterSpacing"],
+  )
+  const result: TextStyle = {
     fontFamily: string(object.fontFamily, `${label}.fontFamily`),
     fontStyle: string(object.fontStyle, `${label}.fontStyle`),
-    fontSize: finite(object.fontSize, `${label}.fontSize`),
-    lineHeight: finite(object.lineHeight, `${label}.lineHeight`),
-    letterSpacing: finite(object.letterSpacing, `${label}.letterSpacing`),
     paints: arrayOf(object.paints, `${label}.paints`, parsePaint),
   }
+  if (Object.hasOwn(object, "fontSize")) {
+    result.fontSize = finite(object.fontSize, `${label}.fontSize`)
+  }
+  if (Object.hasOwn(object, "lineHeight")) {
+    result.lineHeight = parseLineHeight(
+      object.lineHeight,
+      `${label}.lineHeight`,
+    )
+  }
+  if (Object.hasOwn(object, "letterSpacing")) {
+    result.letterSpacing = parseLetterSpacing(
+      object.letterSpacing,
+      `${label}.letterSpacing`,
+    )
+  }
+  return result
 }
 
 function parseStyledRange(value: unknown, label: string): StyledTextRange {
