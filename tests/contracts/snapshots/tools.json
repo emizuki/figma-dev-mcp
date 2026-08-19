@@ -1211,6 +1211,16 @@
             "paints": {
               "$ref": "#/$defs/ReturnedList_of_PaintValue"
             },
+            "strokes": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/StrokeValue"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "styleReferences": {
               "$ref": "#/$defs/ReturnedList_of_StyleReference"
             },
@@ -1837,6 +1847,63 @@
           },
           "maxItems": 2000,
           "type": "array"
+        },
+        "ReturnedList_of_double": {
+          "description": "returned result collection; decoder stops at item 2001",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 2000,
+          "type": "array"
+        },
+        "StrokeAlign": {
+          "enum": [
+            "inside",
+            "outside",
+            "center"
+          ],
+          "type": "string"
+        },
+        "StrokeValue": {
+          "additionalProperties": false,
+          "description": "Border paint, width, alignment, and dash pattern.\n\n`FullNodeData::paints` carries fills only; stroke colours live here.",
+          "properties": {
+            "align": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/StrokeAlign"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "dashPattern": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ReturnedList_of_double"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "paints": {
+              "$ref": "#/$defs/ReturnedList_of_PaintValue"
+            },
+            "weight": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "paints"
+          ],
+          "type": "object"
         },
         "StyleKind": {
           "enum": [
@@ -5183,6 +5250,16 @@
             "paints": {
               "$ref": "#/$defs/ReturnedList_of_PaintValue"
             },
+            "strokes": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/StrokeValue"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "styleReferences": {
               "$ref": "#/$defs/ReturnedList_of_StyleReference"
             },
@@ -5966,6 +6043,63 @@
           },
           "maxItems": 2000,
           "type": "array"
+        },
+        "ReturnedList_of_double": {
+          "description": "returned result collection; decoder stops at item 2001",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 2000,
+          "type": "array"
+        },
+        "StrokeAlign": {
+          "enum": [
+            "inside",
+            "outside",
+            "center"
+          ],
+          "type": "string"
+        },
+        "StrokeValue": {
+          "additionalProperties": false,
+          "description": "Border paint, width, alignment, and dash pattern.\n\n`FullNodeData::paints` carries fills only; stroke colours live here.",
+          "properties": {
+            "align": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/StrokeAlign"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "dashPattern": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ReturnedList_of_double"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "paints": {
+              "$ref": "#/$defs/ReturnedList_of_PaintValue"
+            },
+            "weight": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "paints"
+          ],
+          "type": "object"
         },
         "StyleKind": {
           "enum": [
@@ -8448,6 +8582,16 @@
             "paints": {
               "$ref": "#/$defs/ReturnedList_of_PaintValue"
             },
+            "strokes": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/StrokeValue"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "styleReferences": {
               "$ref": "#/$defs/ReturnedList_of_StyleReference"
             },
@@ -9074,6 +9218,63 @@
           },
           "maxItems": 2000,
           "type": "array"
+        },
+        "ReturnedList_of_double": {
+          "description": "returned result collection; decoder stops at item 2001",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 2000,
+          "type": "array"
+        },
+        "StrokeAlign": {
+          "enum": [
+            "inside",
+            "outside",
+            "center"
+          ],
+          "type": "string"
+        },
+        "StrokeValue": {
+          "additionalProperties": false,
+          "description": "Border paint, width, alignment, and dash pattern.\n\n`FullNodeData::paints` carries fills only; stroke colours live here.",
+          "properties": {
+            "align": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/StrokeAlign"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "dashPattern": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ReturnedList_of_double"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "paints": {
+              "$ref": "#/$defs/ReturnedList_of_PaintValue"
+            },
+            "weight": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "paints"
+          ],
+          "type": "object"
         },
         "StyleKind": {
           "enum": [

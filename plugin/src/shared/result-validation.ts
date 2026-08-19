@@ -81,6 +81,8 @@ import type {
   Rect,
   ScreenshotAsset,
   SearchNodesResult,
+  StrokeAlign,
+  StrokeValue,
   StyledTextRange,
   StyleKind,
   StyleReference,
@@ -539,6 +541,36 @@ function parseEffect(value: unknown, label: string): EffectValue {
   }
 }
 
+function parseStrokes(value: unknown, label: string): StrokeValue {
+  const object = exact(
+    value,
+    label,
+    ["paints"],
+    ["weight", "align", "dashPattern"],
+  )
+  const result: StrokeValue = {
+    paints: arrayOf(object.paints, `${label}.paints`, parsePaint),
+  }
+  if (Object.hasOwn(object, "weight")) {
+    result.weight = finite(object.weight, `${label}.weight`)
+  }
+  if (Object.hasOwn(object, "align")) {
+    result.align = oneOf<StrokeAlign>(
+      object.align,
+      ["inside", "outside", "center"],
+      `${label}.align`,
+    )
+  }
+  if (Object.hasOwn(object, "dashPattern")) {
+    result.dashPattern = arrayOf(
+      object.dashPattern,
+      `${label}.dashPattern`,
+      finite,
+    )
+  }
+  return result
+}
+
 const AXIS_ALIGN_VALUES: readonly AxisAlign[] = [
   "min",
   "center",
@@ -924,7 +956,15 @@ function parseFullData(value: unknown, label: string): FullNodeData {
     value,
     label,
     ["paints", "effects", "styleReferences", "variableReferences"],
-    ["geometry", "constraints", "autoLayout", "text", "component", "instance"],
+    [
+      "geometry",
+      "constraints",
+      "autoLayout",
+      "text",
+      "component",
+      "instance",
+      "strokes",
+    ],
   )
   const result: FullNodeData = {
     paints: arrayOf(object.paints, `${label}.paints`, parsePaint),
@@ -958,6 +998,8 @@ function parseFullData(value: unknown, label: string): FullNodeData {
     )
   if (Object.hasOwn(object, "instance"))
     result.instance = parseInstanceValue(object.instance, `${label}.instance`)
+  if (Object.hasOwn(object, "strokes"))
+    result.strokes = parseStrokes(object.strokes, `${label}.strokes`)
   return result
 }
 

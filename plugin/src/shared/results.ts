@@ -72,6 +72,15 @@ export type EffectValue =
     }
   | { type: "layerBlur" | "backgroundBlur"; radius: number }
 
+export type StrokeAlign = "inside" | "outside" | "center"
+
+export interface StrokeValue {
+  paints: PaintValue[]
+  weight?: number
+  align?: StrokeAlign
+  dashPattern?: number[]
+}
+
 export type LayoutMode = "none" | "horizontal" | "vertical" | "grid"
 export type LayoutSizing = "fixed" | "hug" | "fill"
 export type AxisAlign = "min" | "center" | "max" | "spaceBetween" | "baseline"
@@ -239,6 +248,7 @@ export interface FullNodeData {
   text?: TextValue
   paints: PaintValue[]
   effects: EffectValue[]
+  strokes?: StrokeValue
   component?: ComponentValue
   instance?: InstanceValue
   styleReferences: StyleReference[]

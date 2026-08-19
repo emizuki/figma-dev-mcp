@@ -22,6 +22,8 @@ import type {
   MinimalNodeDetails,
   NamedComponentProperty,
   PaintValue,
+  StrokeAlign,
+  StrokeValue,
   StyleReference,
   TextStyle,
   Truncation,
@@ -220,6 +222,29 @@ export function effects(value: unknown): EffectValue[] {
     }
   }
   return result
+}
+
+const STROKE_ALIGNS: Record<string, StrokeAlign> = {
+  INSIDE: "inside",
+  OUTSIDE: "outside",
+  CENTER: "center",
+}
+
+// `paints` on FullNodeData is fills only; stroke colours live here.
+function strokes(node: UnknownRecord): StrokeValue | undefined {
+  const strokePaints = paints(hostGet(node, "strokes"))
+  if (strokePaints.length === 0) return undefined
+  const value: StrokeValue = { paints: strokePaints }
+  const weight = optionalFinite(hostGet(node, "strokeWeight"))
+  if (weight !== undefined) value.weight = weight
+  const align = STROKE_ALIGNS[hostString(node, "strokeAlign")]
+  if (align !== undefined) value.align = align
+  const dashPattern = array(hostGet(node, "dashPattern")).filter(
+    (entry): entry is number =>
+      typeof entry === "number" && Number.isFinite(entry),
+  )
+  if (dashPattern.length > 0) value.dashPattern = dashPattern
+  return value
 }
 
 function lineHeightValue(source: UnknownRecord): LineHeightValue | undefined {
@@ -596,6 +621,8 @@ function nodeData(
   if (compact.constraints !== undefined) full.constraints = compact.constraints
   if (compact.component !== undefined) full.component = compact.component
   if (compact.instance !== undefined) full.instance = compact.instance
+  const strokeValue = strokes(node)
+  if (strokeValue !== undefined) full.strokes = strokeValue
   if (node.type === "TEXT") {
     full.text = {
       characters: string(node.characters),

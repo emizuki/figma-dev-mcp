@@ -432,6 +432,120 @@ describe("bounded node serializer", () => {
     expect(parsed).toBeDefined()
   })
 
+  test("full detail returns stroke paints, weight, align, and dash pattern", () => {
+    const node = base({
+      strokes: [
+        { type: "SOLID", color: { r: 0, g: 0, b: 0, a: 1 }, opacity: 1 },
+      ],
+      strokeWeight: 2,
+      strokeAlign: "INSIDE",
+      dashPattern: [4, 2],
+    })
+
+    const result = serializeNodeForest([node], {
+      detail: "full",
+      depth: 0,
+      dedupeComponents: false,
+    })
+
+    expect(result.nodes[0]?.data).toMatchObject({
+      strokes: {
+        paints: [
+          { type: "solid", color: { r: 0, g: 0, b: 0, a: 1 }, opacity: 1 },
+        ],
+        weight: 2,
+        align: "inside",
+        dashPattern: [4, 2],
+      },
+    })
+  })
+
+  test("mixed stroke weight keeps the rest of the stroke", () => {
+    const node = base({
+      strokes: [
+        { type: "SOLID", color: { r: 1, g: 0, b: 0, a: 1 }, opacity: 1 },
+      ],
+      strokeWeight: Symbol("figma.mixed"),
+      strokeAlign: "OUTSIDE",
+      dashPattern: [],
+    })
+
+    const strokes = (
+      serializeNodeForest([node], {
+        detail: "full",
+        depth: 0,
+        dedupeComponents: false,
+      }).nodes[0]?.data as { strokes?: Record<string, unknown> }
+    ).strokes
+
+    expect(strokes?.align).toBe("outside")
+    expect(Object.hasOwn(strokes ?? {}, "weight")).toBe(false)
+    expect(Object.hasOwn(strokes ?? {}, "dashPattern")).toBe(false)
+  })
+
+  test("nodes without strokes omit the field entirely", () => {
+    const node = base({ strokes: [], strokeWeight: 1, strokeAlign: "CENTER" })
+
+    const data = serializeNodeForest([node], {
+      detail: "full",
+      depth: 0,
+      dedupeComponents: false,
+    }).nodes[0]?.data as Record<string, unknown>
+
+    expect(Object.hasOwn(data, "strokes")).toBe(false)
+  })
+
+  test("throwing stroke getters leave the node serializable", () => {
+    const node = base({})
+    Object.defineProperty(node, "strokes", {
+      get() {
+        throw new Error("write-only under dynamic-page")
+      },
+      enumerable: true,
+    })
+
+    const data = serializeNodeForest([node], {
+      detail: "full",
+      depth: 0,
+      dedupeComponents: false,
+    }).nodes[0]?.data as Record<string, unknown>
+
+    expect(Object.hasOwn(data, "strokes")).toBe(false)
+    expect(data.paints).toEqual([])
+  })
+
+  test("strokes survive the wire validator", () => {
+    const node = base({
+      strokes: [
+        { type: "SOLID", color: { r: 0, g: 0, b: 0, a: 1 }, opacity: 1 },
+      ],
+      strokeWeight: 1.5,
+      strokeAlign: "CENTER",
+      dashPattern: [1],
+    })
+
+    const serialized = serializeNodeForest([node], {
+      detail: "full",
+      depth: 0,
+      dedupeComponents: false,
+    })
+
+    expect(
+      parseReadResult({
+        operation: "get_nodes",
+        result: {
+          detail: "full",
+          items: [{ status: "success", value: serialized.nodes[0] }],
+          truncated: false,
+          observation: {
+            startedAt: "2026-08-19T00:00:00.000Z",
+            completedAt: "2026-08-19T00:00:01.000Z",
+          },
+        },
+      }),
+    ).toBeDefined()
+  })
+
   test("terminates repeated-node cycles and enforces node and byte budgets", () => {
     const cyclic = base({ id: "C:1", type: "COMPONENT" })
     cyclic.children = [cyclic]

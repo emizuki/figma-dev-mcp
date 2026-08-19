@@ -1141,6 +1141,29 @@ where
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
+pub enum StrokeAlign {
+    Inside,
+    Outside,
+    Center,
+}
+
+/// Border paint, width, alignment, and dash pattern.
+///
+/// `FullNodeData::paints` carries fills only; stroke colours live here.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StrokeValue {
+    pub paints: ReturnedList<PaintValue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weight: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub align: Option<StrokeAlign>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dash_pattern: Option<ReturnedList<f64>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub enum LayoutMode {
     None,
     Horizontal,
@@ -2352,6 +2375,8 @@ pub struct FullNodeData {
     pub component: Option<ComponentValue>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instance: Option<InstanceValue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strokes: Option<StrokeValue>,
     pub style_references: ReturnedList<StyleReference>,
     pub variable_references: ReturnedList<VariableReference>,
 }

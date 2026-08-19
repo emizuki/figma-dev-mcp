@@ -13,7 +13,7 @@ use figma_dev_mcp_protocol::{
         ItemIdentifier, LayoutValue, LetterSpacingValue, LineHeightValue, MinimalNodeDetails,
         NodeForest, NodeId, NodeTypeList, NodeTypeName, NodesSelector, PageId, PagesSelector,
         PaintValue, RasterScale, ReactionAction, RequestId, ReturnedList, ScreenshotAsset,
-        SearchNodesInput, Selector, TextStyle,
+        SearchNodesInput, Selector, StrokeAlign, StrokeValue, TextStyle,
     },
     error::{ErrorCode, ItemError, PluginFailure, ToolError},
     limits::{
@@ -1648,6 +1648,14 @@ fn full_node_fixture() -> Value {
                 "opacity": 1.0
             }],
             "effects": [],
+            "strokes": {
+                "paints": [{
+                    "type": "solid",
+                    "color": {"r": 0.0, "g": 0.0, "b": 0.0, "a": 1.0},
+                    "opacity": 1.0
+                }],
+                "weight": 1.0, "align": "inside"
+            },
             "component": null,
             "instance": {
                 "componentId": "C:1", "componentSetId": "CS:1", "properties": []
@@ -2121,5 +2129,34 @@ fn layout_alignment_round_trips_and_rejects_unknown_values() {
     assert!(
         serde_json::from_value::<AxisAlign>(json!("spaceAround")).is_err(),
         "axis alignment must stay closed"
+    );
+}
+
+#[test]
+fn stroke_value_round_trips_and_rejects_unknown_fields() {
+    let value = json!({
+        "paints": [{
+            "type": "solid",
+            "color": {"r": 0.0, "g": 0.0, "b": 0.0, "a": 1.0},
+            "opacity": 1.0
+        }],
+        "weight": 2.0,
+        "align": "inside",
+        "dashPattern": [4.0, 2.0]
+    });
+    let parsed: StrokeValue = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(serde_json::to_value(parsed).unwrap(), value);
+
+    let bare = json!({"paints": [{"type": "mixed"}]});
+    let parsed: StrokeValue = serde_json::from_value(bare.clone()).unwrap();
+    assert_eq!(serde_json::to_value(parsed).unwrap(), bare);
+
+    assert!(
+        serde_json::from_value::<StrokeValue>(json!({"paints": [], "style": "dashed"})).is_err(),
+        "stroke value must stay closed"
+    );
+    assert!(
+        serde_json::from_value::<StrokeAlign>(json!("baseline")).is_err(),
+        "stroke alignment must stay closed"
     );
 }
