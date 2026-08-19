@@ -7,6 +7,7 @@ import {
   clampText,
   collectInstanceIdentities,
   collectStyleNames,
+  collectVariableNames,
   namedComponentProperties,
   serializeNodeForest,
   TEXT_CLAMP_LIMIT,
@@ -1080,6 +1081,81 @@ describe("bounded node serializer", () => {
     ).toBe(true)
     expect(serializeFrames.at(-1)?.completed).toBe(2)
   })
+
+  test("a throwing getter on any content property leaves the node serializable", () => {
+    const sites = [
+      "absoluteTransform",
+      "absoluteBoundingBox",
+      "rotation",
+      "opacity",
+      "boundVariables",
+      "effects",
+    ] as const
+
+    for (const site of sites) {
+      const node = base({})
+      Object.defineProperty(node, site, {
+        get() {
+          throw new Error("write-only under dynamic-page")
+        },
+        enumerable: true,
+      })
+
+      const result = serializeNodeForest([node], {
+        detail: "full",
+        depth: 0,
+        dedupeComponents: false,
+      })
+
+      expect(result.nodes[0]?.summary.id).toBe("1:1")
+      expect(result.nodes[0]?.data).toBeDefined()
+      expect(result.truncated).toBe(false)
+    }
+  })
+
+  test("a throwing characters getter leaves a compact TEXT node serializable", () => {
+    const node = base({ type: "TEXT" })
+    Object.defineProperty(node, "characters", {
+      get() {
+        throw new Error("write-only under dynamic-page")
+      },
+      enumerable: true,
+    })
+
+    const data = serializeNodeForest([node], {
+      detail: "compact",
+      depth: 0,
+      dedupeComponents: false,
+    }).nodes[0]?.data as { text?: { characterCount: number; preview: string } }
+
+    expect(data.text).toEqual({ characterCount: 0, preview: "" })
+  })
+
+  test("a throwing getStyledTextSegments leaves a full TEXT node serializable", () => {
+    const node = base({
+      type: "TEXT",
+      characters: "Save",
+      fontName: { family: "Inter", style: "Regular" },
+      fills: [],
+    })
+    Object.defineProperty(node, "getStyledTextSegments", {
+      get() {
+        throw new Error("write-only under dynamic-page")
+      },
+      enumerable: true,
+    })
+
+    const data = serializeNodeForest([node], {
+      detail: "full",
+      depth: 0,
+      dedupeComponents: false,
+    }).nodes[0]?.data as {
+      text?: { characters: string; styledRanges: unknown[] }
+    }
+
+    expect(data.text?.characters).toBe("Save")
+    expect(data.text?.styledRanges).toEqual([])
+  })
 })
 
 describe("instance component properties", () => {
@@ -1357,6 +1433,168 @@ describe("style name resolution", () => {
       dedupeComponents: false,
       styleNames: new Map([["S:stroke", "Border/Default"]]),
     })
+
+    expect(
+      parseReadResult({
+        operation: "get_nodes",
+        result: {
+          detail: "full",
+          items: [{ status: "success", value: serialized.nodes[0] }],
+          truncated: false,
+          observation: {
+            startedAt: "2026-08-19T00:00:00.000Z",
+            completedAt: "2026-08-19T00:00:01.000Z",
+          },
+        },
+      }),
+    ).toBeDefined()
+  })
+})
+
+describe("variable name resolution", () => {
+  const bound = (id: string) => ({
+    boundVariables: {
+      fills: [{ type: "VARIABLE_ALIAS", id }],
+    },
+  })
+
+  test("resolves one lookup per unique variable id, not per node or per reference", async () => {
+    const lookups: string[] = []
+    const lookup = async (id: string) => {
+      lookups.push(id)
+      return { name: `token/${id}` }
+    }
+    // Three nodes, four references, two unique ids.
+    const leaf = base({
+      id: "1:3",
+      boundVariables: {
+        fills: [{ type: "VARIABLE_ALIAS", id: "V:a" }],
+        strokes: [{ type: "VARIABLE_ALIAS", id: "V:b" }],
+      },
+    })
+    const child = base({ id: "1:2", ...bound("V:a"), children: [leaf] })
+    const root = base({ id: "1:1", ...bound("V:b"), children: [child] })
+
+    const names = await collectVariableNames([root], lookup)
+
+    expect(lookups.sort()).toEqual(["V:a", "V:b"])
+    expect(names.get("V:a")).toBe("token/V:a")
+    expect(names.get("V:b")).toBe("token/V:b")
+  })
+
+  test("variable references carry the resolved name", () => {
+    const node = base({ id: "1:1", ...bound("V:a") })
+
+    const result = serializeNodeForest([node], {
+      detail: "full",
+      depth: 0,
+      dedupeComponents: false,
+      variableNames: new Map([["V:a", "text/primary"]]),
+    })
+
+    expect(result.nodes[0]?.data).toMatchObject({
+      variableReferences: [{ id: "V:a", name: "text/primary" }],
+    })
+  })
+
+  test("an unresolved id omits name rather than emitting an empty string", () => {
+    const node = base({ id: "1:1", ...bound("V:a") })
+
+    const refs = (
+      serializeNodeForest([node], {
+        detail: "full",
+        depth: 0,
+        dedupeComponents: false,
+        variableNames: new Map([["V:a", ""]]),
+      }).nodes[0]?.data as { variableReferences: Record<string, unknown>[] }
+    ).variableReferences
+
+    expect(refs[0]).toEqual({ id: "V:a" })
+    expect(Object.hasOwn(refs[0] ?? {}, "name")).toBe(false)
+  })
+
+  test("a failing lookup drops that name and leaves the rest resolved", async () => {
+    const lookup = async (id: string) => {
+      if (id === "V:a") throw new Error("remote variable unavailable")
+      return { name: "spacing/md" }
+    }
+    const node = base({
+      id: "1:1",
+      boundVariables: {
+        fills: [{ type: "VARIABLE_ALIAS", id: "V:a" }],
+        strokes: [{ type: "VARIABLE_ALIAS", id: "V:b" }],
+      },
+    })
+
+    const names = await collectVariableNames([node], lookup)
+
+    expect(names.has("V:a")).toBe(false)
+    expect(names.get("V:b")).toBe("spacing/md")
+  })
+
+  test("an exhausted budget leaves names absent without truncating the forest", async () => {
+    const lookup = async (id: string) => ({ name: `token/${id}` })
+    const node = base({ id: "1:1", ...bound("V:a") })
+
+    const names = await collectVariableNames(
+      [node],
+      lookup,
+      undefined,
+      Number.POSITIVE_INFINITY,
+      0,
+    )
+
+    expect(names.size).toBe(0)
+
+    const result = serializeNodeForest([node], {
+      detail: "full",
+      depth: 0,
+      dedupeComponents: false,
+      variableNames: names,
+    })
+    expect(result.truncated).toBe(false)
+  })
+
+  test("a missing lookup yields an empty map rather than throwing", async () => {
+    const names = await collectVariableNames(
+      [base({ ...bound("V:a") })],
+      undefined,
+    )
+    expect(names.size).toBe(0)
+  })
+
+  test("nested alias objects are all collected", async () => {
+    const lookups: string[] = []
+    const lookup = async (id: string) => {
+      lookups.push(id)
+      return { name: id }
+    }
+    const node = base({
+      id: "1:1",
+      boundVariables: {
+        fills: [{ type: "VARIABLE_ALIAS", id: "V:fill" }],
+        componentProperties: {
+          "Label#1:1": { type: "VARIABLE_ALIAS", id: "V:label" },
+        },
+        itemSpacing: { type: "VARIABLE_ALIAS", id: "V:gap" },
+      },
+    })
+
+    await collectVariableNames([node], lookup)
+
+    expect(lookups.sort()).toEqual(["V:fill", "V:gap", "V:label"])
+  })
+
+  test("resolved names survive the wire validator", () => {
+    const serialized = serializeNodeForest(
+      [base({ id: "1:1", ...bound("V:a") })],
+      {
+        detail: "full",
+        depth: 0,
+        dedupeComponents: false,
+        variableNames: new Map([["V:a", "text/primary"]]),
+      },
+    )
 
     expect(
       parseReadResult({

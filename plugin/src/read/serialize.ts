@@ -59,6 +59,7 @@ export interface SerializeNodeForestOptions {
   readonly includeHidden?: boolean
   readonly instanceIdentities?: ReadonlyMap<string, InstanceValue>
   readonly styleNames?: ReadonlyMap<string, string>
+  readonly variableNames?: ReadonlyMap<string, string>
   readonly signal?: CancellationSignal
   readonly progress?: ProgressReporter
   readonly limits?: Partial<SerializerLimits>
@@ -77,6 +78,7 @@ interface SerializerContext {
   readonly includeHidden: boolean | undefined
   readonly instanceIdentities: ReadonlyMap<string, InstanceValue> | undefined
   readonly styleNames: ReadonlyMap<string, string> | undefined
+  readonly variableNames: ReadonlyMap<string, string> | undefined
   readonly signal: CancellationSignal | undefined
   readonly progress: ProgressReporter | undefined
   readonly limits: SerializerLimits
@@ -117,6 +119,12 @@ function own(value: UnknownRecord, key: string): boolean {
   return Object.hasOwn(value, key)
 }
 
+// Under `documentAccess: dynamic-page` some node properties are write-only and
+// throw on read. Every property describing a node's *content* is read through
+// here, so one hostile getter costs that field and not the whole node.
+// Identity and hierarchy — id, name, type, visible, parent, children — are read
+// directly on purpose: if those throw there is no node left to serialize, and
+// swallowing the error would turn a crash into silent empty data.
 function hostGet(value: UnknownRecord, key: string): unknown {
   try {
     return value[key]
@@ -410,7 +418,7 @@ const TEXT_SEGMENT_FIELDS = [
 ] as const
 
 function getStyledRanges(node: UnknownRecord) {
-  const readSegments = node.getStyledTextSegments
+  const readSegments = hostGet(node, "getStyledTextSegments")
   if (typeof readSegments !== "function") return []
   try {
     return array(readSegments.call(node, [...TEXT_SEGMENT_FIELDS])).map(
@@ -432,13 +440,13 @@ function getStyledRanges(node: UnknownRecord) {
 }
 
 function geometry(node: UnknownRecord) {
-  const transform = array(node.absoluteTransform)
+  const transform = array(hostGet(node, "absoluteTransform"))
   const row0 = array(transform[0])
   const row1 = array(transform[1])
-  const bounds = record(node.absoluteBoundingBox)
+  const bounds = record(hostGet(node, "absoluteBoundingBox"))
   const result = {
-    rotation: finite(node.rotation),
-    opacity: finite(node.opacity, 1),
+    rotation: finite(hostGet(node, "rotation")),
+    opacity: finite(hostGet(node, "opacity"), 1),
     transform: {
       m00: finite(row0[0], 1),
       m01: finite(row0[1]),
@@ -564,17 +572,21 @@ function styleReferences(
   return refs
 }
 
-function variableReferences(node: UnknownRecord): VariableReference[] {
-  const values = record(node.boundVariables)
+// Variable ids are not at a fixed set of keys the way style ids are: they sit at
+// arbitrary depth inside `boundVariables` — an array under `fills`, one more
+// level under `componentProperties`. This walk is the single definition of
+// "which variables does this node reference"; the name pre-pass reuses it so the
+// two can never drift apart and silently resolve a different set.
+function variableIdsOf(node: UnknownRecord): string[] {
+  const values = record(hostGet(node, "boundVariables"))
   const seen = new Set<string>()
-  const refs: VariableReference[] = []
+  const ids: string[] = []
   const visit = (value: unknown): void => {
     const source = record(value)
-    if (typeof source.id === "string" && !seen.has(source.id)) {
-      seen.add(source.id)
-      const ref: VariableReference = { id: source.id }
-      if (typeof source.name === "string") ref.name = source.name
-      refs.push(ref)
+    const id = source.id
+    if (typeof id === "string" && id.length > 0 && !seen.has(id)) {
+      seen.add(id)
+      ids.push(id)
     }
     for (const child of Object.values(source)) {
       if (child !== value) {
@@ -584,7 +596,20 @@ function variableReferences(node: UnknownRecord): VariableReference[] {
     }
   }
   for (const value of Object.values(values)) visit(value)
-  return refs
+  return ids
+}
+
+function variableReferences(
+  node: UnknownRecord,
+  names: ReadonlyMap<string, string> | undefined,
+): VariableReference[] {
+  return variableIdsOf(node).map((id) => {
+    const reference: VariableReference = { id }
+    const name = names?.get(id)
+    // Never guess and never emit an empty name: absence means "not resolved".
+    if (name !== undefined && name.length > 0) reference.name = clampText(name)
+    return reference
+  })
 }
 
 export const TEXT_CLAMP_LIMIT = 256
@@ -710,12 +735,13 @@ function nodeData(
   detail: DetailLevel,
   identities?: ReadonlyMap<string, InstanceValue>,
   styleNames?: ReadonlyMap<string, string>,
+  variableNames?: ReadonlyMap<string, string>,
 ): NodeData {
   if (detail === "minimal") return {}
   const compact: CompactNodeData = {
     geometry: geometry(node),
     styleReferences: styleReferences(node, styleNames),
-    variableReferences: variableReferences(node),
+    variableReferences: variableReferences(node, variableNames),
   }
   const layout = autoLayout(node)
   if (layout !== undefined) compact.autoLayout = layout
@@ -726,7 +752,7 @@ function nodeData(
   const instance = instanceValue(node, identities)
   if (instance !== undefined) compact.instance = instance
   if (node.type === "TEXT") {
-    const characters = string(node.characters)
+    const characters = string(hostGet(node, "characters"))
     compact.text = {
       characterCount: characters.length,
       preview: clampText(characters),
@@ -737,7 +763,7 @@ function nodeData(
     styleReferences: compact.styleReferences,
     variableReferences: compact.variableReferences,
     paints: paints(hostGet(node, "fills")),
-    effects: effects(node.effects),
+    effects: effects(hostGet(node, "effects")),
   }
   if (compact.geometry !== undefined) full.geometry = compact.geometry
   if (compact.autoLayout !== undefined) full.autoLayout = compact.autoLayout
@@ -784,7 +810,7 @@ function visibleChildren(
 
 function summarize(node: UnknownRecord, children: readonly unknown[]) {
   const parent = record(node.parent)
-  const bounds = record(node.absoluteBoundingBox)
+  const bounds = record(hostGet(node, "absoluteBoundingBox"))
   const childIds = children
     .map((child) => string(record(child).id))
     .filter((id) => id.length > 0)
@@ -908,6 +934,7 @@ function serializeNode(
       context.detail,
       context.instanceIdentities,
       context.styleNames,
+      context.variableNames,
     ),
     children: [],
     childrenTruncated: false,
@@ -1001,6 +1028,7 @@ function createWalkContext(options: ForestWalkOptions): SerializerContext {
     includeHidden: options.includeHidden,
     instanceIdentities: undefined,
     styleNames: undefined,
+    variableNames: undefined,
     signal: options.signal,
     progress: options.progress ?? progressFor(options.signal),
     emittedComponents: new Set<string>(),
@@ -1186,6 +1214,61 @@ export async function collectStyleNames(
   return names
 }
 
+export type VariableNameLookup = (id: string) => Promise<unknown>
+
+export const DEFAULT_VARIABLE_NAME_BUDGET_MS = 2_000
+export const MAX_VARIABLE_NAME_LOOKUPS = 200
+
+// One async call per unique variable id — never one per node, and never one per
+// reference: a measured 576-node page carried 223 references across only 10 ids.
+export async function collectVariableNames(
+  roots: readonly unknown[],
+  lookup: VariableNameLookup | undefined,
+  signal?: CancellationSignal,
+  depth: number = Number.POSITIVE_INFINITY,
+  budgetMs: number = DEFAULT_VARIABLE_NAME_BUDGET_MS,
+): Promise<Map<string, string>> {
+  const names = new Map<string, string>()
+  if (lookup === undefined) return names
+  const pending: string[] = []
+  const seen = new Set<string>()
+  const visit = (raw: unknown, level: number): void => {
+    signal?.throwIfAborted()
+    const node = record(raw)
+    for (const id of variableIdsOf(node)) {
+      if (seen.has(id)) continue
+      seen.add(id)
+      if (pending.length < MAX_VARIABLE_NAME_LOOKUPS) pending.push(id)
+    }
+    if (level >= depth) return
+    const children = array(hostGet(node, "children"))
+    for (let index = 0; index < children.length; index += 1) {
+      throwIfAbortedAtBatch(signal, index, CANCEL_CHECK_BATCH)
+      visit(children[index], level + 1)
+    }
+  }
+  for (const root of roots) visit(root, 0)
+  const started = Date.now()
+  for (let index = 0; index < pending.length; index += 1) {
+    signal?.throwIfAborted()
+    // Running out of budget leaves the remaining names absent; the forest is
+    // never marked truncated over a missing label.
+    if (Date.now() - started >= budgetMs) break
+    const id = pending[index] as string
+    try {
+      // `lookup(id)` is called inside the try on purpose: settleOrSkip only
+      // handles the rejection of an already-constructed promise, so a
+      // synchronous throw from the host API would escape it entirely.
+      const variable = record(await settleOrSkip(lookup(id)))
+      const name = string(hostGet(variable, "name"))
+      if (name.length > 0) names.set(id, name)
+    } catch {
+      // A missing or unreachable remote variable must not fail the whole forest.
+    }
+  }
+  return names
+}
+
 async function resolveInstanceIdentity(
   node: UnknownRecord,
 ): Promise<InstanceValue | undefined> {
@@ -1226,6 +1309,7 @@ export function serializeNodeForest(
     includeHidden: options.includeHidden,
     instanceIdentities: options.instanceIdentities,
     styleNames: options.styleNames,
+    variableNames: options.variableNames,
     signal: options.signal,
     progress: options.progress ?? progressFor(options.signal),
     emittedComponents: new Set<string>(),

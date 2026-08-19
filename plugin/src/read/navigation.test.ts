@@ -489,6 +489,120 @@ describe("node reader", () => {
       Object.hasOwn(item.value?.data?.styleReferences?.[0] ?? {}, "name"),
     ).toBe(false)
   })
+
+  test("resolves variable names via figma.variables at detail full", async () => {
+    const node = {
+      id: "1:1",
+      name: "Card",
+      type: "RECTANGLE",
+      children: [],
+      boundVariables: {
+        fills: [{ type: "VARIABLE_ALIAS", id: "V:a" }],
+      },
+    }
+    const lookups: string[] = []
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [] },
+      currentPage: page("0:1", "Page 1"),
+      editorType: "dev",
+      getNodeByIdAsync: async () => node,
+      variables: {
+        getVariableByIdAsync: async (id: string) => {
+          lookups.push(id)
+          return { name: "text/primary" }
+        },
+      },
+    }
+
+    const result = await readNodes({
+      nodeIds: [node.id],
+      detail: "full",
+      depth: 0,
+    })
+
+    expect(lookups).toEqual(["V:a"])
+    const item = result.items[0] as {
+      status: string
+      value?: { data?: { variableReferences?: Record<string, unknown>[] } }
+    }
+    expect(item.value?.data?.variableReferences).toEqual([
+      { id: "V:a", name: "text/primary" },
+    ])
+  })
+
+  test("spends zero variable lookups and omits name at detail compact", async () => {
+    const node = {
+      id: "1:1",
+      name: "Card",
+      type: "RECTANGLE",
+      children: [],
+      boundVariables: {
+        fills: [{ type: "VARIABLE_ALIAS", id: "V:a" }],
+      },
+    }
+    let calls = 0
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [] },
+      currentPage: page("0:1", "Page 1"),
+      editorType: "dev",
+      getNodeByIdAsync: async () => node,
+      variables: {
+        getVariableByIdAsync: async (id: string) => {
+          calls += 1
+          return { name: "text/primary" }
+        },
+      },
+    }
+
+    const result = await readNodes({
+      nodeIds: [node.id],
+      detail: "compact",
+      depth: 0,
+    })
+
+    // Asserting zero calls, not merely that `name` is absent: threading an empty
+    // map with the detail gate removed would produce an identical payload while
+    // still spending the lookups.
+    expect(calls).toBe(0)
+    const item = result.items[0] as {
+      status: string
+      value?: { data?: { variableReferences?: Record<string, unknown>[] } }
+    }
+    expect(item.value?.data?.variableReferences).toEqual([{ id: "V:a" }])
+    expect(
+      Object.hasOwn(item.value?.data?.variableReferences?.[0] ?? {}, "name"),
+    ).toBe(false)
+  })
+
+  test("a missing figma.variables API leaves names absent without failing the read", async () => {
+    const node = {
+      id: "1:1",
+      name: "Card",
+      type: "RECTANGLE",
+      children: [],
+      boundVariables: {
+        fills: [{ type: "VARIABLE_ALIAS", id: "V:a" }],
+      },
+    }
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [] },
+      currentPage: page("0:1", "Page 1"),
+      editorType: "dev",
+      getNodeByIdAsync: async () => node,
+    }
+
+    const result = await readNodes({
+      nodeIds: [node.id],
+      detail: "full",
+      depth: 0,
+    })
+
+    const item = result.items[0] as {
+      status: string
+      value?: { data?: { variableReferences?: Record<string, unknown>[] } }
+    }
+    expect(item.value?.data?.variableReferences).toEqual([{ id: "V:a" }])
+  })
 })
 
 describe("design context reader", () => {

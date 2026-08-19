@@ -24,6 +24,7 @@ import {
 import {
   collectInstanceIdentities,
   collectStyleNames,
+  collectVariableNames,
   serializeNodeForest,
   type SerializeNodeForestOptions,
 } from "./serialize"
@@ -116,7 +117,7 @@ async function serializePreparedForest(
   roots: readonly unknown[],
   options: Omit<
     SerializeNodeForestOptions,
-    "signal" | "instanceIdentities" | "styleNames"
+    "signal" | "instanceIdentities" | "styleNames" | "variableNames"
   >,
   signal?: CancellationSignal,
 ) {
@@ -124,23 +125,38 @@ async function serializePreparedForest(
   if (options.detail === "minimal") {
     return serializeNodeForest(roots, serializeOptions(options, signal))
   }
-  const instanceIdentities = await collectInstanceIdentities(
-    roots,
-    signal,
-    options.depth,
-  )
-  // Style names only matter at `full`; resolving them at `compact` would spend
+  // Names only matter at `full`; resolving them at `compact` would spend
   // async lookups on a level that is not allowed to carry them.
-  const lookup = figma.getStyleByIdAsync
-  const styleNames =
-    options.detail === "full" && lookup !== undefined
-      ? await collectStyleNames(
+  // The three pre-passes below run concurrently: the two name collectors
+  // budget themselves in wall-clock time (2s each), while
+  // getMainComponentAsync calls (up to 1500ms apiece) now run alongside
+  // them instead of before them. Call counts are unchanged, but under host
+  // contention on an instance-heavy page, fewer names may resolve than
+  // under the old sequential ordering — expected, not a regression.
+  const isFull = options.detail === "full"
+  const styleLookup = figma.getStyleByIdAsync
+  // getVariableByIdAsync lives on figma.variables, not on figma itself.
+  const variablesApi = figma.variables
+  const variableLookup = variablesApi?.getVariableByIdAsync
+  const [instanceIdentities, styleNames, variableNames] = await Promise.all([
+    collectInstanceIdentities(roots, signal, options.depth),
+    isFull && styleLookup !== undefined
+      ? collectStyleNames(
           roots,
-          (id) => lookup.call(figma, id),
+          (id) => styleLookup.call(figma, id),
           signal,
           options.depth,
         )
-      : undefined
+      : Promise.resolve(undefined),
+    isFull && variablesApi !== undefined && variableLookup !== undefined
+      ? collectVariableNames(
+          roots,
+          (id) => variableLookup.call(variablesApi, id),
+          signal,
+          options.depth,
+        )
+      : Promise.resolve(undefined),
+  ])
   return serializeNodeForest(
     roots,
     serializeOptions(
@@ -148,6 +164,7 @@ async function serializePreparedForest(
         ...options,
         instanceIdentities,
         ...(styleNames === undefined ? {} : { styleNames }),
+        ...(variableNames === undefined ? {} : { variableNames }),
       },
       signal,
     ),
