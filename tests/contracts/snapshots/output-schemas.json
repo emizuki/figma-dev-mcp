@@ -567,6 +567,61 @@
         ],
         "type": "string"
       },
+      "CornerRadiusValue": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "uniform",
+                "type": "string"
+              },
+              "radius": {
+                "format": "double",
+                "type": "number"
+              }
+            },
+            "required": [
+              "kind",
+              "radius"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bottomLeft": {
+                "format": "double",
+                "type": "number"
+              },
+              "bottomRight": {
+                "format": "double",
+                "type": "number"
+              },
+              "kind": {
+                "const": "perCorner",
+                "type": "string"
+              },
+              "topLeft": {
+                "format": "double",
+                "type": "number"
+              },
+              "topRight": {
+                "format": "double",
+                "type": "number"
+              }
+            },
+            "required": [
+              "kind",
+              "topLeft",
+              "topRight",
+              "bottomRight",
+              "bottomLeft"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "DesignNode": {
         "additionalProperties": false,
         "properties": {
@@ -829,6 +884,23 @@
               {
                 "type": "null"
               }
+            ]
+          },
+          "cornerRadius": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/CornerRadiusValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cornerSmoothing": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
             ]
           },
           "effects": {
@@ -3980,6 +4052,61 @@
         ],
         "type": "string"
       },
+      "CornerRadiusValue": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "uniform",
+                "type": "string"
+              },
+              "radius": {
+                "format": "double",
+                "type": "number"
+              }
+            },
+            "required": [
+              "kind",
+              "radius"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bottomLeft": {
+                "format": "double",
+                "type": "number"
+              },
+              "bottomRight": {
+                "format": "double",
+                "type": "number"
+              },
+              "kind": {
+                "const": "perCorner",
+                "type": "string"
+              },
+              "topLeft": {
+                "format": "double",
+                "type": "number"
+              },
+              "topRight": {
+                "format": "double",
+                "type": "number"
+              }
+            },
+            "required": [
+              "kind",
+              "topLeft",
+              "topRight",
+              "bottomRight",
+              "bottomLeft"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "DesignNode": {
         "additionalProperties": false,
         "properties": {
@@ -4262,6 +4389,23 @@
               {
                 "type": "null"
               }
+            ]
+          },
+          "cornerRadius": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/CornerRadiusValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cornerSmoothing": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
             ]
           },
           "effects": {
@@ -6895,6 +7039,61 @@
         ],
         "type": "string"
       },
+      "CornerRadiusValue": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "uniform",
+                "type": "string"
+              },
+              "radius": {
+                "format": "double",
+                "type": "number"
+              }
+            },
+            "required": [
+              "kind",
+              "radius"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bottomLeft": {
+                "format": "double",
+                "type": "number"
+              },
+              "bottomRight": {
+                "format": "double",
+                "type": "number"
+              },
+              "kind": {
+                "const": "perCorner",
+                "type": "string"
+              },
+              "topLeft": {
+                "format": "double",
+                "type": "number"
+              },
+              "topRight": {
+                "format": "double",
+                "type": "number"
+              }
+            },
+            "required": [
+              "kind",
+              "topLeft",
+              "topRight",
+              "bottomRight",
+              "bottomLeft"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "DesignNode": {
         "additionalProperties": false,
         "properties": {
@@ -7157,6 +7356,23 @@
               {
                 "type": "null"
               }
+            ]
+          },
+          "cornerRadius": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/CornerRadiusValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cornerSmoothing": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
             ]
           },
           "effects": {

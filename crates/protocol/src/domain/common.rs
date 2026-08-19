@@ -1162,6 +1162,127 @@ pub struct StrokeValue {
     pub dash_pattern: Option<ReturnedList<f64>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum CornerRadiusValue {
+    Uniform {
+        radius: f64,
+    },
+    PerCorner {
+        top_left: f64,
+        top_right: f64,
+        bottom_right: f64,
+        bottom_left: f64,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum CornerRadiusTag {
+    Uniform,
+    PerCorner,
+}
+
+#[derive(Deserialize)]
+#[serde(field_identifier, rename_all = "camelCase")]
+enum CornerRadiusField {
+    Kind,
+    Radius,
+    TopLeft,
+    TopRight,
+    BottomRight,
+    BottomLeft,
+}
+
+impl<'de> Deserialize<'de> for CornerRadiusValue {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_map(CornerRadiusVisitor)
+    }
+}
+
+struct CornerRadiusVisitor;
+
+impl<'de> Visitor<'de> for CornerRadiusVisitor {
+    type Value = CornerRadiusValue;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a closed corner radius value")
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut tag = None;
+        let mut radius = None;
+        let mut top_left = None;
+        let mut top_right = None;
+        let mut bottom_right = None;
+        let mut bottom_left = None;
+        while let Some(field) = map.next_key::<CornerRadiusField>()? {
+            match field {
+                CornerRadiusField::Kind => {
+                    set_field_once(&mut tag, map.next_value::<CornerRadiusTag>()?, "kind")?
+                }
+                CornerRadiusField::Radius => {
+                    set_field_once(&mut radius, map.next_value::<f64>()?, "radius")?
+                }
+                CornerRadiusField::TopLeft => {
+                    set_field_once(&mut top_left, map.next_value::<f64>()?, "topLeft")?
+                }
+                CornerRadiusField::TopRight => {
+                    set_field_once(&mut top_right, map.next_value::<f64>()?, "topRight")?
+                }
+                CornerRadiusField::BottomRight => {
+                    set_field_once(&mut bottom_right, map.next_value::<f64>()?, "bottomRight")?
+                }
+                CornerRadiusField::BottomLeft => {
+                    set_field_once(&mut bottom_left, map.next_value::<f64>()?, "bottomLeft")?
+                }
+            }
+        }
+        match tag.ok_or_else(|| A::Error::missing_field("kind"))? {
+            CornerRadiusTag::Uniform => {
+                if top_left.is_some()
+                    || top_right.is_some()
+                    || bottom_right.is_some()
+                    || bottom_left.is_some()
+                {
+                    return Err(A::Error::custom(
+                        "uniform corner radius contains variant-only fields",
+                    ));
+                }
+                Ok(CornerRadiusValue::Uniform {
+                    radius: radius.ok_or_else(|| A::Error::missing_field("radius"))?,
+                })
+            }
+            CornerRadiusTag::PerCorner => {
+                if radius.is_some() {
+                    return Err(A::Error::custom(
+                        "per-corner radius contains variant-only fields",
+                    ));
+                }
+                Ok(CornerRadiusValue::PerCorner {
+                    top_left: top_left.ok_or_else(|| A::Error::missing_field("topLeft"))?,
+                    top_right: top_right.ok_or_else(|| A::Error::missing_field("topRight"))?,
+                    bottom_right: bottom_right
+                        .ok_or_else(|| A::Error::missing_field("bottomRight"))?,
+                    bottom_left: bottom_left
+                        .ok_or_else(|| A::Error::missing_field("bottomLeft"))?,
+                })
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum LayoutMode {
@@ -2377,6 +2498,10 @@ pub struct FullNodeData {
     pub instance: Option<InstanceValue>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub strokes: Option<StrokeValue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corner_radius: Option<CornerRadiusValue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corner_smoothing: Option<f64>,
     pub style_references: ReturnedList<StyleReference>,
     pub variable_references: ReturnedList<VariableReference>,
 }

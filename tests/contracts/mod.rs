@@ -8,12 +8,13 @@ mod tools_catalog;
 
 use figma_dev_mcp_protocol::{
     domain::{
-        AxisAlign, ComponentValue, ConnectionId, DesignNode, GetDesignContextResult,
-        GetMotionResult, GetNodesResult, GetReactionsResult, GetSelectionResult, InstanceValue,
-        ItemIdentifier, LayoutValue, LetterSpacingValue, LineHeightValue, MinimalNodeDetails,
-        NodeForest, NodeId, NodeTypeList, NodeTypeName, NodesSelector, PageId, PagesSelector,
-        PaintValue, RasterScale, ReactionAction, RequestId, ReturnedList, ScreenshotAsset,
-        SearchNodesInput, Selector, StrokeAlign, StrokeValue, TextStyle,
+        AxisAlign, ComponentValue, ConnectionId, CornerRadiusValue, DesignNode,
+        GetDesignContextResult, GetMotionResult, GetNodesResult, GetReactionsResult,
+        GetSelectionResult, InstanceValue, ItemIdentifier, LayoutValue, LetterSpacingValue,
+        LineHeightValue, MinimalNodeDetails, NodeForest, NodeId, NodeTypeList, NodeTypeName,
+        NodesSelector, PageId, PagesSelector, PaintValue, RasterScale, ReactionAction, RequestId,
+        ReturnedList, ScreenshotAsset, SearchNodesInput, Selector, StrokeAlign, StrokeValue,
+        TextStyle,
     },
     error::{ErrorCode, ItemError, PluginFailure, ToolError},
     limits::{
@@ -1656,6 +1657,8 @@ fn full_node_fixture() -> Value {
                 }],
                 "weight": 1.0, "align": "inside"
             },
+            "cornerRadius": {"kind": "uniform", "radius": 8.0},
+            "cornerSmoothing": 0.6,
             "component": null,
             "instance": {
                 "componentId": "C:1", "componentSetId": "CS:1", "properties": []
@@ -2158,5 +2161,38 @@ fn stroke_value_round_trips_and_rejects_unknown_fields() {
     assert!(
         serde_json::from_value::<StrokeAlign>(json!("baseline")).is_err(),
         "stroke alignment must stay closed"
+    );
+}
+
+#[test]
+fn corner_radius_round_trips_and_stays_closed() {
+    let uniform = json!({"kind": "uniform", "radius": 8.0});
+    let parsed: CornerRadiusValue = serde_json::from_value(uniform.clone()).unwrap();
+    assert_eq!(serde_json::to_value(parsed).unwrap(), uniform);
+
+    let per_corner = json!({
+        "kind": "perCorner",
+        "topLeft": 8.0, "topRight": 0.0, "bottomRight": 4.0, "bottomLeft": 0.0
+    });
+    let parsed: CornerRadiusValue = serde_json::from_value(per_corner.clone()).unwrap();
+    assert_eq!(serde_json::to_value(parsed).unwrap(), per_corner);
+
+    assert!(
+        serde_json::from_value::<CornerRadiusValue>(json!({"kind": "mixed"})).is_err(),
+        "corner radius tag must stay closed"
+    );
+    assert!(
+        serde_json::from_value::<CornerRadiusValue>(
+            json!({"kind": "uniform", "radius": 8.0, "topLeft": 8.0})
+        )
+        .is_err(),
+        "uniform radius must reject per-corner fields"
+    );
+    assert!(
+        serde_json::from_value::<CornerRadiusValue>(
+            json!({"kind": "uniform", "radius": 8.0, "smoothing": 0.6})
+        )
+        .is_err(),
+        "corner radius must reject unknown fields"
     );
 }

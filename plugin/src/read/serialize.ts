@@ -11,6 +11,7 @@ import type {
   ComponentPropertyValue,
   ComponentValue,
   ConstraintAxis,
+  CornerRadiusValue,
   DesignNode,
   EffectValue,
   FullNodeData,
@@ -245,6 +246,31 @@ function strokes(node: UnknownRecord): StrokeValue | undefined {
   )
   if (dashPattern.length > 0) value.dashPattern = dashPattern
   return value
+}
+
+// A mixed cornerRadius means exactly "the four corners differ", and the four
+// values are readable — so it maps to perCorner instead of dropping the field.
+function cornerRadius(node: UnknownRecord): CornerRadiusValue | undefined {
+  const uniform = hostGet(node, "cornerRadius")
+  if (!isMixed(uniform)) {
+    const radius = optionalFinite(uniform)
+    return radius === undefined || radius === 0
+      ? undefined
+      : { kind: "uniform", radius }
+  }
+  const topLeft = optionalFinite(hostGet(node, "topLeftRadius"))
+  const topRight = optionalFinite(hostGet(node, "topRightRadius"))
+  const bottomRight = optionalFinite(hostGet(node, "bottomRightRadius"))
+  const bottomLeft = optionalFinite(hostGet(node, "bottomLeftRadius"))
+  if (
+    topLeft === undefined ||
+    topRight === undefined ||
+    bottomRight === undefined ||
+    bottomLeft === undefined
+  ) {
+    return undefined
+  }
+  return { kind: "perCorner", topLeft, topRight, bottomRight, bottomLeft }
 }
 
 function lineHeightValue(source: UnknownRecord): LineHeightValue | undefined {
@@ -623,6 +649,11 @@ function nodeData(
   if (compact.instance !== undefined) full.instance = compact.instance
   const strokeValue = strokes(node)
   if (strokeValue !== undefined) full.strokes = strokeValue
+  const radius = cornerRadius(node)
+  if (radius !== undefined) full.cornerRadius = radius
+  const smoothing = optionalFinite(hostGet(node, "cornerSmoothing"))
+  if (smoothing !== undefined && smoothing !== 0)
+    full.cornerSmoothing = smoothing
   if (node.type === "TEXT") {
     full.text = {
       characters: string(node.characters),

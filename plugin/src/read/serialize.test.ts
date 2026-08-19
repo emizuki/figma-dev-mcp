@@ -546,6 +546,119 @@ describe("bounded node serializer", () => {
     ).toBeDefined()
   })
 
+  test("uniform corner radius is reported as a uniform value", () => {
+    const node = base({ cornerRadius: 8 })
+
+    expect(
+      serializeNodeForest([node], {
+        detail: "full",
+        depth: 0,
+        dedupeComponents: false,
+      }).nodes[0]?.data,
+    ).toMatchObject({ cornerRadius: { kind: "uniform", radius: 8 } })
+  })
+
+  test("mixed corner radius becomes the four per-corner values", () => {
+    const node = base({
+      cornerRadius: Symbol("figma.mixed"),
+      topLeftRadius: 8,
+      topRightRadius: 0,
+      bottomRightRadius: 4,
+      bottomLeftRadius: 0,
+    })
+
+    expect(
+      serializeNodeForest([node], {
+        detail: "full",
+        depth: 0,
+        dedupeComponents: false,
+      }).nodes[0]?.data,
+    ).toMatchObject({
+      cornerRadius: {
+        kind: "perCorner",
+        topLeft: 8,
+        topRight: 0,
+        bottomRight: 4,
+        bottomLeft: 0,
+      },
+    })
+  })
+
+  test("zero radius and zero smoothing are omitted", () => {
+    const node = base({ cornerRadius: 0, cornerSmoothing: 0 })
+
+    const data = serializeNodeForest([node], {
+      detail: "full",
+      depth: 0,
+      dedupeComponents: false,
+    }).nodes[0]?.data as Record<string, unknown>
+
+    expect(Object.hasOwn(data, "cornerRadius")).toBe(false)
+    expect(Object.hasOwn(data, "cornerSmoothing")).toBe(false)
+  })
+
+  test("corner smoothing is returned when the squircle is on", () => {
+    const node = base({ cornerRadius: 12, cornerSmoothing: 0.6 })
+
+    expect(
+      serializeNodeForest([node], {
+        detail: "full",
+        depth: 0,
+        dedupeComponents: false,
+      }).nodes[0]?.data,
+    ).toMatchObject({ cornerSmoothing: 0.6 })
+  })
+
+  test("throwing corner getters leave the node serializable", () => {
+    const node = base({})
+    Object.defineProperty(node, "cornerRadius", {
+      get() {
+        throw new Error("write-only under dynamic-page")
+      },
+      enumerable: true,
+    })
+
+    const data = serializeNodeForest([node], {
+      detail: "full",
+      depth: 0,
+      dedupeComponents: false,
+    }).nodes[0]?.data as Record<string, unknown>
+
+    expect(Object.hasOwn(data, "cornerRadius")).toBe(false)
+  })
+
+  test("corner radius survives the wire validator", () => {
+    const node = base({
+      cornerRadius: Symbol("figma.mixed"),
+      topLeftRadius: 8,
+      topRightRadius: 8,
+      bottomRightRadius: 0,
+      bottomLeftRadius: 0,
+      cornerSmoothing: 0.6,
+    })
+
+    const serialized = serializeNodeForest([node], {
+      detail: "full",
+      depth: 0,
+      dedupeComponents: false,
+    })
+
+    expect(
+      parseReadResult({
+        operation: "get_nodes",
+        result: {
+          detail: "full",
+          items: [{ status: "success", value: serialized.nodes[0] }],
+          truncated: false,
+          observation: {
+            startedAt: "2026-08-19T00:00:00.000Z",
+            completedAt: "2026-08-19T00:00:01.000Z",
+          },
+        },
+      }),
+    ).toBeDefined()
+  })
+
   test("terminates repeated-node cycles and enforces node and byte budgets", () => {
     const cyclic = base({ id: "C:1", type: "COMPONENT" })
     cyclic.children = [cyclic]

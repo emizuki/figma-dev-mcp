@@ -18,6 +18,7 @@ import type {
   ComponentPropertyValue,
   ComponentValue,
   ConstraintAxis,
+  CornerRadiusValue,
   CubicBezier,
   DesignNode,
   DevModeNodeData,
@@ -571,6 +572,37 @@ function parseStrokes(value: unknown, label: string): StrokeValue {
   return result
 }
 
+function parseCornerRadius(value: unknown, label: string): CornerRadiusValue {
+  const object = record(value, label)
+  switch (object.kind) {
+    case "uniform": {
+      const uniform = exact(object, label, ["kind", "radius"])
+      return {
+        kind: "uniform",
+        radius: finite(uniform.radius, `${label}.radius`),
+      }
+    }
+    case "perCorner": {
+      const corners = exact(object, label, [
+        "kind",
+        "topLeft",
+        "topRight",
+        "bottomRight",
+        "bottomLeft",
+      ])
+      return {
+        kind: "perCorner",
+        topLeft: finite(corners.topLeft, `${label}.topLeft`),
+        topRight: finite(corners.topRight, `${label}.topRight`),
+        bottomRight: finite(corners.bottomRight, `${label}.bottomRight`),
+        bottomLeft: finite(corners.bottomLeft, `${label}.bottomLeft`),
+      }
+    }
+    default:
+      return fail(`${label}.kind is not allowed`)
+  }
+}
+
 const AXIS_ALIGN_VALUES: readonly AxisAlign[] = [
   "min",
   "center",
@@ -964,6 +996,8 @@ function parseFullData(value: unknown, label: string): FullNodeData {
       "component",
       "instance",
       "strokes",
+      "cornerRadius",
+      "cornerSmoothing",
     ],
   )
   const result: FullNodeData = {
@@ -1000,6 +1034,16 @@ function parseFullData(value: unknown, label: string): FullNodeData {
     result.instance = parseInstanceValue(object.instance, `${label}.instance`)
   if (Object.hasOwn(object, "strokes"))
     result.strokes = parseStrokes(object.strokes, `${label}.strokes`)
+  if (Object.hasOwn(object, "cornerRadius"))
+    result.cornerRadius = parseCornerRadius(
+      object.cornerRadius,
+      `${label}.cornerRadius`,
+    )
+  if (Object.hasOwn(object, "cornerSmoothing"))
+    result.cornerSmoothing = finite(
+      object.cornerSmoothing,
+      `${label}.cornerSmoothing`,
+    )
   return result
 }
 

@@ -81,6 +81,16 @@ export interface StrokeValue {
   dashPattern?: number[]
 }
 
+export type CornerRadiusValue =
+  | { kind: "uniform"; radius: number }
+  | {
+      kind: "perCorner"
+      topLeft: number
+      topRight: number
+      bottomRight: number
+      bottomLeft: number
+    }
+
 export type LayoutMode = "none" | "horizontal" | "vertical" | "grid"
 export type LayoutSizing = "fixed" | "hug" | "fill"
 export type AxisAlign = "min" | "center" | "max" | "spaceBetween" | "baseline"
@@ -249,6 +259,8 @@ export interface FullNodeData {
   paints: PaintValue[]
   effects: EffectValue[]
   strokes?: StrokeValue
+  cornerRadius?: CornerRadiusValue
+  cornerSmoothing?: number
   component?: ComponentValue
   instance?: InstanceValue
   styleReferences: StyleReference[]
