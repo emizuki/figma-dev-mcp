@@ -73,7 +73,7 @@ pub fn tools_catalog() -> ListToolsResult {
         ),
         definition::<GetStylesInput, GetStylesResult>(
             ToolName::GetStyles,
-            "Return local styles and styles referenced by a bounded scope.",
+            "Return styles referenced by a bounded scope, and the document's local styles. `selector` constrains only the `referenced` half; the `local` half is document-wide and ignores it. The default `both` therefore mixes a document-wide list with a scoped one.",
         ),
         definition::<GetVariablesInput, GetVariablesResult>(
             ToolName::GetVariables,
