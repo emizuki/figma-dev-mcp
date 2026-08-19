@@ -8,12 +8,13 @@ mod tools_catalog;
 
 use figma_dev_mcp_protocol::{
     domain::{
-        ComponentValue, ConnectionId, DesignNode, GetDesignContextResult, GetMotionResult,
-        GetNodesResult, GetReactionsResult, GetSelectionResult, InstanceValue, ItemIdentifier,
-        LetterSpacingValue, LineHeightValue, MinimalNodeDetails, NodeForest, NodeId, NodeTypeList,
-        NodeTypeName, NodesSelector, PageId, PagesSelector, PaintValue, RasterScale,
-        ReactionAction, RequestId, ReturnedList, ScreenshotAsset, SearchNodesInput, Selector,
-        TextStyle,
+        AxisAlign, ComponentValue, ConnectionId, CornerRadiusValue, DesignNode,
+        GetDesignContextResult, GetMotionResult, GetNodesResult, GetReactionsResult,
+        GetSelectionResult, InstanceValue, ItemIdentifier, LayoutValue, LetterSpacingValue,
+        LineHeightValue, MinimalNodeDetails, NodeForest, NodeId, NodeTypeList, NodeTypeName,
+        NodesSelector, PageId, PagesSelector, PaintValue, RasterScale, ReactionAction, RequestId,
+        ReturnedList, ScreenshotAsset, SearchNodesInput, Selector, StrokeAlign, StrokeValue,
+        StyleKind, StyleReference, TextStyle,
     },
     error::{ErrorCode, ItemError, PluginFailure, ToolError},
     limits::{
@@ -1621,20 +1622,29 @@ fn full_node_fixture() -> Value {
                 }
             },
             "constraints": {"horizontal": "stretch", "vertical": "min"},
-            "autoLayout": null,
+            "autoLayout": {
+                "mode": "horizontal", "primarySizing": "hug", "counterSizing": "fixed",
+                "gap": 8.0, "paddingTop": 4.0, "paddingRight": 12.0,
+                "paddingBottom": 4.0, "paddingLeft": 12.0,
+                "primaryAlign": "spaceBetween", "counterAlign": "center",
+                "wrap": true, "counterAxisSpacing": 6.0
+            },
             "text": {
                 "characters": "Card", "defaultStyle": {
                     "fontFamily": "Inter", "fontStyle": "Regular", "fontSize": 16.0,
                     "lineHeight": {"unit": "pixels", "value": 24.0},
-                    "letterSpacing": {"unit": "pixels", "value": 0.0}, "paints": []
+                    "letterSpacing": {"unit": "pixels", "value": 0.0},
+                    "fontWeight": 400.0, "paints": []
                 },
                 "styledRanges": [{
                     "start": 0, "end": 4, "style": {
                         "fontFamily": "Inter", "fontStyle": "Bold", "fontSize": 16.0,
                         "lineHeight": {"unit": "pixels", "value": 24.0},
-                        "letterSpacing": {"unit": "pixels", "value": 0.0}, "paints": []
+                        "letterSpacing": {"unit": "pixels", "value": 0.0},
+                        "fontWeight": 400.0, "paints": []
                     }
-                }]
+                }],
+                "alignHorizontal": "center", "autoResize": "height"
             },
             "paints": [{
                 "type": "solid",
@@ -1642,11 +1652,26 @@ fn full_node_fixture() -> Value {
                 "opacity": 1.0
             }],
             "effects": [],
+            "strokes": {
+                "paints": [{
+                    "type": "solid",
+                    "color": {"r": 0.0, "g": 0.0, "b": 0.0, "a": 1.0},
+                    "opacity": 1.0
+                }],
+                "weight": 1.0, "align": "inside"
+            },
+            "cornerRadius": {"kind": "uniform", "radius": 8.0},
+            "cornerSmoothing": 0.6,
+            "clipsContent": true,
+            "blendMode": "multiply",
             "component": null,
             "instance": {
                 "componentId": "C:1", "componentSetId": "CS:1", "properties": []
             },
-            "styleReferences": [{"id": "S:1", "kind": "paint"}],
+            "styleReferences": [
+                {"id": "S:1", "kind": "paint", "name": "Primary/500"},
+                {"id": "S:2", "kind": "stroke"}
+            ],
             "variableReferences": [{"id": "V:1", "name": "surface/background"}]
         },
         "children": [], "childrenTruncated": false
@@ -2077,5 +2102,128 @@ fn text_style_units_round_trip_and_reject_unknown_units() {
     assert!(
         serde_json::from_value::<LetterSpacingValue>(json!({"unit": "auto"})).is_err(),
         "letter spacing has no auto variant"
+    );
+}
+
+#[test]
+fn layout_alignment_round_trips_and_rejects_unknown_values() {
+    let value = json!({
+        "mode": "horizontal",
+        "primarySizing": "hug",
+        "counterSizing": "fixed",
+        "gap": 8.0,
+        "paddingTop": 4.0,
+        "paddingRight": 12.0,
+        "paddingBottom": 4.0,
+        "paddingLeft": 12.0,
+        "primaryAlign": "spaceBetween",
+        "counterAlign": "baseline",
+        "wrap": true,
+        "counterAxisSpacing": 6.0
+    });
+    let parsed: LayoutValue = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(serde_json::to_value(parsed).unwrap(), value);
+
+    let bare = json!({
+        "mode": "vertical",
+        "primarySizing": "fixed",
+        "counterSizing": "fixed",
+        "gap": 0.0,
+        "paddingTop": 0.0,
+        "paddingRight": 0.0,
+        "paddingBottom": 0.0,
+        "paddingLeft": 0.0
+    });
+    let parsed: LayoutValue = serde_json::from_value(bare.clone()).unwrap();
+    assert_eq!(serde_json::to_value(parsed).unwrap(), bare);
+
+    assert!(
+        serde_json::from_value::<AxisAlign>(json!("spaceAround")).is_err(),
+        "axis alignment must stay closed"
+    );
+}
+
+#[test]
+fn stroke_value_round_trips_and_rejects_unknown_fields() {
+    let value = json!({
+        "paints": [{
+            "type": "solid",
+            "color": {"r": 0.0, "g": 0.0, "b": 0.0, "a": 1.0},
+            "opacity": 1.0
+        }],
+        "weight": 2.0,
+        "align": "inside",
+        "dashPattern": [4.0, 2.0]
+    });
+    let parsed: StrokeValue = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(serde_json::to_value(parsed).unwrap(), value);
+
+    let bare = json!({"paints": [{"type": "mixed"}]});
+    let parsed: StrokeValue = serde_json::from_value(bare.clone()).unwrap();
+    assert_eq!(serde_json::to_value(parsed).unwrap(), bare);
+
+    assert!(
+        serde_json::from_value::<StrokeValue>(json!({"paints": [], "style": "dashed"})).is_err(),
+        "stroke value must stay closed"
+    );
+    assert!(
+        serde_json::from_value::<StrokeAlign>(json!("baseline")).is_err(),
+        "stroke alignment must stay closed"
+    );
+}
+
+#[test]
+fn corner_radius_round_trips_and_stays_closed() {
+    let uniform = json!({"kind": "uniform", "radius": 8.0});
+    let parsed: CornerRadiusValue = serde_json::from_value(uniform.clone()).unwrap();
+    assert_eq!(serde_json::to_value(parsed).unwrap(), uniform);
+
+    let per_corner = json!({
+        "kind": "perCorner",
+        "topLeft": 8.0, "topRight": 0.0, "bottomRight": 4.0, "bottomLeft": 0.0
+    });
+    let parsed: CornerRadiusValue = serde_json::from_value(per_corner.clone()).unwrap();
+    assert_eq!(serde_json::to_value(parsed).unwrap(), per_corner);
+
+    assert!(
+        serde_json::from_value::<CornerRadiusValue>(json!({"kind": "mixed"})).is_err(),
+        "corner radius tag must stay closed"
+    );
+    assert!(
+        serde_json::from_value::<CornerRadiusValue>(
+            json!({"kind": "uniform", "radius": 8.0, "topLeft": 8.0})
+        )
+        .is_err(),
+        "uniform radius must reject per-corner fields"
+    );
+    assert!(
+        serde_json::from_value::<CornerRadiusValue>(
+            json!({"kind": "uniform", "radius": 8.0, "smoothing": 0.6})
+        )
+        .is_err(),
+        "corner radius must reject unknown fields"
+    );
+}
+
+#[test]
+fn style_reference_carries_optional_name_and_stroke_kind() {
+    let named = json!({"id": "S:1", "kind": "stroke", "name": "Border/Default"});
+    let parsed: StyleReference = serde_json::from_value(named.clone()).unwrap();
+    assert_eq!(serde_json::to_value(parsed).unwrap(), named);
+
+    let bare = json!({"id": "S:1", "kind": "paint"});
+    let parsed: StyleReference = serde_json::from_value(bare.clone()).unwrap();
+    assert_eq!(serde_json::to_value(parsed).unwrap(), bare);
+
+    assert!(
+        serde_json::from_value::<StyleKind>(json!("variable")).is_err(),
+        "style kind must stay closed"
+    );
+    assert!(
+        serde_json::from_value::<StyleReference>(
+            json!({"id": "S:1", "kind": "paint", "label": "x"})
+        )
+        .is_err(),
+        "style reference must stay closed"
     );
 }

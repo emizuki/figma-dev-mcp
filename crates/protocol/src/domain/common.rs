@@ -987,13 +987,32 @@ impl<'de> Visitor<'de> for PaintVisitor {
     }
 }
 
+/// Figma blend mode, mapped to CSS `mix-blend-mode` where an equivalent exists.
+///
+/// `Normal` and `PassThrough` are the Figma defaults and are never emitted; they
+/// stay in the enum so the schema describes the full domain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum BlendMode {
+    PassThrough,
     Normal,
+    Darken,
     Multiply,
+    LinearBurn,
+    ColorBurn,
+    Lighten,
     Screen,
+    LinearDodge,
+    ColorDodge,
     Overlay,
+    SoftLight,
+    HardLight,
+    Difference,
+    Exclusion,
+    Hue,
+    Saturation,
+    Color,
+    Luminosity,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
@@ -1141,6 +1160,150 @@ where
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
+pub enum StrokeAlign {
+    Inside,
+    Outside,
+    Center,
+}
+
+/// Border paint, width, alignment, and dash pattern.
+///
+/// `FullNodeData::paints` carries fills only; stroke colours live here.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StrokeValue {
+    pub paints: ReturnedList<PaintValue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weight: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub align: Option<StrokeAlign>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dash_pattern: Option<ReturnedList<f64>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum CornerRadiusValue {
+    Uniform {
+        radius: f64,
+    },
+    PerCorner {
+        top_left: f64,
+        top_right: f64,
+        bottom_right: f64,
+        bottom_left: f64,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum CornerRadiusTag {
+    Uniform,
+    PerCorner,
+}
+
+#[derive(Deserialize)]
+#[serde(field_identifier, rename_all = "camelCase")]
+enum CornerRadiusField {
+    Kind,
+    Radius,
+    TopLeft,
+    TopRight,
+    BottomRight,
+    BottomLeft,
+}
+
+impl<'de> Deserialize<'de> for CornerRadiusValue {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_map(CornerRadiusVisitor)
+    }
+}
+
+struct CornerRadiusVisitor;
+
+impl<'de> Visitor<'de> for CornerRadiusVisitor {
+    type Value = CornerRadiusValue;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a closed corner radius value")
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut tag = None;
+        let mut radius = None;
+        let mut top_left = None;
+        let mut top_right = None;
+        let mut bottom_right = None;
+        let mut bottom_left = None;
+        while let Some(field) = map.next_key::<CornerRadiusField>()? {
+            match field {
+                CornerRadiusField::Kind => {
+                    set_field_once(&mut tag, map.next_value::<CornerRadiusTag>()?, "kind")?
+                }
+                CornerRadiusField::Radius => {
+                    set_field_once(&mut radius, map.next_value::<f64>()?, "radius")?
+                }
+                CornerRadiusField::TopLeft => {
+                    set_field_once(&mut top_left, map.next_value::<f64>()?, "topLeft")?
+                }
+                CornerRadiusField::TopRight => {
+                    set_field_once(&mut top_right, map.next_value::<f64>()?, "topRight")?
+                }
+                CornerRadiusField::BottomRight => {
+                    set_field_once(&mut bottom_right, map.next_value::<f64>()?, "bottomRight")?
+                }
+                CornerRadiusField::BottomLeft => {
+                    set_field_once(&mut bottom_left, map.next_value::<f64>()?, "bottomLeft")?
+                }
+            }
+        }
+        match tag.ok_or_else(|| A::Error::missing_field("kind"))? {
+            CornerRadiusTag::Uniform => {
+                if top_left.is_some()
+                    || top_right.is_some()
+                    || bottom_right.is_some()
+                    || bottom_left.is_some()
+                {
+                    return Err(A::Error::custom(
+                        "uniform corner radius contains variant-only fields",
+                    ));
+                }
+                Ok(CornerRadiusValue::Uniform {
+                    radius: radius.ok_or_else(|| A::Error::missing_field("radius"))?,
+                })
+            }
+            CornerRadiusTag::PerCorner => {
+                if radius.is_some() {
+                    return Err(A::Error::custom(
+                        "per-corner radius contains variant-only fields",
+                    ));
+                }
+                Ok(CornerRadiusValue::PerCorner {
+                    top_left: top_left.ok_or_else(|| A::Error::missing_field("topLeft"))?,
+                    top_right: top_right.ok_or_else(|| A::Error::missing_field("topRight"))?,
+                    bottom_right: bottom_right
+                        .ok_or_else(|| A::Error::missing_field("bottomRight"))?,
+                    bottom_left: bottom_left
+                        .ok_or_else(|| A::Error::missing_field("bottomLeft"))?,
+                })
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub enum LayoutMode {
     None,
     Horizontal,
@@ -1156,6 +1319,16 @@ pub enum LayoutSizing {
     Fill,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum AxisAlign {
+    Min,
+    Center,
+    Max,
+    SpaceBetween,
+    Baseline,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LayoutValue {
@@ -1167,6 +1340,14 @@ pub struct LayoutValue {
     pub padding_right: f64,
     pub padding_bottom: f64,
     pub padding_left: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_align: Option<AxisAlign>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub counter_align: Option<AxisAlign>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wrap: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub counter_axis_spacing: Option<f64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -1194,6 +1375,49 @@ pub enum LetterSpacingValue {
     Percent(f64),
 }
 
+/// `None` is the Figma default for textDecoration and is never emitted; it stays in
+/// the enum so the schema describes the full domain (absence means "default").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum TextDecoration {
+    None,
+    Underline,
+    Strikethrough,
+}
+
+/// `Left` is the Figma default for textAlignHorizontal and is never emitted; it
+/// stays in the enum so the schema describes the full domain (absence means
+/// "default").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum TextAlignHorizontal {
+    Left,
+    Center,
+    Right,
+    Justified,
+}
+
+/// `Top` is the Figma default for textAlignVertical and is never emitted; it stays
+/// in the enum so the schema describes the full domain (absence means "default").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum TextAlignVertical {
+    Top,
+    Center,
+    Bottom,
+}
+
+/// `None` is the Figma default for textAutoResize and is never emitted; it stays in
+/// the enum so the schema describes the full domain (absence means "default").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum TextAutoResize {
+    None,
+    WidthAndHeight,
+    Height,
+    Truncate,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TextStyle {
@@ -1205,6 +1429,10 @@ pub struct TextStyle {
     pub line_height: Option<LineHeightValue>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub letter_spacing: Option<LetterSpacingValue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_weight: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_decoration: Option<TextDecoration>,
     pub paints: ReturnedList<PaintValue>,
 }
 
@@ -1222,6 +1450,12 @@ pub struct TextValue {
     pub characters: String,
     pub default_style: TextStyle,
     pub styled_ranges: ReturnedList<StyledTextRange>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub align_horizontal: Option<TextAlignHorizontal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub align_vertical: Option<TextAlignVertical>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_resize: Option<TextAutoResize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -1401,6 +1635,7 @@ impl<'de> Visitor<'de> for VariableValueVisitor {
 #[serde(rename_all = "camelCase")]
 pub enum StyleKind {
     Paint,
+    Stroke,
     Text,
     Effect,
     Grid,
@@ -1658,11 +1893,18 @@ pub struct LayoutConstraints {
     pub vertical: ConstraintAxis,
 }
 
+/// A style applied to a node.
+///
+/// `name` is absent when the style could not be resolved (unreachable remote
+/// style, missing id, or an exhausted resolve budget). It is never an empty
+/// string and never guessed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct StyleReference {
     pub id: String,
     pub kind: StyleKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -2334,6 +2576,16 @@ pub struct FullNodeData {
     pub component: Option<ComponentValue>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instance: Option<InstanceValue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strokes: Option<StrokeValue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corner_radius: Option<CornerRadiusValue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corner_smoothing: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clips_content: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blend_mode: Option<BlendMode>,
     pub style_references: ReturnedList<StyleReference>,
     pub variable_references: ReturnedList<VariableReference>,
 }
@@ -2427,4 +2679,51 @@ pub struct BoundedItems<T> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub truncation: Option<Truncation>,
     pub observation: ObservationWindow,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BlendMode, TextAutoResize, TextDecoration, TextValue};
+    use serde_json::json;
+
+    #[test]
+    fn blend_mode_round_trips_and_stays_closed() {
+        for value in ["passThrough", "multiply", "softLight", "luminosity"] {
+            let parsed: BlendMode = serde_json::from_value(json!(value)).unwrap();
+            assert_eq!(serde_json::to_value(parsed).unwrap(), json!(value));
+        }
+        assert!(
+            serde_json::from_value::<BlendMode>(json!("plusLighter")).is_err(),
+            "blend mode must stay closed"
+        );
+    }
+
+    #[test]
+    fn text_properties_round_trip_and_stay_closed() {
+        let value = json!({
+            "characters": "Save",
+            "defaultStyle": {
+                "fontFamily": "Inter",
+                "fontStyle": "Light",
+                "fontWeight": 300.0,
+                "textDecoration": "underline",
+                "paints": []
+            },
+            "styledRanges": [],
+            "alignHorizontal": "justified",
+            "alignVertical": "center",
+            "autoResize": "widthAndHeight"
+        });
+        let parsed: TextValue = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(parsed).unwrap(), value);
+
+        assert!(
+            serde_json::from_value::<TextAutoResize>(json!("width")).is_err(),
+            "auto resize must stay closed"
+        );
+        assert!(
+            serde_json::from_value::<TextDecoration>(json!("overline")).is_err(),
+            "text decoration must stay closed"
+        );
+    }
 }

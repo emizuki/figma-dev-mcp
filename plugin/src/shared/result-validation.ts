@@ -9,6 +9,8 @@ import type {
   AppliedStylePropValue,
   AvailableAnimationStyle,
   AvailableStyleProp,
+  AxisAlign,
+  BlendMode,
   CodeSyntax,
   Color,
   CompactNodeData,
@@ -17,6 +19,7 @@ import type {
   ComponentPropertyValue,
   ComponentValue,
   ConstraintAxis,
+  CornerRadiusValue,
   CubicBezier,
   DesignNode,
   DevModeNodeData,
@@ -80,11 +83,17 @@ import type {
   Rect,
   ScreenshotAsset,
   SearchNodesResult,
+  StrokeAlign,
+  StrokeValue,
   StyledTextRange,
   StyleKind,
   StyleReference,
   StyleIdentity,
   StyleValue,
+  TextAlignHorizontal,
+  TextAlignVertical,
+  TextAutoResize,
+  TextDecoration,
   TextStyle,
   TextSummary,
   TextValue,
@@ -538,18 +547,114 @@ function parseEffect(value: unknown, label: string): EffectValue {
   }
 }
 
+function parseStrokes(value: unknown, label: string): StrokeValue {
+  const object = exact(
+    value,
+    label,
+    ["paints"],
+    ["weight", "align", "dashPattern"],
+  )
+  const result: StrokeValue = {
+    paints: arrayOf(object.paints, `${label}.paints`, parsePaint),
+  }
+  if (Object.hasOwn(object, "weight")) {
+    result.weight = finite(object.weight, `${label}.weight`)
+  }
+  if (Object.hasOwn(object, "align")) {
+    result.align = oneOf<StrokeAlign>(
+      object.align,
+      ["inside", "outside", "center"],
+      `${label}.align`,
+    )
+  }
+  if (Object.hasOwn(object, "dashPattern")) {
+    result.dashPattern = arrayOf(
+      object.dashPattern,
+      `${label}.dashPattern`,
+      finite,
+    )
+  }
+  return result
+}
+
+function parseCornerRadius(value: unknown, label: string): CornerRadiusValue {
+  const object = record(value, label)
+  switch (object.kind) {
+    case "uniform": {
+      const uniform = exact(object, label, ["kind", "radius"])
+      return {
+        kind: "uniform",
+        radius: finite(uniform.radius, `${label}.radius`),
+      }
+    }
+    case "perCorner": {
+      const corners = exact(object, label, [
+        "kind",
+        "topLeft",
+        "topRight",
+        "bottomRight",
+        "bottomLeft",
+      ])
+      return {
+        kind: "perCorner",
+        topLeft: finite(corners.topLeft, `${label}.topLeft`),
+        topRight: finite(corners.topRight, `${label}.topRight`),
+        bottomRight: finite(corners.bottomRight, `${label}.bottomRight`),
+        bottomLeft: finite(corners.bottomLeft, `${label}.bottomLeft`),
+      }
+    }
+    default:
+      return fail(`${label}.kind is not allowed`)
+  }
+}
+
+const AXIS_ALIGN_VALUES: readonly AxisAlign[] = [
+  "min",
+  "center",
+  "max",
+  "spaceBetween",
+  "baseline",
+]
+
+const BLEND_MODE_VALUES: readonly BlendMode[] = [
+  "passThrough",
+  "normal",
+  "darken",
+  "multiply",
+  "linearBurn",
+  "colorBurn",
+  "lighten",
+  "screen",
+  "linearDodge",
+  "colorDodge",
+  "overlay",
+  "softLight",
+  "hardLight",
+  "difference",
+  "exclusion",
+  "hue",
+  "saturation",
+  "color",
+  "luminosity",
+]
+
 function parseLayout(value: unknown, label: string): LayoutValue {
-  const object = exact(value, label, [
-    "mode",
-    "primarySizing",
-    "counterSizing",
-    "gap",
-    "paddingTop",
-    "paddingRight",
-    "paddingBottom",
-    "paddingLeft",
-  ])
-  return {
+  const object = exact(
+    value,
+    label,
+    [
+      "mode",
+      "primarySizing",
+      "counterSizing",
+      "gap",
+      "paddingTop",
+      "paddingRight",
+      "paddingBottom",
+      "paddingLeft",
+    ],
+    ["primaryAlign", "counterAlign", "wrap", "counterAxisSpacing"],
+  )
+  const result: LayoutValue = {
     mode: oneOf<LayoutMode>(
       object.mode,
       ["none", "horizontal", "vertical", "grid"],
@@ -571,6 +676,30 @@ function parseLayout(value: unknown, label: string): LayoutValue {
     paddingBottom: finite(object.paddingBottom, `${label}.paddingBottom`),
     paddingLeft: finite(object.paddingLeft, `${label}.paddingLeft`),
   }
+  if (Object.hasOwn(object, "primaryAlign")) {
+    result.primaryAlign = oneOf<AxisAlign>(
+      object.primaryAlign,
+      AXIS_ALIGN_VALUES,
+      `${label}.primaryAlign`,
+    )
+  }
+  if (Object.hasOwn(object, "counterAlign")) {
+    result.counterAlign = oneOf<AxisAlign>(
+      object.counterAlign,
+      AXIS_ALIGN_VALUES,
+      `${label}.counterAlign`,
+    )
+  }
+  if (Object.hasOwn(object, "wrap")) {
+    result.wrap = boolean(object.wrap, `${label}.wrap`)
+  }
+  if (Object.hasOwn(object, "counterAxisSpacing")) {
+    result.counterAxisSpacing = finite(
+      object.counterAxisSpacing,
+      `${label}.counterAxisSpacing`,
+    )
+  }
+  return result
 }
 
 function parseLineHeight(value: unknown, label: string): LineHeightValue {
@@ -608,7 +737,7 @@ function parseTextStyle(value: unknown, label: string): TextStyle {
     value,
     label,
     ["fontFamily", "fontStyle", "paints"],
-    ["fontSize", "lineHeight", "letterSpacing"],
+    ["fontSize", "lineHeight", "letterSpacing", "fontWeight", "textDecoration"],
   )
   const result: TextStyle = {
     fontFamily: string(object.fontFamily, `${label}.fontFamily`),
@@ -630,6 +759,16 @@ function parseTextStyle(value: unknown, label: string): TextStyle {
       `${label}.letterSpacing`,
     )
   }
+  if (Object.hasOwn(object, "fontWeight")) {
+    result.fontWeight = finite(object.fontWeight, `${label}.fontWeight`)
+  }
+  if (Object.hasOwn(object, "textDecoration")) {
+    result.textDecoration = oneOf<TextDecoration>(
+      object.textDecoration,
+      ["none", "underline", "strikethrough"],
+      `${label}.textDecoration`,
+    )
+  }
   return result
 }
 
@@ -643,12 +782,13 @@ function parseStyledRange(value: unknown, label: string): StyledTextRange {
 }
 
 function parseTextValue(value: unknown, label: string): TextValue {
-  const object = exact(value, label, [
-    "characters",
-    "defaultStyle",
-    "styledRanges",
-  ])
-  return {
+  const object = exact(
+    value,
+    label,
+    ["characters", "defaultStyle", "styledRanges"],
+    ["alignHorizontal", "alignVertical", "autoResize"],
+  )
+  const result: TextValue = {
     characters: string(object.characters, `${label}.characters`),
     defaultStyle: parseTextStyle(object.defaultStyle, `${label}.defaultStyle`),
     styledRanges: arrayOf(
@@ -657,6 +797,28 @@ function parseTextValue(value: unknown, label: string): TextValue {
       parseStyledRange,
     ),
   }
+  if (Object.hasOwn(object, "alignHorizontal")) {
+    result.alignHorizontal = oneOf<TextAlignHorizontal>(
+      object.alignHorizontal,
+      ["left", "center", "right", "justified"],
+      `${label}.alignHorizontal`,
+    )
+  }
+  if (Object.hasOwn(object, "alignVertical")) {
+    result.alignVertical = oneOf<TextAlignVertical>(
+      object.alignVertical,
+      ["top", "center", "bottom"],
+      `${label}.alignVertical`,
+    )
+  }
+  if (Object.hasOwn(object, "autoResize")) {
+    result.autoResize = oneOf<TextAutoResize>(
+      object.autoResize,
+      ["none", "widthAndHeight", "height", "truncate"],
+      `${label}.autoResize`,
+    )
+  }
+  return result
 }
 
 function parseTextSummary(value: unknown, label: string): TextSummary {
@@ -786,15 +948,18 @@ function parseConstraints(value: unknown, label: string): LayoutConstraints {
 }
 
 function parseStyleReference(value: unknown, label: string): StyleReference {
-  const object = exact(value, label, ["id", "kind"])
-  return {
+  const object = exact(value, label, ["id", "kind"], ["name"])
+  const result: StyleReference = {
     id: string(object.id, `${label}.id`),
     kind: oneOf<StyleKind>(
       object.kind,
-      ["paint", "text", "effect", "grid"],
+      ["paint", "stroke", "text", "effect", "grid"],
       `${label}.kind`,
     ),
   }
+  if (Object.hasOwn(object, "name"))
+    result.name = displayText(object.name, `${label}.name`)
+  return result
 }
 
 function parseVariableReference(
@@ -886,7 +1051,19 @@ function parseFullData(value: unknown, label: string): FullNodeData {
     value,
     label,
     ["paints", "effects", "styleReferences", "variableReferences"],
-    ["geometry", "constraints", "autoLayout", "text", "component", "instance"],
+    [
+      "geometry",
+      "constraints",
+      "autoLayout",
+      "text",
+      "component",
+      "instance",
+      "strokes",
+      "cornerRadius",
+      "cornerSmoothing",
+      "clipsContent",
+      "blendMode",
+    ],
   )
   const result: FullNodeData = {
     paints: arrayOf(object.paints, `${label}.paints`, parsePaint),
@@ -920,6 +1097,26 @@ function parseFullData(value: unknown, label: string): FullNodeData {
     )
   if (Object.hasOwn(object, "instance"))
     result.instance = parseInstanceValue(object.instance, `${label}.instance`)
+  if (Object.hasOwn(object, "strokes"))
+    result.strokes = parseStrokes(object.strokes, `${label}.strokes`)
+  if (Object.hasOwn(object, "cornerRadius"))
+    result.cornerRadius = parseCornerRadius(
+      object.cornerRadius,
+      `${label}.cornerRadius`,
+    )
+  if (Object.hasOwn(object, "cornerSmoothing"))
+    result.cornerSmoothing = finite(
+      object.cornerSmoothing,
+      `${label}.cornerSmoothing`,
+    )
+  if (Object.hasOwn(object, "clipsContent"))
+    result.clipsContent = boolean(object.clipsContent, `${label}.clipsContent`)
+  if (Object.hasOwn(object, "blendMode"))
+    result.blendMode = oneOf<BlendMode>(
+      object.blendMode,
+      BLEND_MODE_VALUES,
+      `${label}.blendMode`,
+    )
   return result
 }
 

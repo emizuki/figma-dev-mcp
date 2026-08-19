@@ -72,8 +72,49 @@ export type EffectValue =
     }
   | { type: "layerBlur" | "backgroundBlur"; radius: number }
 
+export type StrokeAlign = "inside" | "outside" | "center"
+
+export interface StrokeValue {
+  paints: PaintValue[]
+  weight?: number
+  align?: StrokeAlign
+  dashPattern?: number[]
+}
+
+export type CornerRadiusValue =
+  | { kind: "uniform"; radius: number }
+  | {
+      kind: "perCorner"
+      topLeft: number
+      topRight: number
+      bottomRight: number
+      bottomLeft: number
+    }
+
+export type BlendMode =
+  | "passThrough"
+  | "normal"
+  | "darken"
+  | "multiply"
+  | "linearBurn"
+  | "colorBurn"
+  | "lighten"
+  | "screen"
+  | "linearDodge"
+  | "colorDodge"
+  | "overlay"
+  | "softLight"
+  | "hardLight"
+  | "difference"
+  | "exclusion"
+  | "hue"
+  | "saturation"
+  | "color"
+  | "luminosity"
+
 export type LayoutMode = "none" | "horizontal" | "vertical" | "grid"
 export type LayoutSizing = "fixed" | "hug" | "fill"
+export type AxisAlign = "min" | "center" | "max" | "spaceBetween" | "baseline"
 
 export interface LayoutValue {
   mode: LayoutMode
@@ -84,6 +125,10 @@ export interface LayoutValue {
   paddingRight: number
   paddingBottom: number
   paddingLeft: number
+  primaryAlign?: AxisAlign
+  counterAlign?: AxisAlign
+  wrap?: boolean
+  counterAxisSpacing?: number
 }
 
 export type LineHeightValue =
@@ -95,12 +140,27 @@ export type LetterSpacingValue =
   | { unit: "pixels"; value: number }
   | { unit: "percent"; value: number }
 
+// "none" is the Figma default for textDecoration and is never emitted; it stays in
+// the union so the schema describes the full domain (absence means "default").
+export type TextDecoration = "none" | "underline" | "strikethrough"
+// "left" is the Figma default for textAlignHorizontal and is never emitted; it stays
+// in the union so the schema describes the full domain (absence means "default").
+export type TextAlignHorizontal = "left" | "center" | "right" | "justified"
+// "top" is the Figma default for textAlignVertical and is never emitted; it stays in
+// the union so the schema describes the full domain (absence means "default").
+export type TextAlignVertical = "top" | "center" | "bottom"
+// "none" is the Figma default for textAutoResize and is never emitted; it stays in
+// the union so the schema describes the full domain (absence means "default").
+export type TextAutoResize = "none" | "widthAndHeight" | "height" | "truncate"
+
 export interface TextStyle {
   fontFamily: string
   fontStyle: string
   fontSize?: number
   lineHeight?: LineHeightValue
   letterSpacing?: LetterSpacingValue
+  fontWeight?: number
+  textDecoration?: TextDecoration
   paints: PaintValue[]
 }
 
@@ -114,6 +174,9 @@ export interface TextValue {
   characters: string
   defaultStyle: TextStyle
   styledRanges: StyledTextRange[]
+  alignHorizontal?: TextAlignHorizontal
+  alignVertical?: TextAlignVertical
+  autoResize?: TextAutoResize
 }
 
 export interface TextSummary {
@@ -145,7 +208,7 @@ export type VariableValue =
   | { kind: "color"; value: Color }
   | { kind: "alias"; value: string }
 
-export type StyleKind = "paint" | "text" | "effect" | "grid"
+export type StyleKind = "paint" | "stroke" | "text" | "effect" | "grid"
 
 export interface StyleIdentity {
   id: string
@@ -191,6 +254,7 @@ export interface LayoutConstraints {
 export interface StyleReference {
   id: string
   kind: StyleKind
+  name?: string
 }
 
 export interface VariableReference {
@@ -234,6 +298,11 @@ export interface FullNodeData {
   text?: TextValue
   paints: PaintValue[]
   effects: EffectValue[]
+  strokes?: StrokeValue
+  cornerRadius?: CornerRadiusValue
+  cornerSmoothing?: number
+  clipsContent?: boolean
+  blendMode?: BlendMode
   component?: ComponentValue
   instance?: InstanceValue
   styleReferences: StyleReference[]

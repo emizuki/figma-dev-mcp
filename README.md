@@ -25,6 +25,10 @@ Default loopback endpoints (not configurable in the MVP):
 
 The TypeScript companion plugin runs only in Figma Dev Mode. Its hidden UI connects to `ws://localhost:3056` with `Origin: null`. That origin check is **not authentication**; see [Limitations](#limitations).
 
+## Operational constraints
+
+The plugin bundle and the built binary must come from the same revision. Both ends reject unknown fields, so a newer plugin talking to an older binary drops the session rather than failing a single request.
+
 ## Quick start
 
 1. Build the release binary: `cargo build --release`.
@@ -158,6 +162,8 @@ The advertised catalog is exactly these 14 tools. Each tool is annotated `readOn
 | `get_variables` | Return variable collections, modes, aliases, scopes, and code syntax. |
 | `list_files` | List live Figma connections. Connection IDs expire when plugin sockets reconnect. |
 | `search_nodes` | Search exactly one explicit page or node scope with bounded predicates. |
+
+At `detail: "full"` a node's `paints` field carries **fills only**; border colour, width, alignment, and dash pattern live under `strokes`. Optional style fields are omitted at their Figma default value.
 
 ## Prompts
 

@@ -6,20 +6,33 @@ import {
 } from "../shared/limits"
 import { settleOrSkip } from "./common"
 import type {
+  AxisAlign,
+  BlendMode,
   CompactNodeData,
   ComponentPropertyValue,
   ComponentValue,
+  ConstraintAxis,
+  CornerRadiusValue,
   DesignNode,
   EffectValue,
   FullNodeData,
   InstanceValue,
+  LayoutConstraints,
+  LayoutValue,
   LetterSpacingValue,
   LineHeightValue,
   MinimalNodeDetails,
   NamedComponentProperty,
   PaintValue,
+  StrokeAlign,
+  StrokeValue,
   StyleReference,
+  TextAlignHorizontal,
+  TextAlignVertical,
+  TextAutoResize,
+  TextDecoration,
   TextStyle,
+  TextValue,
   Truncation,
   VariableReference,
 } from "../shared/results"
@@ -45,6 +58,7 @@ export interface SerializeNodeForestOptions {
   readonly dedupeComponents: boolean
   readonly includeHidden?: boolean
   readonly instanceIdentities?: ReadonlyMap<string, InstanceValue>
+  readonly styleNames?: ReadonlyMap<string, string>
   readonly signal?: CancellationSignal
   readonly progress?: ProgressReporter
   readonly limits?: Partial<SerializerLimits>
@@ -62,6 +76,7 @@ interface SerializerContext {
   readonly dedupeComponents: boolean
   readonly includeHidden: boolean | undefined
   readonly instanceIdentities: ReadonlyMap<string, InstanceValue> | undefined
+  readonly styleNames: ReadonlyMap<string, string> | undefined
   readonly signal: CancellationSignal | undefined
   readonly progress: ProgressReporter | undefined
   readonly limits: SerializerLimits
@@ -84,6 +99,10 @@ function string(value: unknown, fallback = ""): string {
 
 function finite(value: unknown, fallback = 0): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback
+}
+
+function optionalFinite(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined
 }
 
 function boolean(value: unknown, fallback = false): boolean {
@@ -214,6 +233,91 @@ export function effects(value: unknown): EffectValue[] {
   return result
 }
 
+const STROKE_ALIGNS: Record<string, StrokeAlign> = {
+  INSIDE: "inside",
+  OUTSIDE: "outside",
+  CENTER: "center",
+}
+
+// `paints` on FullNodeData is fills only; stroke colours live here.
+function strokes(node: UnknownRecord): StrokeValue | undefined {
+  const rawStrokes = hostGet(node, "strokes")
+  // Gate on the raw stroke list (or a mixed marker), not the parsed paint count: a
+  // paint type toPaint() cannot model (e.g. GRADIENT_ANGULAR) parses to nothing,
+  // but the node still has a visible border, so weight/align/dashPattern must
+  // still be reported with an empty paints array rather than the whole field
+  // disappearing.
+  if (!isMixed(rawStrokes) && array(rawStrokes).length === 0) return undefined
+  const strokePaints = paints(rawStrokes)
+  const value: StrokeValue = { paints: strokePaints }
+  const weight = optionalFinite(hostGet(node, "strokeWeight"))
+  if (weight !== undefined) value.weight = weight
+  const align = STROKE_ALIGNS[hostString(node, "strokeAlign")]
+  if (align !== undefined) value.align = align
+  const dashPattern = array(hostGet(node, "dashPattern")).filter(
+    (entry): entry is number =>
+      typeof entry === "number" && Number.isFinite(entry),
+  )
+  if (dashPattern.length > 0) value.dashPattern = dashPattern
+  return value
+}
+
+// A mixed cornerRadius means exactly "the four corners differ", and the four
+// values are readable — so it maps to perCorner instead of dropping the field.
+function cornerRadius(node: UnknownRecord): CornerRadiusValue | undefined {
+  const uniform = hostGet(node, "cornerRadius")
+  if (!isMixed(uniform)) {
+    const radius = optionalFinite(uniform)
+    return radius === undefined || radius === 0
+      ? undefined
+      : { kind: "uniform", radius }
+  }
+  const topLeft = optionalFinite(hostGet(node, "topLeftRadius"))
+  const topRight = optionalFinite(hostGet(node, "topRightRadius"))
+  const bottomRight = optionalFinite(hostGet(node, "bottomRightRadius"))
+  const bottomLeft = optionalFinite(hostGet(node, "bottomLeftRadius"))
+  if (
+    topLeft === undefined ||
+    topRight === undefined ||
+    bottomRight === undefined ||
+    bottomLeft === undefined
+  ) {
+    return undefined
+  }
+  return { kind: "perCorner", topLeft, topRight, bottomRight, bottomLeft }
+}
+
+const BLEND_MODES: Record<string, BlendMode> = {
+  PASS_THROUGH: "passThrough",
+  NORMAL: "normal",
+  DARKEN: "darken",
+  MULTIPLY: "multiply",
+  LINEAR_BURN: "linearBurn",
+  COLOR_BURN: "colorBurn",
+  LIGHTEN: "lighten",
+  SCREEN: "screen",
+  LINEAR_DODGE: "linearDodge",
+  COLOR_DODGE: "colorDodge",
+  OVERLAY: "overlay",
+  SOFT_LIGHT: "softLight",
+  HARD_LIGHT: "hardLight",
+  DIFFERENCE: "difference",
+  EXCLUSION: "exclusion",
+  HUE: "hue",
+  SATURATION: "saturation",
+  COLOR: "color",
+  LUMINOSITY: "luminosity",
+}
+
+// PASS_THROUGH is the Figma default for frames and groups, NORMAL for everything
+// else. Emitting either would add ~26 bytes to nearly every node for no signal.
+function blendMode(node: UnknownRecord): BlendMode | undefined {
+  const mode = BLEND_MODES[hostString(node, "blendMode")]
+  return mode === undefined || mode === "normal" || mode === "passThrough"
+    ? undefined
+    : mode
+}
+
 function lineHeightValue(source: UnknownRecord): LineHeightValue | undefined {
   const raw = hostGet(source, "lineHeight")
   if (isMixed(raw)) return undefined
@@ -249,6 +353,30 @@ function letterSpacingValue(
   }
 }
 
+// Figma default values are deliberately absent: an absent key means the field is
+// omitted at its default (see the TextDecoration/TextAlign*/TextAutoResize unions).
+const TEXT_DECORATIONS: Record<string, TextDecoration> = {
+  UNDERLINE: "underline",
+  STRIKETHROUGH: "strikethrough",
+}
+
+const TEXT_ALIGN_HORIZONTALS: Record<string, TextAlignHorizontal> = {
+  CENTER: "center",
+  RIGHT: "right",
+  JUSTIFIED: "justified",
+}
+
+const TEXT_ALIGN_VERTICALS: Record<string, TextAlignVertical> = {
+  CENTER: "center",
+  BOTTOM: "bottom",
+}
+
+const TEXT_AUTO_RESIZES: Record<string, TextAutoResize> = {
+  WIDTH_AND_HEIGHT: "widthAndHeight",
+  HEIGHT: "height",
+  TRUNCATE: "truncate",
+}
+
 export function textStyle(source: UnknownRecord): TextStyle {
   const font = record(hostGet(source, "fontName"))
   const style: TextStyle = {
@@ -264,12 +392,18 @@ export function textStyle(source: UnknownRecord): TextStyle {
   if (lineHeight !== undefined) style.lineHeight = lineHeight
   const letterSpacing = letterSpacingValue(source)
   if (letterSpacing !== undefined) style.letterSpacing = letterSpacing
+  const fontWeight = optionalFinite(hostGet(source, "fontWeight"))
+  if (fontWeight !== undefined) style.fontWeight = fontWeight
+  const decoration = TEXT_DECORATIONS[hostString(source, "textDecoration")]
+  if (decoration !== undefined) style.textDecoration = decoration
   return style
 }
 
 const TEXT_SEGMENT_FIELDS = [
   "fontName",
   "fontSize",
+  "fontWeight",
+  "textDecoration",
   "lineHeight",
   "letterSpacing",
   "fills",
@@ -290,6 +424,9 @@ function getStyledRanges(node: UnknownRecord) {
       },
     )
   } catch {
+    // getStyledTextSegments rejects the whole call if any single field name in
+    // TEXT_SEGMENT_FIELDS is unsupported by the running Figma version, so one bad
+    // name here silently empties every styled range, not just the new field.
     return []
   }
 }
@@ -325,24 +462,63 @@ function geometry(node: UnknownRecord) {
   return result
 }
 
-function autoLayout(node: UnknownRecord) {
-  const layoutMode = node.layoutMode
+const AXIS_ALIGNS: Record<string, AxisAlign> = {
+  MIN: "min",
+  CENTER: "center",
+  MAX: "max",
+  SPACE_BETWEEN: "spaceBetween",
+  BASELINE: "baseline",
+}
+
+function autoLayout(node: UnknownRecord): LayoutValue | undefined {
+  const layoutMode = hostGet(node, "layoutMode")
   if (typeof layoutMode !== "string" || layoutMode === "NONE") return undefined
-  return {
+  const layout: LayoutValue = {
     mode:
       layoutMode === "HORIZONTAL"
         ? "horizontal"
         : layoutMode === "VERTICAL"
           ? "vertical"
           : "grid",
-    primarySizing: sizing(node.primaryAxisSizingMode),
-    counterSizing: sizing(node.counterAxisSizingMode),
-    gap: finite(node.itemSpacing),
-    paddingTop: finite(node.paddingTop),
-    paddingRight: finite(node.paddingRight),
-    paddingBottom: finite(node.paddingBottom),
-    paddingLeft: finite(node.paddingLeft),
-  } as const
+    primarySizing: sizing(hostGet(node, "primaryAxisSizingMode")),
+    counterSizing: sizing(hostGet(node, "counterAxisSizingMode")),
+    gap: finite(hostGet(node, "itemSpacing")),
+    paddingTop: finite(hostGet(node, "paddingTop")),
+    paddingRight: finite(hostGet(node, "paddingRight")),
+    paddingBottom: finite(hostGet(node, "paddingBottom")),
+    paddingLeft: finite(hostGet(node, "paddingLeft")),
+  }
+  // Alignment is justify-content and align-items: always emitted when the node has
+  // auto-layout, including the Figma default MIN. Absence means the getter was
+  // unreadable, not that the layout is left-aligned.
+  const primaryAlign = AXIS_ALIGNS[hostString(node, "primaryAxisAlignItems")]
+  if (primaryAlign !== undefined) layout.primaryAlign = primaryAlign
+  const counterAlign = AXIS_ALIGNS[hostString(node, "counterAxisAlignItems")]
+  if (counterAlign !== undefined) layout.counterAlign = counterAlign
+  if (hostGet(node, "layoutWrap") === "WRAP") {
+    layout.wrap = true
+    const spacing = optionalFinite(hostGet(node, "counterAxisSpacing"))
+    if (spacing !== undefined) layout.counterAxisSpacing = spacing
+  }
+  return layout
+}
+
+const CONSTRAINT_AXES: Record<string, ConstraintAxis> = {
+  MIN: "min",
+  CENTER: "center",
+  MAX: "max",
+  STRETCH: "stretch",
+  SCALE: "scale",
+}
+
+function layoutConstraints(node: UnknownRecord): LayoutConstraints | undefined {
+  const source = record(hostGet(node, "constraints"))
+  const horizontal = CONSTRAINT_AXES[string(hostGet(source, "horizontal"))]
+  const vertical = CONSTRAINT_AXES[string(hostGet(source, "vertical"))]
+  if (horizontal === undefined || vertical === undefined) return undefined
+  // Absence means Figma's default MIN/MIN; only emit when the pair differs from it.
+  if (horizontal === "min" && vertical === "min") return undefined
+  return { horizontal, vertical }
 }
 
 function sizing(value: unknown): "fixed" | "hug" | "fill" {
@@ -356,18 +532,34 @@ function sizing(value: unknown): "fixed" | "hug" | "fill" {
   }
 }
 
-function styleReferences(node: UnknownRecord): StyleReference[] {
+const STYLE_ID_FIELDS = [
+  ["fillStyleId", "paint"],
+  ["strokeStyleId", "stroke"],
+  ["textStyleId", "text"],
+  ["effectStyleId", "effect"],
+  ["gridStyleId", "grid"],
+] as const
+
+function styleId(node: UnknownRecord, field: string): string | undefined {
+  const id = hostGet(node, field)
+  if (typeof id !== "string" || id.length === 0 || id === "mixed")
+    return undefined
+  return id
+}
+
+function styleReferences(
+  node: UnknownRecord,
+  names: ReadonlyMap<string, string> | undefined,
+): StyleReference[] {
   const refs: StyleReference[] = []
-  for (const [field, kind] of [
-    ["fillStyleId", "paint"],
-    ["textStyleId", "text"],
-    ["effectStyleId", "effect"],
-    ["gridStyleId", "grid"],
-  ] as const) {
-    const id = node[field]
-    if (typeof id === "string" && id.length > 0 && id !== "mixed") {
-      refs.push({ id, kind })
-    }
+  for (const [field, kind] of STYLE_ID_FIELDS) {
+    const id = styleId(node, field)
+    if (id === undefined) continue
+    const reference: StyleReference = { id, kind }
+    const name = names?.get(id)
+    // Never guess and never emit an empty name: absence means "not resolved".
+    if (name !== undefined && name.length > 0) reference.name = clampText(name)
+    refs.push(reference)
   }
   return refs
 }
@@ -517,15 +709,18 @@ function nodeData(
   node: UnknownRecord,
   detail: DetailLevel,
   identities?: ReadonlyMap<string, InstanceValue>,
+  styleNames?: ReadonlyMap<string, string>,
 ): NodeData {
   if (detail === "minimal") return {}
   const compact: CompactNodeData = {
     geometry: geometry(node),
-    styleReferences: styleReferences(node),
+    styleReferences: styleReferences(node, styleNames),
     variableReferences: variableReferences(node),
   }
   const layout = autoLayout(node)
   if (layout !== undefined) compact.autoLayout = layout
+  const constraints = layoutConstraints(node)
+  if (constraints !== undefined) compact.constraints = constraints
   const component = componentValue(node)
   if (component !== undefined) compact.component = component
   const instance = instanceValue(node, identities)
@@ -546,14 +741,34 @@ function nodeData(
   }
   if (compact.geometry !== undefined) full.geometry = compact.geometry
   if (compact.autoLayout !== undefined) full.autoLayout = compact.autoLayout
+  if (compact.constraints !== undefined) full.constraints = compact.constraints
   if (compact.component !== undefined) full.component = compact.component
   if (compact.instance !== undefined) full.instance = compact.instance
+  const strokeValue = strokes(node)
+  if (strokeValue !== undefined) full.strokes = strokeValue
+  const radius = cornerRadius(node)
+  if (radius !== undefined) full.cornerRadius = radius
+  const smoothing = optionalFinite(hostGet(node, "cornerSmoothing"))
+  if (smoothing !== undefined && smoothing !== 0)
+    full.cornerSmoothing = smoothing
+  if (hostGet(node, "clipsContent") === true) full.clipsContent = true
+  const blend = blendMode(node)
+  if (blend !== undefined) full.blendMode = blend
   if (node.type === "TEXT") {
-    full.text = {
-      characters: string(node.characters),
+    const text: TextValue = {
+      characters: string(hostGet(node, "characters")),
       defaultStyle: textStyle(node),
       styledRanges: getStyledRanges(node),
     }
+    const alignHorizontal =
+      TEXT_ALIGN_HORIZONTALS[hostString(node, "textAlignHorizontal")]
+    if (alignHorizontal !== undefined) text.alignHorizontal = alignHorizontal
+    const alignVertical =
+      TEXT_ALIGN_VERTICALS[hostString(node, "textAlignVertical")]
+    if (alignVertical !== undefined) text.alignVertical = alignVertical
+    const autoResize = TEXT_AUTO_RESIZES[hostString(node, "textAutoResize")]
+    if (autoResize !== undefined) text.autoResize = autoResize
+    full.text = text
   }
   return full
 }
@@ -688,7 +903,12 @@ function serializeNode(
   const children = visibleChildren(node, context.includeHidden)
   const result: DesignNode<NodeData> = {
     summary: summarize(node, children),
-    data: nodeData(node, context.detail, context.instanceIdentities),
+    data: nodeData(
+      node,
+      context.detail,
+      context.instanceIdentities,
+      context.styleNames,
+    ),
     children: [],
     childrenTruncated: false,
   }
@@ -780,6 +1000,7 @@ function createWalkContext(options: ForestWalkOptions): SerializerContext {
     dedupeComponents: false,
     includeHidden: options.includeHidden,
     instanceIdentities: undefined,
+    styleNames: undefined,
     signal: options.signal,
     progress: options.progress ?? progressFor(options.signal),
     emittedComponents: new Set<string>(),
@@ -912,6 +1133,59 @@ export async function collectInstanceIdentities(
   return identities
 }
 
+export type StyleNameLookup = (id: string) => Promise<unknown>
+
+export const DEFAULT_STYLE_NAME_BUDGET_MS = 2_000
+export const MAX_STYLE_NAME_LOOKUPS = 200
+
+// One async call per unique style id, never one per node: a measured 233-node tree
+// made 15 style references across only 5 distinct ids.
+export async function collectStyleNames(
+  roots: readonly unknown[],
+  lookup: StyleNameLookup | undefined,
+  signal?: CancellationSignal,
+  depth: number = Number.POSITIVE_INFINITY,
+  budgetMs: number = DEFAULT_STYLE_NAME_BUDGET_MS,
+): Promise<Map<string, string>> {
+  const names = new Map<string, string>()
+  if (lookup === undefined) return names
+  const pending: string[] = []
+  const seen = new Set<string>()
+  const visit = (raw: unknown, level: number): void => {
+    signal?.throwIfAborted()
+    const node = record(raw)
+    for (const [field] of STYLE_ID_FIELDS) {
+      const id = styleId(node, field)
+      if (id === undefined || seen.has(id)) continue
+      seen.add(id)
+      if (pending.length < MAX_STYLE_NAME_LOOKUPS) pending.push(id)
+    }
+    if (level >= depth) return
+    const children = array(hostGet(node, "children"))
+    for (let index = 0; index < children.length; index += 1) {
+      throwIfAbortedAtBatch(signal, index, CANCEL_CHECK_BATCH)
+      visit(children[index], level + 1)
+    }
+  }
+  for (const root of roots) visit(root, 0)
+  const started = Date.now()
+  for (let index = 0; index < pending.length; index += 1) {
+    signal?.throwIfAborted()
+    // Running out of budget leaves the remaining names absent; the forest is
+    // never marked truncated over a missing label.
+    if (Date.now() - started >= budgetMs) break
+    const id = pending[index] as string
+    try {
+      const style = record(await settleOrSkip(lookup(id)))
+      const name = string(hostGet(style, "name"))
+      if (name.length > 0) names.set(id, name)
+    } catch {
+      // A missing or unreachable remote style must not fail the whole forest.
+    }
+  }
+  return names
+}
+
 async function resolveInstanceIdentity(
   node: UnknownRecord,
 ): Promise<InstanceValue | undefined> {
@@ -951,6 +1225,7 @@ export function serializeNodeForest(
     dedupeComponents: options.dedupeComponents,
     includeHidden: options.includeHidden,
     instanceIdentities: options.instanceIdentities,
+    styleNames: options.styleNames,
     signal: options.signal,
     progress: options.progress ?? progressFor(options.signal),
     emittedComponents: new Set<string>(),

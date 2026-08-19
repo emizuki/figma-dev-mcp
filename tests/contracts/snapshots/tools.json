@@ -699,6 +699,41 @@
     "name": "get_design_context",
     "outputSchema": {
       "$defs": {
+        "AxisAlign": {
+          "enum": [
+            "min",
+            "center",
+            "max",
+            "spaceBetween",
+            "baseline"
+          ],
+          "type": "string"
+        },
+        "BlendMode": {
+          "description": "Figma blend mode, mapped to CSS `mix-blend-mode` where an equivalent exists.\n\n`Normal` and `PassThrough` are the Figma defaults and are never emitted; they\nstay in the enum so the schema describes the full domain.",
+          "enum": [
+            "passThrough",
+            "normal",
+            "darken",
+            "multiply",
+            "linearBurn",
+            "colorBurn",
+            "lighten",
+            "screen",
+            "linearDodge",
+            "colorDodge",
+            "overlay",
+            "softLight",
+            "hardLight",
+            "difference",
+            "exclusion",
+            "hue",
+            "saturation",
+            "color",
+            "luminosity"
+          ],
+          "type": "string"
+        },
         "Color": {
           "additionalProperties": false,
           "properties": {
@@ -910,6 +945,61 @@
             "scale"
           ],
           "type": "string"
+        },
+        "CornerRadiusValue": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "uniform",
+                  "type": "string"
+                },
+                "radius": {
+                  "format": "double",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "kind",
+                "radius"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "bottomLeft": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "bottomRight": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "kind": {
+                  "const": "perCorner",
+                  "type": "string"
+                },
+                "topLeft": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "topRight": {
+                  "format": "double",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "kind",
+                "topLeft",
+                "topRight",
+                "bottomRight",
+                "bottomLeft"
+              ],
+              "type": "object"
+            }
+          ]
         },
         "DesignNode": {
           "additionalProperties": false,
@@ -1155,6 +1245,22 @@
                 }
               ]
             },
+            "blendMode": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/BlendMode"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "clipsContent": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
             "component": {
               "anyOf": [
                 {
@@ -1173,6 +1279,23 @@
                 {
                   "type": "null"
                 }
+              ]
+            },
+            "cornerRadius": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CornerRadiusValue"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "cornerSmoothing": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
               ]
             },
             "effects": {
@@ -1200,6 +1323,16 @@
             },
             "paints": {
               "$ref": "#/$defs/ReturnedList_of_PaintValue"
+            },
+            "strokes": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/StrokeValue"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "styleReferences": {
               "$ref": "#/$defs/ReturnedList_of_StyleReference"
@@ -1346,6 +1479,23 @@
         "LayoutValue": {
           "additionalProperties": false,
           "properties": {
+            "counterAlign": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AxisAlign"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "counterAxisSpacing": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
             "counterSizing": {
               "$ref": "#/$defs/LayoutSizing"
             },
@@ -1372,8 +1522,24 @@
               "format": "double",
               "type": "number"
             },
+            "primaryAlign": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AxisAlign"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "primarySizing": {
               "$ref": "#/$defs/LayoutSizing"
+            },
+            "wrap": {
+              "type": [
+                "boolean",
+                "null"
+              ]
             }
           },
           "required": [
@@ -1795,9 +1961,67 @@
           "maxItems": 2000,
           "type": "array"
         },
+        "ReturnedList_of_double": {
+          "description": "returned result collection; decoder stops at item 2001",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 2000,
+          "type": "array"
+        },
+        "StrokeAlign": {
+          "enum": [
+            "inside",
+            "outside",
+            "center"
+          ],
+          "type": "string"
+        },
+        "StrokeValue": {
+          "additionalProperties": false,
+          "description": "Border paint, width, alignment, and dash pattern.\n\n`FullNodeData::paints` carries fills only; stroke colours live here.",
+          "properties": {
+            "align": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/StrokeAlign"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "dashPattern": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ReturnedList_of_double"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "paints": {
+              "$ref": "#/$defs/ReturnedList_of_PaintValue"
+            },
+            "weight": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "paints"
+          ],
+          "type": "object"
+        },
         "StyleKind": {
           "enum": [
             "paint",
+            "stroke",
             "text",
             "effect",
             "grid"
@@ -1806,12 +2030,19 @@
         },
         "StyleReference": {
           "additionalProperties": false,
+          "description": "A style applied to a node.\n\n`name` is absent when the style could not be resolved (unreachable remote\nstyle, missing id, or an exhausted resolve budget). It is never an empty\nstring and never guessed.",
           "properties": {
             "id": {
               "type": "string"
             },
             "kind": {
               "$ref": "#/$defs/StyleKind"
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [
@@ -1844,6 +2075,44 @@
           ],
           "type": "object"
         },
+        "TextAlignHorizontal": {
+          "description": "`Left` is the Figma default for textAlignHorizontal and is never emitted; it\nstays in the enum so the schema describes the full domain (absence means\n\"default\").",
+          "enum": [
+            "left",
+            "center",
+            "right",
+            "justified"
+          ],
+          "type": "string"
+        },
+        "TextAlignVertical": {
+          "description": "`Top` is the Figma default for textAlignVertical and is never emitted; it stays\nin the enum so the schema describes the full domain (absence means \"default\").",
+          "enum": [
+            "top",
+            "center",
+            "bottom"
+          ],
+          "type": "string"
+        },
+        "TextAutoResize": {
+          "description": "`None` is the Figma default for textAutoResize and is never emitted; it stays in\nthe enum so the schema describes the full domain (absence means \"default\").",
+          "enum": [
+            "none",
+            "widthAndHeight",
+            "height",
+            "truncate"
+          ],
+          "type": "string"
+        },
+        "TextDecoration": {
+          "description": "`None` is the Figma default for textDecoration and is never emitted; it stays in\nthe enum so the schema describes the full domain (absence means \"default\").",
+          "enum": [
+            "none",
+            "underline",
+            "strikethrough"
+          ],
+          "type": "string"
+        },
         "TextStyle": {
           "additionalProperties": false,
           "properties": {
@@ -1859,6 +2128,13 @@
             },
             "fontStyle": {
               "type": "string"
+            },
+            "fontWeight": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
             },
             "letterSpacing": {
               "anyOf": [
@@ -1882,6 +2158,16 @@
             },
             "paints": {
               "$ref": "#/$defs/ReturnedList_of_PaintValue"
+            },
+            "textDecoration": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TextDecoration"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "required": [
@@ -1912,6 +2198,36 @@
         "TextValue": {
           "additionalProperties": false,
           "properties": {
+            "alignHorizontal": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TextAlignHorizontal"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "alignVertical": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TextAlignVertical"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "autoResize": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TextAutoResize"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "characters": {
               "type": "string"
             },
@@ -4600,6 +4916,41 @@
     "name": "get_nodes",
     "outputSchema": {
       "$defs": {
+        "AxisAlign": {
+          "enum": [
+            "min",
+            "center",
+            "max",
+            "spaceBetween",
+            "baseline"
+          ],
+          "type": "string"
+        },
+        "BlendMode": {
+          "description": "Figma blend mode, mapped to CSS `mix-blend-mode` where an equivalent exists.\n\n`Normal` and `PassThrough` are the Figma defaults and are never emitted; they\nstay in the enum so the schema describes the full domain.",
+          "enum": [
+            "passThrough",
+            "normal",
+            "darken",
+            "multiply",
+            "linearBurn",
+            "colorBurn",
+            "lighten",
+            "screen",
+            "linearDodge",
+            "colorDodge",
+            "overlay",
+            "softLight",
+            "hardLight",
+            "difference",
+            "exclusion",
+            "hue",
+            "saturation",
+            "color",
+            "luminosity"
+          ],
+          "type": "string"
+        },
         "CanonicalErrorMessage": {
           "description": "code-owned canonical error message; bounded by UTF-8 encoded byte length",
           "maxLength": 1024,
@@ -4819,6 +5170,61 @@
             "scale"
           ],
           "type": "string"
+        },
+        "CornerRadiusValue": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "uniform",
+                  "type": "string"
+                },
+                "radius": {
+                  "format": "double",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "kind",
+                "radius"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "bottomLeft": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "bottomRight": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "kind": {
+                  "const": "perCorner",
+                  "type": "string"
+                },
+                "topLeft": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "topRight": {
+                  "format": "double",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "kind",
+                "topLeft",
+                "topRight",
+                "bottomRight",
+                "bottomLeft"
+              ],
+              "type": "object"
+            }
+          ]
         },
         "DesignNode": {
           "additionalProperties": false,
@@ -5084,6 +5490,22 @@
                 }
               ]
             },
+            "blendMode": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/BlendMode"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "clipsContent": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
             "component": {
               "anyOf": [
                 {
@@ -5102,6 +5524,23 @@
                 {
                   "type": "null"
                 }
+              ]
+            },
+            "cornerRadius": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CornerRadiusValue"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "cornerSmoothing": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
               ]
             },
             "effects": {
@@ -5129,6 +5568,16 @@
             },
             "paints": {
               "$ref": "#/$defs/ReturnedList_of_PaintValue"
+            },
+            "strokes": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/StrokeValue"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "styleReferences": {
               "$ref": "#/$defs/ReturnedList_of_StyleReference"
@@ -5432,6 +5881,23 @@
         "LayoutValue": {
           "additionalProperties": false,
           "properties": {
+            "counterAlign": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AxisAlign"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "counterAxisSpacing": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
             "counterSizing": {
               "$ref": "#/$defs/LayoutSizing"
             },
@@ -5458,8 +5924,24 @@
               "format": "double",
               "type": "number"
             },
+            "primaryAlign": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AxisAlign"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "primarySizing": {
               "$ref": "#/$defs/LayoutSizing"
+            },
+            "wrap": {
+              "type": [
+                "boolean",
+                "null"
+              ]
             }
           },
           "required": [
@@ -5881,9 +6363,67 @@
           "maxItems": 2000,
           "type": "array"
         },
+        "ReturnedList_of_double": {
+          "description": "returned result collection; decoder stops at item 2001",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 2000,
+          "type": "array"
+        },
+        "StrokeAlign": {
+          "enum": [
+            "inside",
+            "outside",
+            "center"
+          ],
+          "type": "string"
+        },
+        "StrokeValue": {
+          "additionalProperties": false,
+          "description": "Border paint, width, alignment, and dash pattern.\n\n`FullNodeData::paints` carries fills only; stroke colours live here.",
+          "properties": {
+            "align": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/StrokeAlign"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "dashPattern": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ReturnedList_of_double"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "paints": {
+              "$ref": "#/$defs/ReturnedList_of_PaintValue"
+            },
+            "weight": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "paints"
+          ],
+          "type": "object"
+        },
         "StyleKind": {
           "enum": [
             "paint",
+            "stroke",
             "text",
             "effect",
             "grid"
@@ -5892,12 +6432,19 @@
         },
         "StyleReference": {
           "additionalProperties": false,
+          "description": "A style applied to a node.\n\n`name` is absent when the style could not be resolved (unreachable remote\nstyle, missing id, or an exhausted resolve budget). It is never an empty\nstring and never guessed.",
           "properties": {
             "id": {
               "type": "string"
             },
             "kind": {
               "$ref": "#/$defs/StyleKind"
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [
@@ -5930,6 +6477,44 @@
           ],
           "type": "object"
         },
+        "TextAlignHorizontal": {
+          "description": "`Left` is the Figma default for textAlignHorizontal and is never emitted; it\nstays in the enum so the schema describes the full domain (absence means\n\"default\").",
+          "enum": [
+            "left",
+            "center",
+            "right",
+            "justified"
+          ],
+          "type": "string"
+        },
+        "TextAlignVertical": {
+          "description": "`Top` is the Figma default for textAlignVertical and is never emitted; it stays\nin the enum so the schema describes the full domain (absence means \"default\").",
+          "enum": [
+            "top",
+            "center",
+            "bottom"
+          ],
+          "type": "string"
+        },
+        "TextAutoResize": {
+          "description": "`None` is the Figma default for textAutoResize and is never emitted; it stays in\nthe enum so the schema describes the full domain (absence means \"default\").",
+          "enum": [
+            "none",
+            "widthAndHeight",
+            "height",
+            "truncate"
+          ],
+          "type": "string"
+        },
+        "TextDecoration": {
+          "description": "`None` is the Figma default for textDecoration and is never emitted; it stays in\nthe enum so the schema describes the full domain (absence means \"default\").",
+          "enum": [
+            "none",
+            "underline",
+            "strikethrough"
+          ],
+          "type": "string"
+        },
         "TextStyle": {
           "additionalProperties": false,
           "properties": {
@@ -5945,6 +6530,13 @@
             },
             "fontStyle": {
               "type": "string"
+            },
+            "fontWeight": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
             },
             "letterSpacing": {
               "anyOf": [
@@ -5968,6 +6560,16 @@
             },
             "paints": {
               "$ref": "#/$defs/ReturnedList_of_PaintValue"
+            },
+            "textDecoration": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TextDecoration"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "required": [
@@ -5998,6 +6600,36 @@
         "TextValue": {
           "additionalProperties": false,
           "properties": {
+            "alignHorizontal": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TextAlignHorizontal"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "alignVertical": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TextAlignVertical"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "autoResize": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TextAutoResize"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "characters": {
               "type": "string"
             },
@@ -7850,6 +8482,41 @@
     "name": "get_selection",
     "outputSchema": {
       "$defs": {
+        "AxisAlign": {
+          "enum": [
+            "min",
+            "center",
+            "max",
+            "spaceBetween",
+            "baseline"
+          ],
+          "type": "string"
+        },
+        "BlendMode": {
+          "description": "Figma blend mode, mapped to CSS `mix-blend-mode` where an equivalent exists.\n\n`Normal` and `PassThrough` are the Figma defaults and are never emitted; they\nstay in the enum so the schema describes the full domain.",
+          "enum": [
+            "passThrough",
+            "normal",
+            "darken",
+            "multiply",
+            "linearBurn",
+            "colorBurn",
+            "lighten",
+            "screen",
+            "linearDodge",
+            "colorDodge",
+            "overlay",
+            "softLight",
+            "hardLight",
+            "difference",
+            "exclusion",
+            "hue",
+            "saturation",
+            "color",
+            "luminosity"
+          ],
+          "type": "string"
+        },
         "Color": {
           "additionalProperties": false,
           "properties": {
@@ -8061,6 +8728,61 @@
             "scale"
           ],
           "type": "string"
+        },
+        "CornerRadiusValue": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "uniform",
+                  "type": "string"
+                },
+                "radius": {
+                  "format": "double",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "kind",
+                "radius"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "bottomLeft": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "bottomRight": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "kind": {
+                  "const": "perCorner",
+                  "type": "string"
+                },
+                "topLeft": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "topRight": {
+                  "format": "double",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "kind",
+                "topLeft",
+                "topRight",
+                "bottomRight",
+                "bottomLeft"
+              ],
+              "type": "object"
+            }
+          ]
         },
         "DesignNode": {
           "additionalProperties": false,
@@ -8306,6 +9028,22 @@
                 }
               ]
             },
+            "blendMode": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/BlendMode"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "clipsContent": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
             "component": {
               "anyOf": [
                 {
@@ -8324,6 +9062,23 @@
                 {
                   "type": "null"
                 }
+              ]
+            },
+            "cornerRadius": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CornerRadiusValue"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "cornerSmoothing": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
               ]
             },
             "effects": {
@@ -8351,6 +9106,16 @@
             },
             "paints": {
               "$ref": "#/$defs/ReturnedList_of_PaintValue"
+            },
+            "strokes": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/StrokeValue"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "styleReferences": {
               "$ref": "#/$defs/ReturnedList_of_StyleReference"
@@ -8497,6 +9262,23 @@
         "LayoutValue": {
           "additionalProperties": false,
           "properties": {
+            "counterAlign": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AxisAlign"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "counterAxisSpacing": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
             "counterSizing": {
               "$ref": "#/$defs/LayoutSizing"
             },
@@ -8523,8 +9305,24 @@
               "format": "double",
               "type": "number"
             },
+            "primaryAlign": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AxisAlign"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "primarySizing": {
               "$ref": "#/$defs/LayoutSizing"
+            },
+            "wrap": {
+              "type": [
+                "boolean",
+                "null"
+              ]
             }
           },
           "required": [
@@ -8946,9 +9744,67 @@
           "maxItems": 2000,
           "type": "array"
         },
+        "ReturnedList_of_double": {
+          "description": "returned result collection; decoder stops at item 2001",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 2000,
+          "type": "array"
+        },
+        "StrokeAlign": {
+          "enum": [
+            "inside",
+            "outside",
+            "center"
+          ],
+          "type": "string"
+        },
+        "StrokeValue": {
+          "additionalProperties": false,
+          "description": "Border paint, width, alignment, and dash pattern.\n\n`FullNodeData::paints` carries fills only; stroke colours live here.",
+          "properties": {
+            "align": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/StrokeAlign"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "dashPattern": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ReturnedList_of_double"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "paints": {
+              "$ref": "#/$defs/ReturnedList_of_PaintValue"
+            },
+            "weight": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "paints"
+          ],
+          "type": "object"
+        },
         "StyleKind": {
           "enum": [
             "paint",
+            "stroke",
             "text",
             "effect",
             "grid"
@@ -8957,12 +9813,19 @@
         },
         "StyleReference": {
           "additionalProperties": false,
+          "description": "A style applied to a node.\n\n`name` is absent when the style could not be resolved (unreachable remote\nstyle, missing id, or an exhausted resolve budget). It is never an empty\nstring and never guessed.",
           "properties": {
             "id": {
               "type": "string"
             },
             "kind": {
               "$ref": "#/$defs/StyleKind"
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [
@@ -8995,6 +9858,44 @@
           ],
           "type": "object"
         },
+        "TextAlignHorizontal": {
+          "description": "`Left` is the Figma default for textAlignHorizontal and is never emitted; it\nstays in the enum so the schema describes the full domain (absence means\n\"default\").",
+          "enum": [
+            "left",
+            "center",
+            "right",
+            "justified"
+          ],
+          "type": "string"
+        },
+        "TextAlignVertical": {
+          "description": "`Top` is the Figma default for textAlignVertical and is never emitted; it stays\nin the enum so the schema describes the full domain (absence means \"default\").",
+          "enum": [
+            "top",
+            "center",
+            "bottom"
+          ],
+          "type": "string"
+        },
+        "TextAutoResize": {
+          "description": "`None` is the Figma default for textAutoResize and is never emitted; it stays in\nthe enum so the schema describes the full domain (absence means \"default\").",
+          "enum": [
+            "none",
+            "widthAndHeight",
+            "height",
+            "truncate"
+          ],
+          "type": "string"
+        },
+        "TextDecoration": {
+          "description": "`None` is the Figma default for textDecoration and is never emitted; it stays in\nthe enum so the schema describes the full domain (absence means \"default\").",
+          "enum": [
+            "none",
+            "underline",
+            "strikethrough"
+          ],
+          "type": "string"
+        },
         "TextStyle": {
           "additionalProperties": false,
           "properties": {
@@ -9010,6 +9911,13 @@
             },
             "fontStyle": {
               "type": "string"
+            },
+            "fontWeight": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
             },
             "letterSpacing": {
               "anyOf": [
@@ -9033,6 +9941,16 @@
             },
             "paints": {
               "$ref": "#/$defs/ReturnedList_of_PaintValue"
+            },
+            "textDecoration": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TextDecoration"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "required": [
@@ -9063,6 +9981,36 @@
         "TextValue": {
           "additionalProperties": false,
           "properties": {
+            "alignHorizontal": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TextAlignHorizontal"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "alignVertical": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TextAlignVertical"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "autoResize": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TextAutoResize"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "characters": {
               "type": "string"
             },
@@ -10088,6 +11036,44 @@
           ],
           "type": "object"
         },
+        "TextAlignHorizontal": {
+          "description": "`Left` is the Figma default for textAlignHorizontal and is never emitted; it\nstays in the enum so the schema describes the full domain (absence means\n\"default\").",
+          "enum": [
+            "left",
+            "center",
+            "right",
+            "justified"
+          ],
+          "type": "string"
+        },
+        "TextAlignVertical": {
+          "description": "`Top` is the Figma default for textAlignVertical and is never emitted; it stays\nin the enum so the schema describes the full domain (absence means \"default\").",
+          "enum": [
+            "top",
+            "center",
+            "bottom"
+          ],
+          "type": "string"
+        },
+        "TextAutoResize": {
+          "description": "`None` is the Figma default for textAutoResize and is never emitted; it stays in\nthe enum so the schema describes the full domain (absence means \"default\").",
+          "enum": [
+            "none",
+            "widthAndHeight",
+            "height",
+            "truncate"
+          ],
+          "type": "string"
+        },
+        "TextDecoration": {
+          "description": "`None` is the Figma default for textDecoration and is never emitted; it stays in\nthe enum so the schema describes the full domain (absence means \"default\").",
+          "enum": [
+            "none",
+            "underline",
+            "strikethrough"
+          ],
+          "type": "string"
+        },
         "TextStyle": {
           "additionalProperties": false,
           "properties": {
@@ -10103,6 +11089,13 @@
             },
             "fontStyle": {
               "type": "string"
+            },
+            "fontWeight": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
             },
             "letterSpacing": {
               "anyOf": [
@@ -10126,6 +11119,16 @@
             },
             "paints": {
               "$ref": "#/$defs/ReturnedList_of_PaintValue"
+            },
+            "textDecoration": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TextDecoration"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "required": [
@@ -10138,6 +11141,36 @@
         "TextValue": {
           "additionalProperties": false,
           "properties": {
+            "alignHorizontal": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TextAlignHorizontal"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "alignVertical": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TextAlignVertical"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "autoResize": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TextAutoResize"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "characters": {
               "type": "string"
             },

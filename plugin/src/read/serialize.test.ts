@@ -6,6 +6,7 @@ import { parseReadResult } from "../shared/result-validation"
 import {
   clampText,
   collectInstanceIdentities,
+  collectStyleNames,
   namedComponentProperties,
   serializeNodeForest,
   TEXT_CLAMP_LIMIT,
@@ -278,6 +279,647 @@ describe("bounded node serializer", () => {
         ],
       },
     })
+  })
+
+  test("text style carries font weight and decoration on default style and ranges", () => {
+    const node = base({
+      type: "TEXT",
+      characters: "Save",
+      fontName: { family: "Inter", style: "Light" },
+      fontSize: 12,
+      fontWeight: 300,
+      textDecoration: "UNDERLINE",
+      lineHeight: { unit: "PIXELS", value: 18 },
+      letterSpacing: { unit: "PERCENT", value: 0 },
+      fills: [],
+      getStyledTextSegments: () => [
+        {
+          start: 0,
+          end: 4,
+          fontName: { family: "Inter", style: "Bold" },
+          fontSize: 12,
+          fontWeight: 700,
+          textDecoration: "STRIKETHROUGH",
+          lineHeight: { unit: "PIXELS", value: 18 },
+          letterSpacing: { unit: "PERCENT", value: 0 },
+          fills: [],
+        },
+      ],
+    })
+
+    const text = (
+      serializeNodeForest([node], {
+        detail: "full",
+        depth: 0,
+        dedupeComponents: false,
+      }).nodes[0]?.data as { text?: Record<string, unknown> }
+    ).text
+
+    expect(text?.defaultStyle).toMatchObject({
+      fontWeight: 300,
+      textDecoration: "underline",
+    })
+    expect(
+      (text?.styledRanges as { style: Record<string, unknown> }[])[0]?.style,
+    ).toMatchObject({ fontWeight: 700, textDecoration: "strikethrough" })
+  })
+
+  test("mixed font weight and NONE decoration are omitted", () => {
+    const node = base({
+      type: "TEXT",
+      characters: "Save",
+      fontName: { family: "Inter", style: "Regular" },
+      fontWeight: Symbol("figma.mixed"),
+      textDecoration: "NONE",
+      fills: [],
+    })
+
+    const style = (
+      serializeNodeForest([node], {
+        detail: "full",
+        depth: 0,
+        dedupeComponents: false,
+      }).nodes[0]?.data as { text?: { defaultStyle: Record<string, unknown> } }
+    ).text?.defaultStyle
+
+    expect(Object.hasOwn(style ?? {}, "fontWeight")).toBe(false)
+    expect(Object.hasOwn(style ?? {}, "textDecoration")).toBe(false)
+  })
+
+  test("text alignment and auto-resize live on the text value, not on ranges", () => {
+    const node = base({
+      type: "TEXT",
+      characters: "Save",
+      fontName: { family: "Inter", style: "Regular" },
+      fills: [],
+      textAlignHorizontal: "CENTER",
+      textAlignVertical: "BOTTOM",
+      textAutoResize: "WIDTH_AND_HEIGHT",
+      getStyledTextSegments: () => [
+        {
+          start: 0,
+          end: 4,
+          fontName: { family: "Inter", style: "Regular" },
+          fills: [],
+        },
+      ],
+    })
+
+    const text = (
+      serializeNodeForest([node], {
+        detail: "full",
+        depth: 0,
+        dedupeComponents: false,
+      }).nodes[0]?.data as { text?: Record<string, unknown> }
+    ).text
+
+    expect(text).toMatchObject({
+      alignHorizontal: "center",
+      alignVertical: "bottom",
+      autoResize: "widthAndHeight",
+    })
+    const range = (
+      text?.styledRanges as { style: Record<string, unknown> }[]
+    )[0]
+    expect(Object.hasOwn(range?.style ?? {}, "alignHorizontal")).toBe(false)
+    expect(Object.hasOwn(range?.style ?? {}, "alignVertical")).toBe(false)
+    expect(Object.hasOwn(range?.style ?? {}, "autoResize")).toBe(false)
+  })
+
+  test("default text alignment and auto-resize are omitted", () => {
+    const node = base({
+      type: "TEXT",
+      characters: "Save",
+      fontName: { family: "Inter", style: "Regular" },
+      fills: [],
+      textAlignHorizontal: "LEFT",
+      textAlignVertical: "TOP",
+      textAutoResize: "NONE",
+    })
+
+    const text = (
+      serializeNodeForest([node], {
+        detail: "full",
+        depth: 0,
+        dedupeComponents: false,
+      }).nodes[0]?.data as { text?: Record<string, unknown> }
+    ).text
+
+    expect(Object.hasOwn(text ?? {}, "alignHorizontal")).toBe(false)
+    expect(Object.hasOwn(text ?? {}, "alignVertical")).toBe(false)
+    expect(Object.hasOwn(text ?? {}, "autoResize")).toBe(false)
+  })
+
+  test("text additions survive the wire validator", () => {
+    const node = base({
+      type: "TEXT",
+      characters: "Save",
+      fontName: { family: "Inter", style: "Light" },
+      fontWeight: 300,
+      textDecoration: "UNDERLINE",
+      fills: [],
+      textAlignHorizontal: "JUSTIFIED",
+      textAlignVertical: "CENTER",
+      textAutoResize: "HEIGHT",
+    })
+
+    const serialized = serializeNodeForest([node], {
+      detail: "full",
+      depth: 0,
+      dedupeComponents: false,
+    })
+
+    expect(
+      parseReadResult({
+        operation: "get_nodes",
+        result: {
+          detail: "full",
+          items: [{ status: "success", value: serialized.nodes[0] }],
+          truncated: false,
+          observation: {
+            startedAt: "2026-08-19T00:00:00.000Z",
+            completedAt: "2026-08-19T00:00:01.000Z",
+          },
+        },
+      }),
+    ).toBeDefined()
+  })
+
+  test("compact auto-layout carries alignment, wrap, and counter-axis spacing", () => {
+    const node = base({
+      layoutMode: "HORIZONTAL",
+      primaryAxisSizingMode: "AUTO",
+      counterAxisSizingMode: "FIXED",
+      itemSpacing: 8,
+      paddingTop: 4,
+      paddingRight: 12,
+      paddingBottom: 4,
+      paddingLeft: 12,
+      primaryAxisAlignItems: "SPACE_BETWEEN",
+      counterAxisAlignItems: "BASELINE",
+      layoutWrap: "WRAP",
+      counterAxisSpacing: 6,
+    })
+
+    const result = serializeNodeForest([node], {
+      detail: "compact",
+      depth: 0,
+      dedupeComponents: false,
+    })
+
+    expect(result.nodes[0]?.data).toMatchObject({
+      autoLayout: {
+        mode: "horizontal",
+        primarySizing: "hug",
+        counterSizing: "fixed",
+        gap: 8,
+        paddingTop: 4,
+        paddingRight: 12,
+        paddingBottom: 4,
+        paddingLeft: 12,
+        primaryAlign: "spaceBetween",
+        counterAlign: "baseline",
+        wrap: true,
+        counterAxisSpacing: 6,
+      },
+    })
+  })
+
+  test("auto-layout emits min alignment but omits wrap fields when not wrapping", () => {
+    const node = base({
+      layoutMode: "VERTICAL",
+      primaryAxisAlignItems: "MIN",
+      counterAxisAlignItems: "MIN",
+      layoutWrap: "NO_WRAP",
+      counterAxisSpacing: 6,
+    })
+
+    const layout = (
+      serializeNodeForest([node], {
+        detail: "compact",
+        depth: 0,
+        dedupeComponents: false,
+      }).nodes[0]?.data as { autoLayout?: Record<string, unknown> }
+    ).autoLayout
+
+    expect(layout?.primaryAlign).toBe("min")
+    expect(layout?.counterAlign).toBe("min")
+    expect(Object.hasOwn(layout ?? {}, "wrap")).toBe(false)
+    expect(Object.hasOwn(layout ?? {}, "counterAxisSpacing")).toBe(false)
+  })
+
+  test("layout constraints are emitted at compact and full", () => {
+    const node = base({
+      constraints: { horizontal: "STRETCH", vertical: "SCALE" },
+    })
+
+    for (const detail of ["compact", "full"] as const) {
+      const result = serializeNodeForest([node], {
+        detail,
+        depth: 0,
+        dedupeComponents: false,
+      })
+      expect(result.nodes[0]?.data).toMatchObject({
+        constraints: { horizontal: "stretch", vertical: "scale" },
+      })
+    }
+  })
+
+  test("unknown constraint axes drop the whole constraints field", () => {
+    const node = base({
+      constraints: { horizontal: "STRETCH", vertical: "WOBBLE" },
+    })
+
+    const data = serializeNodeForest([node], {
+      detail: "compact",
+      depth: 0,
+      dedupeComponents: false,
+    }).nodes[0]?.data as Record<string, unknown>
+
+    expect(Object.hasOwn(data, "constraints")).toBe(false)
+  })
+
+  test("MIN/MIN constraints are omitted at compact and full, matching the Figma default", () => {
+    const node = base({
+      constraints: { horizontal: "MIN", vertical: "MIN" },
+    })
+
+    for (const detail of ["compact", "full"] as const) {
+      const data = serializeNodeForest([node], {
+        detail,
+        depth: 0,
+        dedupeComponents: false,
+      }).nodes[0]?.data as Record<string, unknown>
+
+      expect(Object.hasOwn(data, "constraints")).toBe(false)
+    }
+  })
+
+  test("throwing layout getters leave the node serializable", () => {
+    const node = base({ layoutMode: "HORIZONTAL" })
+    Object.defineProperty(node, "primaryAxisAlignItems", {
+      get() {
+        throw new Error("write-only under dynamic-page")
+      },
+      enumerable: true,
+    })
+    Object.defineProperty(node, "constraints", {
+      get() {
+        throw new Error("write-only under dynamic-page")
+      },
+      enumerable: true,
+    })
+
+    const data = serializeNodeForest([node], {
+      detail: "compact",
+      depth: 0,
+      dedupeComponents: false,
+    }).nodes[0]?.data as { autoLayout?: Record<string, unknown> }
+
+    expect(data.autoLayout?.mode).toBe("horizontal")
+    expect(Object.hasOwn(data.autoLayout ?? {}, "primaryAlign")).toBe(false)
+    expect(Object.hasOwn(data, "constraints")).toBe(false)
+  })
+
+  test("layout and constraint additions survive the wire validator", () => {
+    const node = base({
+      layoutMode: "HORIZONTAL",
+      primaryAxisAlignItems: "CENTER",
+      counterAxisAlignItems: "MAX",
+      layoutWrap: "WRAP",
+      counterAxisSpacing: 2,
+      constraints: { horizontal: "MIN", vertical: "CENTER" },
+    })
+
+    const serialized = serializeNodeForest([node], {
+      detail: "compact",
+      depth: 0,
+      dedupeComponents: false,
+    })
+
+    const parsed = parseReadResult({
+      operation: "get_nodes",
+      result: {
+        detail: "compact",
+        items: [{ status: "success", value: serialized.nodes[0] }],
+        truncated: false,
+        observation: {
+          startedAt: "2026-08-19T00:00:00.000Z",
+          completedAt: "2026-08-19T00:00:01.000Z",
+        },
+      },
+    })
+
+    expect(parsed).toBeDefined()
+  })
+
+  test("full detail returns stroke paints, weight, align, and dash pattern", () => {
+    const node = base({
+      strokes: [
+        { type: "SOLID", color: { r: 0, g: 0, b: 0, a: 1 }, opacity: 1 },
+      ],
+      strokeWeight: 2,
+      strokeAlign: "INSIDE",
+      dashPattern: [4, 2],
+    })
+
+    const result = serializeNodeForest([node], {
+      detail: "full",
+      depth: 0,
+      dedupeComponents: false,
+    })
+
+    expect(result.nodes[0]?.data).toMatchObject({
+      strokes: {
+        paints: [
+          { type: "solid", color: { r: 0, g: 0, b: 0, a: 1 }, opacity: 1 },
+        ],
+        weight: 2,
+        align: "inside",
+        dashPattern: [4, 2],
+      },
+    })
+  })
+
+  test("mixed stroke weight keeps the rest of the stroke", () => {
+    const node = base({
+      strokes: [
+        { type: "SOLID", color: { r: 1, g: 0, b: 0, a: 1 }, opacity: 1 },
+      ],
+      strokeWeight: Symbol("figma.mixed"),
+      strokeAlign: "OUTSIDE",
+      dashPattern: [],
+    })
+
+    const strokes = (
+      serializeNodeForest([node], {
+        detail: "full",
+        depth: 0,
+        dedupeComponents: false,
+      }).nodes[0]?.data as { strokes?: Record<string, unknown> }
+    ).strokes
+
+    expect(strokes?.align).toBe("outside")
+    expect(Object.hasOwn(strokes ?? {}, "weight")).toBe(false)
+    expect(Object.hasOwn(strokes ?? {}, "dashPattern")).toBe(false)
+  })
+
+  test("nodes without strokes omit the field entirely", () => {
+    const node = base({ strokes: [], strokeWeight: 1, strokeAlign: "CENTER" })
+
+    const data = serializeNodeForest([node], {
+      detail: "full",
+      depth: 0,
+      dedupeComponents: false,
+    }).nodes[0]?.data as Record<string, unknown>
+
+    expect(Object.hasOwn(data, "strokes")).toBe(false)
+  })
+
+  test("an unmodelled stroke paint type still reports weight, align, and an empty paints array", () => {
+    const node = base({
+      strokes: [{ type: "GRADIENT_ANGULAR", gradientStops: [] }],
+      strokeWeight: 3,
+      strokeAlign: "OUTSIDE",
+    })
+
+    const strokes = (
+      serializeNodeForest([node], {
+        detail: "full",
+        depth: 0,
+        dedupeComponents: false,
+      }).nodes[0]?.data as { strokes?: Record<string, unknown> }
+    ).strokes
+
+    expect(strokes).toMatchObject({ paints: [], weight: 3, align: "outside" })
+  })
+
+  test("throwing stroke getters leave the node serializable", () => {
+    const node = base({})
+    Object.defineProperty(node, "strokes", {
+      get() {
+        throw new Error("write-only under dynamic-page")
+      },
+      enumerable: true,
+    })
+
+    const data = serializeNodeForest([node], {
+      detail: "full",
+      depth: 0,
+      dedupeComponents: false,
+    }).nodes[0]?.data as Record<string, unknown>
+
+    expect(Object.hasOwn(data, "strokes")).toBe(false)
+    expect(data.paints).toEqual([])
+  })
+
+  test("strokes survive the wire validator", () => {
+    const node = base({
+      strokes: [
+        { type: "SOLID", color: { r: 0, g: 0, b: 0, a: 1 }, opacity: 1 },
+      ],
+      strokeWeight: 1.5,
+      strokeAlign: "CENTER",
+      dashPattern: [1],
+    })
+
+    const serialized = serializeNodeForest([node], {
+      detail: "full",
+      depth: 0,
+      dedupeComponents: false,
+    })
+
+    expect(
+      parseReadResult({
+        operation: "get_nodes",
+        result: {
+          detail: "full",
+          items: [{ status: "success", value: serialized.nodes[0] }],
+          truncated: false,
+          observation: {
+            startedAt: "2026-08-19T00:00:00.000Z",
+            completedAt: "2026-08-19T00:00:01.000Z",
+          },
+        },
+      }),
+    ).toBeDefined()
+  })
+
+  test("uniform corner radius is reported as a uniform value", () => {
+    const node = base({ cornerRadius: 8 })
+
+    expect(
+      serializeNodeForest([node], {
+        detail: "full",
+        depth: 0,
+        dedupeComponents: false,
+      }).nodes[0]?.data,
+    ).toMatchObject({ cornerRadius: { kind: "uniform", radius: 8 } })
+  })
+
+  test("mixed corner radius becomes the four per-corner values", () => {
+    const node = base({
+      cornerRadius: Symbol("figma.mixed"),
+      topLeftRadius: 8,
+      topRightRadius: 0,
+      bottomRightRadius: 4,
+      bottomLeftRadius: 0,
+    })
+
+    expect(
+      serializeNodeForest([node], {
+        detail: "full",
+        depth: 0,
+        dedupeComponents: false,
+      }).nodes[0]?.data,
+    ).toMatchObject({
+      cornerRadius: {
+        kind: "perCorner",
+        topLeft: 8,
+        topRight: 0,
+        bottomRight: 4,
+        bottomLeft: 0,
+      },
+    })
+  })
+
+  test("zero radius and zero smoothing are omitted", () => {
+    const node = base({ cornerRadius: 0, cornerSmoothing: 0 })
+
+    const data = serializeNodeForest([node], {
+      detail: "full",
+      depth: 0,
+      dedupeComponents: false,
+    }).nodes[0]?.data as Record<string, unknown>
+
+    expect(Object.hasOwn(data, "cornerRadius")).toBe(false)
+    expect(Object.hasOwn(data, "cornerSmoothing")).toBe(false)
+  })
+
+  test("corner smoothing is returned when the squircle is on", () => {
+    const node = base({ cornerRadius: 12, cornerSmoothing: 0.6 })
+
+    expect(
+      serializeNodeForest([node], {
+        detail: "full",
+        depth: 0,
+        dedupeComponents: false,
+      }).nodes[0]?.data,
+    ).toMatchObject({ cornerSmoothing: 0.6 })
+  })
+
+  test("throwing corner getters leave the node serializable", () => {
+    const node = base({})
+    Object.defineProperty(node, "cornerRadius", {
+      get() {
+        throw new Error("write-only under dynamic-page")
+      },
+      enumerable: true,
+    })
+
+    const data = serializeNodeForest([node], {
+      detail: "full",
+      depth: 0,
+      dedupeComponents: false,
+    }).nodes[0]?.data as Record<string, unknown>
+
+    expect(Object.hasOwn(data, "cornerRadius")).toBe(false)
+  })
+
+  test("corner radius survives the wire validator", () => {
+    const node = base({
+      cornerRadius: Symbol("figma.mixed"),
+      topLeftRadius: 8,
+      topRightRadius: 8,
+      bottomRightRadius: 0,
+      bottomLeftRadius: 0,
+      cornerSmoothing: 0.6,
+    })
+
+    const serialized = serializeNodeForest([node], {
+      detail: "full",
+      depth: 0,
+      dedupeComponents: false,
+    })
+
+    expect(
+      parseReadResult({
+        operation: "get_nodes",
+        result: {
+          detail: "full",
+          items: [{ status: "success", value: serialized.nodes[0] }],
+          truncated: false,
+          observation: {
+            startedAt: "2026-08-19T00:00:00.000Z",
+            completedAt: "2026-08-19T00:00:01.000Z",
+          },
+        },
+      }),
+    ).toBeDefined()
+  })
+
+  test("clipsContent and non-default blend mode are returned", () => {
+    const node = base({ clipsContent: true, blendMode: "MULTIPLY" })
+
+    expect(
+      serializeNodeForest([node], {
+        detail: "full",
+        depth: 0,
+        dedupeComponents: false,
+      }).nodes[0]?.data,
+    ).toMatchObject({ clipsContent: true, blendMode: "multiply" })
+  })
+
+  test("default blend modes and clipsContent false are omitted", () => {
+    for (const blendMode of ["NORMAL", "PASS_THROUGH"]) {
+      const node = base({ clipsContent: false, blendMode })
+
+      const data = serializeNodeForest([node], {
+        detail: "full",
+        depth: 0,
+        dedupeComponents: false,
+      }).nodes[0]?.data as Record<string, unknown>
+
+      expect(Object.hasOwn(data, "clipsContent")).toBe(false)
+      expect(Object.hasOwn(data, "blendMode")).toBe(false)
+    }
+  })
+
+  test("unknown blend modes are dropped rather than passed through", () => {
+    const node = base({ blendMode: "PLUS_LIGHTER" })
+
+    const data = serializeNodeForest([node], {
+      detail: "full",
+      depth: 0,
+      dedupeComponents: false,
+    }).nodes[0]?.data as Record<string, unknown>
+
+    expect(Object.hasOwn(data, "blendMode")).toBe(false)
+  })
+
+  test("blend mode survives the wire validator", () => {
+    const node = base({ clipsContent: true, blendMode: "SOFT_LIGHT" })
+
+    const serialized = serializeNodeForest([node], {
+      detail: "full",
+      depth: 0,
+      dedupeComponents: false,
+    })
+
+    expect(
+      parseReadResult({
+        operation: "get_nodes",
+        result: {
+          detail: "full",
+          items: [{ status: "success", value: serialized.nodes[0] }],
+          truncated: false,
+          observation: {
+            startedAt: "2026-08-19T00:00:00.000Z",
+            completedAt: "2026-08-19T00:00:01.000Z",
+          },
+        },
+      }),
+    ).toBeDefined()
   })
 
   test("terminates repeated-node cycles and enforces node and byte budgets", () => {
@@ -612,6 +1254,124 @@ describe("instance component properties", () => {
       (children[1]?.data as { instance?: { properties: unknown } }).instance
         ?.properties,
     ).toEqual([{ name: "Label#0:1", value: { kind: "text", value: "Cancel" } }])
+  })
+})
+
+describe("style name resolution", () => {
+  const styled = (id: string, overrides: Record<string, unknown> = {}) =>
+    base({ id, fillStyleId: "S:fill", strokeStyleId: "S:stroke", ...overrides })
+
+  test("resolves one lookup per unique style id, not per node", async () => {
+    const lookups: string[] = []
+    const lookup = async (id: string) => {
+      lookups.push(id)
+      return { name: `Name/${id}` }
+    }
+    const roots = [
+      styled("1:1", {
+        children: [styled("1:2"), styled("1:3", { fillStyleId: "S:other" })],
+      }),
+    ]
+
+    const names = await collectStyleNames(roots, lookup)
+
+    expect(lookups.sort()).toEqual(["S:fill", "S:other", "S:stroke"])
+    expect(names.get("S:fill")).toBe("Name/S:fill")
+  })
+
+  test("style references carry resolved names and the stroke kind", () => {
+    const node = styled("1:1")
+
+    const result = serializeNodeForest([node], {
+      detail: "full",
+      depth: 0,
+      dedupeComponents: false,
+      styleNames: new Map([
+        ["S:fill", "Primary/500"],
+        ["S:stroke", "Border/Default"],
+      ]),
+    })
+
+    expect(result.nodes[0]?.data).toMatchObject({
+      styleReferences: [
+        { id: "S:fill", kind: "paint", name: "Primary/500" },
+        { id: "S:stroke", kind: "stroke", name: "Border/Default" },
+      ],
+    })
+  })
+
+  test("unresolved style ids omit name rather than emitting an empty string", () => {
+    const node = styled("1:1")
+
+    const refs = (
+      serializeNodeForest([node], {
+        detail: "full",
+        depth: 0,
+        dedupeComponents: false,
+        styleNames: new Map([["S:fill", ""]]),
+      }).nodes[0]?.data as { styleReferences: Record<string, unknown>[] }
+    ).styleReferences
+
+    expect(Object.hasOwn(refs[0] ?? {}, "name")).toBe(false)
+    expect(Object.hasOwn(refs[1] ?? {}, "name")).toBe(false)
+  })
+
+  test("a failing lookup drops that name and leaves the rest resolved", async () => {
+    const lookup = async (id: string) => {
+      if (id === "S:fill") throw new Error("remote style unavailable")
+      return { name: "Border/Default" }
+    }
+
+    const names = await collectStyleNames([styled("1:1")], lookup)
+
+    expect(names.has("S:fill")).toBe(false)
+    expect(names.get("S:stroke")).toBe("Border/Default")
+  })
+
+  test("an exhausted budget leaves remaining names absent without truncating", async () => {
+    const lookup = async (id: string) => ({ name: `Name/${id}` })
+
+    const names = await collectStyleNames(
+      [styled("1:1")],
+      lookup,
+      undefined,
+      Number.POSITIVE_INFINITY,
+      0,
+    )
+
+    expect(names.size).toBe(0)
+
+    const result = serializeNodeForest([styled("1:1")], {
+      detail: "full",
+      depth: 0,
+      dedupeComponents: false,
+      styleNames: names,
+    })
+    expect(result.truncated).toBe(false)
+  })
+
+  test("style names survive the wire validator", () => {
+    const serialized = serializeNodeForest([styled("1:1")], {
+      detail: "full",
+      depth: 0,
+      dedupeComponents: false,
+      styleNames: new Map([["S:stroke", "Border/Default"]]),
+    })
+
+    expect(
+      parseReadResult({
+        operation: "get_nodes",
+        result: {
+          detail: "full",
+          items: [{ status: "success", value: serialized.nodes[0] }],
+          truncated: false,
+          observation: {
+            startedAt: "2026-08-19T00:00:00.000Z",
+            completedAt: "2026-08-19T00:00:01.000Z",
+          },
+        },
+      }),
+    ).toBeDefined()
   })
 })
 
