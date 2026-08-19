@@ -127,6 +127,12 @@ async function serializePreparedForest(
   }
   // Names only matter at `full`; resolving them at `compact` would spend
   // async lookups on a level that is not allowed to carry them.
+  // The three pre-passes below run concurrently: the two name collectors
+  // budget themselves in wall-clock time (2s each), while
+  // getMainComponentAsync calls (up to 1500ms apiece) now run alongside
+  // them instead of before them. Call counts are unchanged, but under host
+  // contention on an instance-heavy page, fewer names may resolve than
+  // under the old sequential ordering — expected, not a regression.
   const isFull = options.detail === "full"
   const styleLookup = figma.getStyleByIdAsync
   // getVariableByIdAsync lives on figma.variables, not on figma itself.

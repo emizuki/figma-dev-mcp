@@ -1464,7 +1464,7 @@ describe("variable name resolution", () => {
       lookups.push(id)
       return { name: `token/${id}` }
     }
-    // Three nodes, five references, two unique ids.
+    // Three nodes, four references, two unique ids.
     const leaf = base({
       id: "1:3",
       boundVariables: {
