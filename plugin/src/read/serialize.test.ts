@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 
 import { LocalCancellationController } from "../main/cancellation"
 import { createProgressReporter, type ProgressFrame } from "../main/progress"
+import { parseReadResult } from "../shared/result-validation"
 import {
   clampText,
   collectInstanceIdentities,
@@ -266,6 +267,8 @@ describe("bounded node serializer", () => {
             start: 0,
             end: 3,
             style: {
+              lineHeight: { unit: "pixels", value: 24 },
+              letterSpacing: { unit: "pixels", value: 0 },
               paints: [
                 { type: "linearGradient" },
                 { type: "image", imageRef: "img-1", scaleMode: "fit" },
@@ -722,5 +725,213 @@ describe("text clamp helper", () => {
     expect(text?.preview).toBe(filler)
     expect(endsWithLoneHighSurrogate(text?.preview ?? "")).toBe(false)
     expect(JSON.parse(JSON.stringify(result.nodes[0]))).toBeTruthy()
+  })
+
+  describe("text style units", () => {
+    const textNode = (overrides: Record<string, unknown> = {}) =>
+      base({
+        id: "5:1",
+        name: "Label",
+        type: "TEXT",
+        characters: "Today",
+        fontName: { family: "Inter", style: "Medium" },
+        fontSize: 14,
+        lineHeight: { unit: "PIXELS", value: 20 },
+        letterSpacing: { unit: "PIXELS", value: 0.5 },
+        fills: [],
+        ...overrides,
+      })
+
+    const defaultStyle = (node: Record<string, unknown>) => {
+      const result = serializeNodeForest([node], {
+        detail: "full",
+        depth: 0,
+        dedupeComponents: false,
+      })
+      return (result.nodes[0]?.data as { text?: { defaultStyle: unknown } })
+        .text?.defaultStyle
+    }
+
+    test("keeps PIXELS and PERCENT units instead of a bare number", () => {
+      expect(defaultStyle(textNode())).toEqual({
+        fontFamily: "Inter",
+        fontStyle: "Medium",
+        fontSize: 14,
+        lineHeight: { unit: "pixels", value: 20 },
+        letterSpacing: { unit: "pixels", value: 0.5 },
+        paints: [],
+      })
+
+      expect(
+        defaultStyle(
+          textNode({
+            lineHeight: { unit: "PERCENT", value: 150 },
+            letterSpacing: { unit: "PERCENT", value: 2 },
+          }),
+        ),
+      ).toMatchObject({
+        lineHeight: { unit: "percent", value: 150 },
+        letterSpacing: { unit: "percent", value: 2 },
+      })
+    })
+
+    test("AUTO line height is reported as auto, never as zero", () => {
+      const style = defaultStyle(
+        textNode({ lineHeight: { unit: "AUTO" } }),
+      ) as {
+        lineHeight: unknown
+      }
+      expect(style.lineHeight).toEqual({ unit: "auto" })
+    })
+
+    test("mixed values drop the field instead of collapsing to zero", () => {
+      const mixed = Symbol("figma.mixed")
+      const style = defaultStyle(
+        textNode({ fontSize: mixed, lineHeight: mixed, letterSpacing: mixed }),
+      ) as Record<string, unknown>
+      expect(style).toEqual({
+        fontFamily: "Inter",
+        fontStyle: "Medium",
+        paints: [],
+      })
+    })
+
+    test("an unknown unit drops the field rather than emitting a foreign tag", () => {
+      const style = defaultStyle(
+        textNode({ lineHeight: { unit: "EM", value: 2 } }),
+      ) as Record<string, unknown>
+      expect(style.lineHeight).toBeUndefined()
+      expect(style.letterSpacing).toEqual({ unit: "pixels", value: 0.5 })
+    })
+
+    describe("round-trips through the wire validator", () => {
+      // parseReadResult is a hard gate: if it rejects a shape that the
+      // serializer emits, it throws and destroys the whole response, not
+      // one field. Push a serialized TEXT node at detail "full" back
+      // through the real validator (not the parser functions directly) so
+      // a validator/serializer drift on TextStyle's unit fields is caught.
+      const observation = {
+        startedAt: "2024-01-01T00:00:00.000Z",
+        completedAt: "2024-01-01T00:00:00.000Z",
+      }
+
+      const validatedDefaultStyle = (node: Record<string, unknown>) => {
+        const forest = serializeNodeForest([node], {
+          detail: "full",
+          depth: 0,
+          dedupeComponents: false,
+        })
+        const wireResult: Record<string, unknown> = {
+          detail: "full",
+          nodes: forest.nodes,
+          truncated: forest.truncated,
+          observation,
+        }
+        if (forest.truncation !== undefined) {
+          wireResult.truncation = forest.truncation
+        }
+
+        const validated = parseReadResult({
+          operation: "get_selection",
+          result: wireResult,
+        })
+        expect(validated.operation).toBe("get_selection")
+        const result = validated.result as {
+          nodes: readonly { data: { text?: { defaultStyle: unknown } } }[]
+        }
+        return result.nodes[0]?.data.text?.defaultStyle
+      }
+
+      test("PIXELS line height is accepted with its unit shape intact", () => {
+        const style = validatedDefaultStyle(textNode()) as Record<
+          string,
+          unknown
+        >
+        expect(style.lineHeight).toEqual({ unit: "pixels", value: 20 })
+        expect(style.letterSpacing).toEqual({ unit: "pixels", value: 0.5 })
+      })
+
+      test("PERCENT line height is accepted with its unit shape intact", () => {
+        const style = validatedDefaultStyle(
+          textNode({ lineHeight: { unit: "PERCENT", value: 150 } }),
+        ) as Record<string, unknown>
+        expect(style.lineHeight).toEqual({ unit: "percent", value: 150 })
+      })
+
+      test("AUTO line height is accepted without a value field", () => {
+        const style = validatedDefaultStyle(
+          textNode({ lineHeight: { unit: "AUTO" } }),
+        ) as Record<string, unknown>
+        expect(style.lineHeight).toEqual({ unit: "auto" })
+      })
+
+      test("the all-omitted case (figma.mixed) is accepted", () => {
+        const mixed = Symbol("figma.mixed")
+        const style = validatedDefaultStyle(
+          textNode({
+            fontSize: mixed,
+            lineHeight: mixed,
+            letterSpacing: mixed,
+          }),
+        ) as Record<string, unknown>
+        expect(style).toEqual({
+          fontFamily: "Inter",
+          fontStyle: "Medium",
+          paints: [],
+        })
+      })
+    })
+
+    test.each([
+      [
+        "fontName",
+        (style: Record<string, unknown>) => {
+          expect(style.fontFamily).toBe("")
+          expect(style.fontStyle).toBe("")
+        },
+      ],
+      [
+        "fontSize",
+        (style: Record<string, unknown>) => {
+          expect(style.fontSize).toBeUndefined()
+          expect(style.fontFamily).toBe("Inter")
+        },
+      ],
+      [
+        "letterSpacing",
+        (style: Record<string, unknown>) => {
+          expect(style.letterSpacing).toBeUndefined()
+          expect(style.fontFamily).toBe("Inter")
+        },
+      ],
+      [
+        "fills",
+        (style: Record<string, unknown>) => {
+          expect(style.paints).toEqual([])
+          expect(style.fontFamily).toBe("Inter")
+        },
+      ],
+      [
+        "lineHeight",
+        (style: Record<string, unknown>) => {
+          expect(style.lineHeight).toBeUndefined()
+          expect(style.fontFamily).toBe("Inter")
+        },
+      ],
+    ] as const)(
+      "a throwing %s getter does not break serialization",
+      (key, assertStyle) => {
+        const node = textNode()
+        Object.defineProperty(node, key, {
+          configurable: true,
+          enumerable: true,
+          get() {
+            throw new Error(`${key} is not readable`)
+          },
+        })
+        const style = defaultStyle(node) as Record<string, unknown>
+        assertStyle(style)
+      },
+    )
   })
 })

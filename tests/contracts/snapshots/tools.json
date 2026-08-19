@@ -1388,6 +1388,99 @@
           ],
           "type": "object"
         },
+        "LetterSpacingValue": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "unit": {
+                  "const": "pixels",
+                  "type": "string"
+                },
+                "value": {
+                  "format": "double",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "unit",
+                "value"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "unit": {
+                  "const": "percent",
+                  "type": "string"
+                },
+                "value": {
+                  "format": "double",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "unit",
+                "value"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "LineHeightValue": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "unit": {
+                  "const": "pixels",
+                  "type": "string"
+                },
+                "value": {
+                  "format": "double",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "unit",
+                "value"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "unit": {
+                  "const": "percent",
+                  "type": "string"
+                },
+                "value": {
+                  "format": "double",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "unit",
+                "value"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "unit": {
+                  "const": "auto",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "unit"
+              ],
+              "type": "object"
+            }
+          ]
+        },
         "MinimalNodeDetails": {
           "additionalProperties": false,
           "description": "Closed detail marker for a recursive minimal node.\n\nIdentity, visibility, hierarchy references, and basic bounds live in the\nnode's [`NodeSummary`]. The empty detail object prevents compact/full-only\nfields from appearing in a minimal result while retaining one recursive\ntree representation for all detail levels.",
@@ -1759,18 +1852,33 @@
             },
             "fontSize": {
               "format": "double",
-              "type": "number"
+              "type": [
+                "number",
+                "null"
+              ]
             },
             "fontStyle": {
               "type": "string"
             },
             "letterSpacing": {
-              "format": "double",
-              "type": "number"
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/LetterSpacingValue"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "lineHeight": {
-              "format": "double",
-              "type": "number"
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/LineHeightValue"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "paints": {
               "$ref": "#/$defs/ReturnedList_of_PaintValue"
@@ -1779,9 +1887,6 @@
           "required": [
             "fontFamily",
             "fontStyle",
-            "fontSize",
-            "lineHeight",
-            "letterSpacing",
             "paints"
           ],
           "type": "object"
@@ -5369,6 +5474,99 @@
           ],
           "type": "object"
         },
+        "LetterSpacingValue": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "unit": {
+                  "const": "pixels",
+                  "type": "string"
+                },
+                "value": {
+                  "format": "double",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "unit",
+                "value"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "unit": {
+                  "const": "percent",
+                  "type": "string"
+                },
+                "value": {
+                  "format": "double",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "unit",
+                "value"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "LineHeightValue": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "unit": {
+                  "const": "pixels",
+                  "type": "string"
+                },
+                "value": {
+                  "format": "double",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "unit",
+                "value"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "unit": {
+                  "const": "percent",
+                  "type": "string"
+                },
+                "value": {
+                  "format": "double",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "unit",
+                "value"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "unit": {
+                  "const": "auto",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "unit"
+              ],
+              "type": "object"
+            }
+          ]
+        },
         "MinimalNodeDetails": {
           "additionalProperties": false,
           "description": "Closed detail marker for a recursive minimal node.\n\nIdentity, visibility, hierarchy references, and basic bounds live in the\nnode's [`NodeSummary`]. The empty detail object prevents compact/full-only\nfields from appearing in a minimal result while retaining one recursive\ntree representation for all detail levels.",
@@ -5740,18 +5938,33 @@
             },
             "fontSize": {
               "format": "double",
-              "type": "number"
+              "type": [
+                "number",
+                "null"
+              ]
             },
             "fontStyle": {
               "type": "string"
             },
             "letterSpacing": {
-              "format": "double",
-              "type": "number"
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/LetterSpacingValue"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "lineHeight": {
-              "format": "double",
-              "type": "number"
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/LineHeightValue"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "paints": {
               "$ref": "#/$defs/ReturnedList_of_PaintValue"
@@ -5760,9 +5973,6 @@
           "required": [
             "fontFamily",
             "fontStyle",
-            "fontSize",
-            "lineHeight",
-            "letterSpacing",
             "paints"
           ],
           "type": "object"
@@ -8329,6 +8539,99 @@
           ],
           "type": "object"
         },
+        "LetterSpacingValue": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "unit": {
+                  "const": "pixels",
+                  "type": "string"
+                },
+                "value": {
+                  "format": "double",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "unit",
+                "value"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "unit": {
+                  "const": "percent",
+                  "type": "string"
+                },
+                "value": {
+                  "format": "double",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "unit",
+                "value"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "LineHeightValue": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "unit": {
+                  "const": "pixels",
+                  "type": "string"
+                },
+                "value": {
+                  "format": "double",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "unit",
+                "value"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "unit": {
+                  "const": "percent",
+                  "type": "string"
+                },
+                "value": {
+                  "format": "double",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "unit",
+                "value"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "unit": {
+                  "const": "auto",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "unit"
+              ],
+              "type": "object"
+            }
+          ]
+        },
         "MinimalNodeDetails": {
           "additionalProperties": false,
           "description": "Closed detail marker for a recursive minimal node.\n\nIdentity, visibility, hierarchy references, and basic bounds live in the\nnode's [`NodeSummary`]. The empty detail object prevents compact/full-only\nfields from appearing in a minimal result while retaining one recursive\ntree representation for all detail levels.",
@@ -8700,18 +9003,33 @@
             },
             "fontSize": {
               "format": "double",
-              "type": "number"
+              "type": [
+                "number",
+                "null"
+              ]
             },
             "fontStyle": {
               "type": "string"
             },
             "letterSpacing": {
-              "format": "double",
-              "type": "number"
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/LetterSpacingValue"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "lineHeight": {
-              "format": "double",
-              "type": "number"
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/LineHeightValue"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "paints": {
               "$ref": "#/$defs/ReturnedList_of_PaintValue"
@@ -8720,9 +9038,6 @@
           "required": [
             "fontFamily",
             "fontStyle",
-            "fontSize",
-            "lineHeight",
-            "letterSpacing",
             "paints"
           ],
           "type": "object"
@@ -9325,6 +9640,99 @@
           ],
           "type": "string"
         },
+        "LetterSpacingValue": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "unit": {
+                  "const": "pixels",
+                  "type": "string"
+                },
+                "value": {
+                  "format": "double",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "unit",
+                "value"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "unit": {
+                  "const": "percent",
+                  "type": "string"
+                },
+                "value": {
+                  "format": "double",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "unit",
+                "value"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "LineHeightValue": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "unit": {
+                  "const": "pixels",
+                  "type": "string"
+                },
+                "value": {
+                  "format": "double",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "unit",
+                "value"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "unit": {
+                  "const": "percent",
+                  "type": "string"
+                },
+                "value": {
+                  "format": "double",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "unit",
+                "value"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "unit": {
+                  "const": "auto",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "unit"
+              ],
+              "type": "object"
+            }
+          ]
+        },
         "ObservationWindow": {
           "additionalProperties": false,
           "properties": {
@@ -9688,18 +10096,33 @@
             },
             "fontSize": {
               "format": "double",
-              "type": "number"
+              "type": [
+                "number",
+                "null"
+              ]
             },
             "fontStyle": {
               "type": "string"
             },
             "letterSpacing": {
-              "format": "double",
-              "type": "number"
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/LetterSpacingValue"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "lineHeight": {
-              "format": "double",
-              "type": "number"
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/LineHeightValue"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "paints": {
               "$ref": "#/$defs/ReturnedList_of_PaintValue"
@@ -9708,9 +10131,6 @@
           "required": [
             "fontFamily",
             "fontStyle",
-            "fontSize",
-            "lineHeight",
-            "letterSpacing",
             "paints"
           ],
           "type": "object"

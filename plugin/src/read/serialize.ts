@@ -13,6 +13,8 @@ import type {
   EffectValue,
   FullNodeData,
   InstanceValue,
+  LetterSpacingValue,
+  LineHeightValue,
   MinimalNodeDetails,
   NamedComponentProperty,
   PaintValue,
@@ -212,18 +214,57 @@ export function effects(value: unknown): EffectValue[] {
   return result
 }
 
+function lineHeightValue(source: UnknownRecord): LineHeightValue | undefined {
+  const raw = hostGet(source, "lineHeight")
+  if (isMixed(raw)) return undefined
+  const object = record(raw)
+  if (string(object.unit) === "AUTO") return { unit: "auto" }
+  const value = object.value
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined
+  switch (string(object.unit)) {
+    case "PIXELS":
+      return { unit: "pixels", value }
+    case "PERCENT":
+      return { unit: "percent", value }
+    default:
+      return undefined
+  }
+}
+
+function letterSpacingValue(
+  source: UnknownRecord,
+): LetterSpacingValue | undefined {
+  const raw = hostGet(source, "letterSpacing")
+  if (isMixed(raw)) return undefined
+  const object = record(raw)
+  const value = object.value
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined
+  switch (string(object.unit)) {
+    case "PIXELS":
+      return { unit: "pixels", value }
+    case "PERCENT":
+      return { unit: "percent", value }
+    default:
+      return undefined
+  }
+}
+
 export function textStyle(source: UnknownRecord): TextStyle {
-  const font = record(source.fontName)
-  const lineHeight = record(source.lineHeight)
-  const letterSpacing = record(source.letterSpacing)
-  return {
+  const font = record(hostGet(source, "fontName"))
+  const style: TextStyle = {
     fontFamily: string(font.family),
     fontStyle: string(font.style),
-    fontSize: finite(source.fontSize),
-    lineHeight: finite(lineHeight.value),
-    letterSpacing: finite(letterSpacing.value),
-    paints: paints(source.fills),
+    paints: paints(hostGet(source, "fills")),
   }
+  const fontSize = hostGet(source, "fontSize")
+  if (typeof fontSize === "number" && Number.isFinite(fontSize)) {
+    style.fontSize = fontSize
+  }
+  const lineHeight = lineHeightValue(source)
+  if (lineHeight !== undefined) style.lineHeight = lineHeight
+  const letterSpacing = letterSpacingValue(source)
+  if (letterSpacing !== undefined) style.letterSpacing = letterSpacing
+  return style
 }
 
 const TEXT_SEGMENT_FIELDS = [
@@ -500,7 +541,7 @@ function nodeData(
   const full: FullNodeData = {
     styleReferences: compact.styleReferences,
     variableReferences: compact.variableReferences,
-    paints: paints(node.fills),
+    paints: paints(hostGet(node, "fills")),
     effects: effects(node.effects),
   }
   if (compact.geometry !== undefined) full.geometry = compact.geometry
