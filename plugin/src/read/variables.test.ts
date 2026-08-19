@@ -74,6 +74,8 @@ function installFigma(options: {
   collections?: unknown[]
   byId?: Map<string, unknown>
   collectionsById?: Map<string, unknown>
+  /** Per-id lookup delay in ms; a non-finite value never settles at all. */
+  lookupDelayMs?: Record<string, number>
 }): {
   variableLookups: string[]
   collectionLookups: string[]
@@ -116,6 +118,15 @@ function installFigma(options: {
       },
       getVariableByIdAsync: async (id: string) => {
         variableLookups.push(id)
+        const delay = options.lookupDelayMs?.[id]
+        if (delay !== undefined) {
+          if (Number.isFinite(delay)) {
+            await new Promise((resolve) => setTimeout(resolve, delay))
+          } else {
+            // A library that never answers. settleOrSkip is what must end this.
+            await new Promise(() => {})
+          }
+        }
         return byId.get(id) ?? null
       },
       getVariableCollectionByIdAsync: async (id: string) => {
@@ -675,10 +686,10 @@ describe("get_variables", () => {
     expect(idsOf(result)).toEqual(["V:a"])
   })
 
-  test("keeps a bound variable whose collection cannot be resolved", async () => {
-    // A library collection the host will not hand back leaves no mode names to
-    // report, so the values list is empty — but the caller still learns which
-    // variable the design binds, which is strictly more than nothing.
+  test("a collection that cannot be resolved still yields real values, and says data was lost", async () => {
+    // A library collection the host will not hand back costs the caller its name
+    // and its mode names. The mode *ids* are not lost: they are the host-supplied
+    // keys of valuesByMode, so the values are reported rather than dropped.
     installFigma({
       nodes: [bound("1:1", ["VariableID:abc123/9:9"])],
       variables: [
@@ -686,7 +697,10 @@ describe("get_variables", () => {
           id: "VariableID:abc123/9:9",
           name: "brand/primary",
           collectionId: "VariableCollectionId:abc123/9:1",
-          valuesByMode: { "M:default": { r: 0, g: 0, b: 1 } },
+          valuesByMode: {
+            "M:light": { r: 0, g: 0, b: 1 },
+            "M:dark": { r: 0, g: 0, b: 0 },
+          },
         }),
       ],
     })
@@ -697,19 +711,233 @@ describe("get_variables", () => {
       {
         id: "VariableCollectionId:abc123/9:1",
         name: "",
-        modes: [],
+        modes: [
+          { id: "M:light", name: "" },
+          { id: "M:dark", name: "" },
+        ],
         variables: [
           {
             id: "VariableID:abc123/9:9",
             name: "brand/primary",
             collectionId: "VariableCollectionId:abc123/9:1",
             scopes: ["ALL_SCOPES"],
-            values: [],
+            values: [
+              {
+                modeId: "M:light",
+                source: { kind: "color", value: { r: 0, g: 0, b: 1, a: 1 } },
+              },
+              {
+                modeId: "M:dark",
+                source: { kind: "color", value: { r: 0, g: 0, b: 0, a: 1 } },
+              },
+            ],
             codeSyntax: [],
           },
         ],
       },
     ])
+    // Never silently complete: the collection's own name and its mode names are
+    // missing from this answer.
+    expect(result.truncated).toBe(true)
+    expect(result.truncation).toEqual({ reason: "nodeLimit", visitedNodes: 1 })
+  })
+
+  test("an unresolved collection resolves aliases too", async () => {
+    installFigma({
+      nodes: [bound("1:1", ["VariableID:abc123/9:9"])],
+      variables: [
+        variable({
+          id: "VariableID:abc123/9:9",
+          name: "brand/primary",
+          collectionId: "VariableCollectionId:abc123/9:1",
+          valuesByMode: {
+            "M:default": { type: "VARIABLE_ALIAS", id: "V:ink" },
+          },
+        }),
+        variable({
+          id: "V:ink",
+          name: "ink",
+          collectionId: "VariableCollectionId:abc123/9:1",
+          valuesByMode: { "M:default": 4 },
+        }),
+      ],
+    })
+
+    const result = await getVariables({
+      selector: { nodeId: "1:1" },
+      resolveAliases: true,
+    })
+
+    expect(result.collections[0]?.variables[0]?.values[0]).toEqual({
+      modeId: "M:default",
+      source: { kind: "alias", value: "V:ink" },
+      resolved: { kind: "float", value: 4 },
+    })
+  })
+
+  test("the wall-clock budget covers alias resolution, not only the first lookup", async () => {
+    // Measured against the pre-fix code: three stalling alias targets took
+    // 4509 ms and still reported truncated: false, because the budget was only
+    // checked in the id loop and once per collection while session.resolve
+    // recursed outside it. Eleven such targets — the live file that motivated
+    // this task has exactly eleven in-scope ids — would pass the broker's 15 s
+    // inactivity ceiling. Each stall costs one settleOrSkip timeout (1.5 s), so
+    // the budget's job here is to make sure only the first one is ever paid.
+    const aliasTo = (id: string, target: string) =>
+      variable({
+        id,
+        name: id,
+        collectionId: "C:theme",
+        valuesByMode: { "M:default": { type: "VARIABLE_ALIAS", id: target } },
+      })
+    const { variableLookups } = installFigma({
+      nodes: [bound("1:1", ["V:a", "V:b", "V:c"])],
+      collections: [
+        collection({
+          id: "C:theme",
+          name: "Theme",
+          modes: [{ modeId: "M:default", name: "Default" }],
+        }),
+      ],
+      variables: [
+        aliasTo("V:a", "V:x"),
+        aliasTo("V:b", "V:y"),
+        aliasTo("V:c", "V:z"),
+      ],
+      lookupDelayMs: {
+        "V:x": Number.POSITIVE_INFINITY,
+        "V:y": Number.POSITIVE_INFINITY,
+        "V:z": Number.POSITIVE_INFINITY,
+      },
+    })
+
+    const started = Date.now()
+    const result = await getVariables(
+      { selector: { nodeId: "1:1" }, resolveAliases: true },
+      undefined,
+      { variableLookupBudgetMs: 50 },
+    )
+    const elapsed = Date.now() - started
+
+    // Only the first stall is paid for: the deadline passes while it is in
+    // flight, and no further host lookup is started after that.
+    expect(variableLookups).toEqual(["V:a", "V:b", "V:c", "V:x"])
+    expect(elapsed).toBeLessThan(3_000)
+    // Stopping on the clock is reported as retryable, unlike a cycle or a
+    // genuinely missing target.
+    const values = result.collections[0]?.variables ?? []
+    expect(values[1]?.values[0]?.error).toEqual({
+      code: "LIMIT_EXCEEDED",
+      retryable: true,
+    })
+    expect(values[2]?.values[0]?.error).toEqual({
+      code: "LIMIT_EXCEEDED",
+      retryable: true,
+    })
+    // Silent truncation is worse than slow.
+    expect(result.truncated).toBe(true)
+    expect(result.truncation).toEqual({ reason: "nodeLimit", visitedNodes: 3 })
+  })
+
+  test("a walk that ran out outranks a byte-limit cut", async () => {
+    installFigma({
+      nodes: [bound("1:1", ["V:a"], [bound("1:2", ["V:b"])])],
+      collections: [
+        collection({
+          id: "C:theme",
+          name: "Theme",
+          modes: [{ modeId: "M:default", name: "Default" }],
+        }),
+      ],
+      variables: [
+        variable({
+          id: "V:a",
+          name: "a",
+          collectionId: "C:theme",
+          valuesByMode: { "M:default": 1 },
+        }),
+      ],
+    })
+
+    const result = await getVariables(
+      { selector: { nodeId: "1:1" } },
+      undefined,
+      { visitedNodes: 1, encodedBytes: 1 },
+    )
+
+    expect(result.collections).toEqual([])
+    expect(result.truncated).toBe(true)
+    expect(result.truncation).toEqual({ reason: "nodeLimit", visitedNodes: 1 })
+  })
+
+  test("a spent budget outranks a byte-limit cut", async () => {
+    const { variableLookups } = installFigma({
+      nodes: [bound("1:1", ["V:a", "V:b"])],
+      collections: [
+        collection({
+          id: "C:theme",
+          name: "Theme",
+          modes: [{ modeId: "M:default", name: "Default" }],
+        }),
+      ],
+      variables: [
+        variable({
+          id: "V:a",
+          name: "a",
+          collectionId: "C:theme",
+          valuesByMode: { "M:default": 1 },
+        }),
+        variable({
+          id: "V:b",
+          name: "b",
+          collectionId: "C:theme",
+          valuesByMode: { "M:default": 2 },
+        }),
+      ],
+      lookupDelayMs: { "V:a": 80 },
+    })
+
+    const result = await getVariables(
+      { selector: { nodeId: "1:1" } },
+      undefined,
+      { variableLookupBudgetMs: 20, encodedBytes: 1 },
+    )
+
+    // V:b was never fetched, and the collection that was grouped hit the byte
+    // limit on the way out. The budget is the earlier, larger loss.
+    expect(variableLookups).toEqual(["V:a"])
+    expect(result.truncation).toEqual({ reason: "nodeLimit", visitedNodes: 1 })
+  })
+
+  test("a byte-limit cut is reported when nothing earlier stopped the read", async () => {
+    installFigma({
+      nodes: [bound("1:1", ["V:a"])],
+      collections: [
+        collection({
+          id: "C:theme",
+          name: "Theme",
+          modes: [{ modeId: "M:default", name: "Default" }],
+        }),
+      ],
+      variables: [
+        variable({
+          id: "V:a",
+          name: "a",
+          collectionId: "C:theme",
+          valuesByMode: { "M:default": 1 },
+        }),
+      ],
+    })
+
+    const result = await getVariables(
+      { selector: { nodeId: "1:1" } },
+      undefined,
+      { encodedBytes: 1 },
+    )
+
+    expect(result.collections).toEqual([])
+    expect(result.truncated).toBe(true)
+    expect(result.truncation?.reason).toBe("byteLimit")
   })
 
   test("fails when the variables API is unavailable", async () => {
