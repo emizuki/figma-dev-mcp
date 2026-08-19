@@ -1659,6 +1659,8 @@ fn full_node_fixture() -> Value {
             },
             "cornerRadius": {"kind": "uniform", "radius": 8.0},
             "cornerSmoothing": 0.6,
+            "clipsContent": true,
+            "blendMode": "multiply",
             "component": null,
             "instance": {
                 "componentId": "C:1", "componentSetId": "CS:1", "properties": []

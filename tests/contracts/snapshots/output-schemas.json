@@ -355,6 +355,31 @@
         ],
         "type": "string"
       },
+      "BlendMode": {
+        "description": "Figma blend mode, mapped to CSS `mix-blend-mode` where an equivalent exists.\n\n`Normal` and `PassThrough` are the Figma defaults and are never emitted; they\nstay in the enum so the schema describes the full domain.",
+        "enum": [
+          "passThrough",
+          "normal",
+          "darken",
+          "multiply",
+          "linearBurn",
+          "colorBurn",
+          "lighten",
+          "screen",
+          "linearDodge",
+          "colorDodge",
+          "overlay",
+          "softLight",
+          "hardLight",
+          "difference",
+          "exclusion",
+          "hue",
+          "saturation",
+          "color",
+          "luminosity"
+        ],
+        "type": "string"
+      },
       "Color": {
         "additionalProperties": false,
         "properties": {
@@ -864,6 +889,22 @@
               {
                 "type": "null"
               }
+            ]
+          },
+          "blendMode": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/BlendMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "clipsContent": {
+            "type": [
+              "boolean",
+              "null"
             ]
           },
           "component": {
@@ -3832,6 +3873,31 @@
         ],
         "type": "string"
       },
+      "BlendMode": {
+        "description": "Figma blend mode, mapped to CSS `mix-blend-mode` where an equivalent exists.\n\n`Normal` and `PassThrough` are the Figma defaults and are never emitted; they\nstay in the enum so the schema describes the full domain.",
+        "enum": [
+          "passThrough",
+          "normal",
+          "darken",
+          "multiply",
+          "linearBurn",
+          "colorBurn",
+          "lighten",
+          "screen",
+          "linearDodge",
+          "colorDodge",
+          "overlay",
+          "softLight",
+          "hardLight",
+          "difference",
+          "exclusion",
+          "hue",
+          "saturation",
+          "color",
+          "luminosity"
+        ],
+        "type": "string"
+      },
       "CanonicalErrorMessage": {
         "description": "code-owned canonical error message; bounded by UTF-8 encoded byte length",
         "maxLength": 1024,
@@ -4369,6 +4435,22 @@
               {
                 "type": "null"
               }
+            ]
+          },
+          "blendMode": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/BlendMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "clipsContent": {
+            "type": [
+              "boolean",
+              "null"
             ]
           },
           "component": {
@@ -6827,6 +6909,31 @@
         ],
         "type": "string"
       },
+      "BlendMode": {
+        "description": "Figma blend mode, mapped to CSS `mix-blend-mode` where an equivalent exists.\n\n`Normal` and `PassThrough` are the Figma defaults and are never emitted; they\nstay in the enum so the schema describes the full domain.",
+        "enum": [
+          "passThrough",
+          "normal",
+          "darken",
+          "multiply",
+          "linearBurn",
+          "colorBurn",
+          "lighten",
+          "screen",
+          "linearDodge",
+          "colorDodge",
+          "overlay",
+          "softLight",
+          "hardLight",
+          "difference",
+          "exclusion",
+          "hue",
+          "saturation",
+          "color",
+          "luminosity"
+        ],
+        "type": "string"
+      },
       "Color": {
         "additionalProperties": false,
         "properties": {
@@ -7336,6 +7443,22 @@
               {
                 "type": "null"
               }
+            ]
+          },
+          "blendMode": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/BlendMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "clipsContent": {
+            "type": [
+              "boolean",
+              "null"
             ]
           },
           "component": {

@@ -10,6 +10,7 @@ import type {
   AvailableAnimationStyle,
   AvailableStyleProp,
   AxisAlign,
+  BlendMode,
   CodeSyntax,
   Color,
   CompactNodeData,
@@ -611,6 +612,28 @@ const AXIS_ALIGN_VALUES: readonly AxisAlign[] = [
   "baseline",
 ]
 
+const BLEND_MODE_VALUES: readonly BlendMode[] = [
+  "passThrough",
+  "normal",
+  "darken",
+  "multiply",
+  "linearBurn",
+  "colorBurn",
+  "lighten",
+  "screen",
+  "linearDodge",
+  "colorDodge",
+  "overlay",
+  "softLight",
+  "hardLight",
+  "difference",
+  "exclusion",
+  "hue",
+  "saturation",
+  "color",
+  "luminosity",
+]
+
 function parseLayout(value: unknown, label: string): LayoutValue {
   const object = exact(
     value,
@@ -998,6 +1021,8 @@ function parseFullData(value: unknown, label: string): FullNodeData {
       "strokes",
       "cornerRadius",
       "cornerSmoothing",
+      "clipsContent",
+      "blendMode",
     ],
   )
   const result: FullNodeData = {
@@ -1043,6 +1068,14 @@ function parseFullData(value: unknown, label: string): FullNodeData {
     result.cornerSmoothing = finite(
       object.cornerSmoothing,
       `${label}.cornerSmoothing`,
+    )
+  if (Object.hasOwn(object, "clipsContent"))
+    result.clipsContent = boolean(object.clipsContent, `${label}.clipsContent`)
+  if (Object.hasOwn(object, "blendMode"))
+    result.blendMode = oneOf<BlendMode>(
+      object.blendMode,
+      BLEND_MODE_VALUES,
+      `${label}.blendMode`,
     )
   return result
 }

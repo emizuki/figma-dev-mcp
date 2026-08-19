@@ -7,6 +7,7 @@ import {
 import { settleOrSkip } from "./common"
 import type {
   AxisAlign,
+  BlendMode,
   CompactNodeData,
   ComponentPropertyValue,
   ComponentValue,
@@ -271,6 +272,37 @@ function cornerRadius(node: UnknownRecord): CornerRadiusValue | undefined {
     return undefined
   }
   return { kind: "perCorner", topLeft, topRight, bottomRight, bottomLeft }
+}
+
+const BLEND_MODES: Record<string, BlendMode> = {
+  PASS_THROUGH: "passThrough",
+  NORMAL: "normal",
+  DARKEN: "darken",
+  MULTIPLY: "multiply",
+  LINEAR_BURN: "linearBurn",
+  COLOR_BURN: "colorBurn",
+  LIGHTEN: "lighten",
+  SCREEN: "screen",
+  LINEAR_DODGE: "linearDodge",
+  COLOR_DODGE: "colorDodge",
+  OVERLAY: "overlay",
+  SOFT_LIGHT: "softLight",
+  HARD_LIGHT: "hardLight",
+  DIFFERENCE: "difference",
+  EXCLUSION: "exclusion",
+  HUE: "hue",
+  SATURATION: "saturation",
+  COLOR: "color",
+  LUMINOSITY: "luminosity",
+}
+
+// PASS_THROUGH is the Figma default for frames and groups, NORMAL for everything
+// else. Emitting either would add ~26 bytes to nearly every node for no signal.
+function blendMode(node: UnknownRecord): BlendMode | undefined {
+  const mode = BLEND_MODES[hostString(node, "blendMode")]
+  return mode === undefined || mode === "normal" || mode === "passThrough"
+    ? undefined
+    : mode
 }
 
 function lineHeightValue(source: UnknownRecord): LineHeightValue | undefined {
@@ -654,6 +686,9 @@ function nodeData(
   const smoothing = optionalFinite(hostGet(node, "cornerSmoothing"))
   if (smoothing !== undefined && smoothing !== 0)
     full.cornerSmoothing = smoothing
+  if (hostGet(node, "clipsContent") === true) full.clipsContent = true
+  const blend = blendMode(node)
+  if (blend !== undefined) full.blendMode = blend
   if (node.type === "TEXT") {
     full.text = {
       characters: string(node.characters),

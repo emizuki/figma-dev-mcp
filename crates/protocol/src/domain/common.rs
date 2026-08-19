@@ -987,13 +987,32 @@ impl<'de> Visitor<'de> for PaintVisitor {
     }
 }
 
+/// Figma blend mode, mapped to CSS `mix-blend-mode` where an equivalent exists.
+///
+/// `Normal` and `PassThrough` are the Figma defaults and are never emitted; they
+/// stay in the enum so the schema describes the full domain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum BlendMode {
+    PassThrough,
     Normal,
+    Darken,
     Multiply,
+    LinearBurn,
+    ColorBurn,
+    Lighten,
     Screen,
+    LinearDodge,
+    ColorDodge,
     Overlay,
+    SoftLight,
+    HardLight,
+    Difference,
+    Exclusion,
+    Hue,
+    Saturation,
+    Color,
+    Luminosity,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
@@ -2502,6 +2521,10 @@ pub struct FullNodeData {
     pub corner_radius: Option<CornerRadiusValue>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub corner_smoothing: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clips_content: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blend_mode: Option<BlendMode>,
     pub style_references: ReturnedList<StyleReference>,
     pub variable_references: ReturnedList<VariableReference>,
 }
@@ -2595,4 +2618,22 @@ pub struct BoundedItems<T> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub truncation: Option<Truncation>,
     pub observation: ObservationWindow,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BlendMode;
+    use serde_json::json;
+
+    #[test]
+    fn blend_mode_round_trips_and_stays_closed() {
+        for value in ["passThrough", "multiply", "softLight", "luminosity"] {
+            let parsed: BlendMode = serde_json::from_value(json!(value)).unwrap();
+            assert_eq!(serde_json::to_value(parsed).unwrap(), json!(value));
+        }
+        assert!(
+            serde_json::from_value::<BlendMode>(json!("plusLighter")).is_err(),
+            "blend mode must stay closed"
+        );
+    }
 }

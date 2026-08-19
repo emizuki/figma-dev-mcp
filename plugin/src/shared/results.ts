@@ -91,6 +91,27 @@ export type CornerRadiusValue =
       bottomLeft: number
     }
 
+export type BlendMode =
+  | "passThrough"
+  | "normal"
+  | "darken"
+  | "multiply"
+  | "linearBurn"
+  | "colorBurn"
+  | "lighten"
+  | "screen"
+  | "linearDodge"
+  | "colorDodge"
+  | "overlay"
+  | "softLight"
+  | "hardLight"
+  | "difference"
+  | "exclusion"
+  | "hue"
+  | "saturation"
+  | "color"
+  | "luminosity"
+
 export type LayoutMode = "none" | "horizontal" | "vertical" | "grid"
 export type LayoutSizing = "fixed" | "hug" | "fill"
 export type AxisAlign = "min" | "center" | "max" | "spaceBetween" | "baseline"
@@ -261,6 +282,8 @@ export interface FullNodeData {
   strokes?: StrokeValue
   cornerRadius?: CornerRadiusValue
   cornerSmoothing?: number
+  clipsContent?: boolean
+  blendMode?: BlendMode
   component?: ComponentValue
   instance?: InstanceValue
   styleReferences: StyleReference[]

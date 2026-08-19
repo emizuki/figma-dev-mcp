@@ -659,6 +659,70 @@ describe("bounded node serializer", () => {
     ).toBeDefined()
   })
 
+  test("clipsContent and non-default blend mode are returned", () => {
+    const node = base({ clipsContent: true, blendMode: "MULTIPLY" })
+
+    expect(
+      serializeNodeForest([node], {
+        detail: "full",
+        depth: 0,
+        dedupeComponents: false,
+      }).nodes[0]?.data,
+    ).toMatchObject({ clipsContent: true, blendMode: "multiply" })
+  })
+
+  test("default blend modes and clipsContent false are omitted", () => {
+    for (const blendMode of ["NORMAL", "PASS_THROUGH"]) {
+      const node = base({ clipsContent: false, blendMode })
+
+      const data = serializeNodeForest([node], {
+        detail: "full",
+        depth: 0,
+        dedupeComponents: false,
+      }).nodes[0]?.data as Record<string, unknown>
+
+      expect(Object.hasOwn(data, "clipsContent")).toBe(false)
+      expect(Object.hasOwn(data, "blendMode")).toBe(false)
+    }
+  })
+
+  test("unknown blend modes are dropped rather than passed through", () => {
+    const node = base({ blendMode: "PLUS_LIGHTER" })
+
+    const data = serializeNodeForest([node], {
+      detail: "full",
+      depth: 0,
+      dedupeComponents: false,
+    }).nodes[0]?.data as Record<string, unknown>
+
+    expect(Object.hasOwn(data, "blendMode")).toBe(false)
+  })
+
+  test("blend mode survives the wire validator", () => {
+    const node = base({ clipsContent: true, blendMode: "SOFT_LIGHT" })
+
+    const serialized = serializeNodeForest([node], {
+      detail: "full",
+      depth: 0,
+      dedupeComponents: false,
+    })
+
+    expect(
+      parseReadResult({
+        operation: "get_nodes",
+        result: {
+          detail: "full",
+          items: [{ status: "success", value: serialized.nodes[0] }],
+          truncated: false,
+          observation: {
+            startedAt: "2026-08-19T00:00:00.000Z",
+            completedAt: "2026-08-19T00:00:01.000Z",
+          },
+        },
+      }),
+    ).toBeDefined()
+  })
+
   test("terminates repeated-node cycles and enforces node and byte budgets", () => {
     const cyclic = base({ id: "C:1", type: "COMPONENT" })
     cyclic.children = [cyclic]
