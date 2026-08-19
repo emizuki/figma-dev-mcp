@@ -405,6 +405,90 @@ describe("node reader", () => {
       [{ name: "Label#0:1", value: { kind: "text", value: "Today" } }],
     )
   })
+
+  test("resolves style names via getStyleByIdAsync at detail full", async () => {
+    const node = {
+      id: "1:1",
+      name: "Card",
+      type: "RECTANGLE",
+      children: [],
+      fillStyleId: "S:fill",
+    }
+    const lookups: string[] = []
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [] },
+      currentPage: page("0:1", "Page 1"),
+      editorType: "dev",
+      getNodeByIdAsync: async () => node,
+      getStyleByIdAsync: async (id: string) => {
+        lookups.push(id)
+        return { name: "Primary/500" }
+      },
+    }
+
+    const result = await readNodes({
+      nodeIds: [node.id],
+      detail: "full",
+      depth: 0,
+    })
+
+    // The resolved name must travel the real readNodes path (navigation.ts's
+    // detail === "full" gate into collectStyleNames), not a direct
+    // serializeNodeForest call.
+    expect(lookups).toEqual(["S:fill"])
+    expect(result.items[0]).toMatchObject({
+      status: "success",
+      value: {
+        data: {
+          styleReferences: [
+            { id: "S:fill", kind: "paint", name: "Primary/500" },
+          ],
+        },
+      },
+    })
+  })
+
+  test("spends zero style lookups and omits name at detail compact", async () => {
+    const node = {
+      id: "1:1",
+      name: "Card",
+      type: "RECTANGLE",
+      children: [],
+      fillStyleId: "S:fill",
+    }
+    let calls = 0
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [] },
+      currentPage: page("0:1", "Page 1"),
+      editorType: "dev",
+      getNodeByIdAsync: async () => node,
+      getStyleByIdAsync: async (id: string) => {
+        calls += 1
+        return { name: "Primary/500" }
+      },
+    }
+
+    const result = await readNodes({
+      nodeIds: [node.id],
+      detail: "compact",
+      depth: 0,
+    })
+
+    // Zero calls, not merely an absent name: an empty-but-threaded styleNames
+    // map would still leave `name` absent while still spending the lookup.
+    expect(calls).toBe(0)
+    const item = result.items[0] as {
+      status: string
+      value?: { data?: { styleReferences?: Record<string, unknown>[] } }
+    }
+    expect(item.status).toBe("success")
+    expect(item.value?.data?.styleReferences).toEqual([
+      { id: "S:fill", kind: "paint" },
+    ])
+    expect(
+      Object.hasOwn(item.value?.data?.styleReferences?.[0] ?? {}, "name"),
+    ).toBe(false)
+  })
 })
 
 describe("design context reader", () => {
