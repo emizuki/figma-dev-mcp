@@ -1156,6 +1156,16 @@ pub enum LayoutSizing {
     Fill,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum AxisAlign {
+    Min,
+    Center,
+    Max,
+    SpaceBetween,
+    Baseline,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LayoutValue {
@@ -1167,6 +1177,14 @@ pub struct LayoutValue {
     pub padding_right: f64,
     pub padding_bottom: f64,
     pub padding_left: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_align: Option<AxisAlign>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub counter_align: Option<AxisAlign>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wrap: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub counter_axis_spacing: Option<f64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]

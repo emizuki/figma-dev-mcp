@@ -345,6 +345,16 @@
   },
   "get_design_context": {
     "$defs": {
+      "AxisAlign": {
+        "enum": [
+          "min",
+          "center",
+          "max",
+          "spaceBetween",
+          "baseline"
+        ],
+        "type": "string"
+      },
       "Color": {
         "additionalProperties": false,
         "properties": {
@@ -992,6 +1002,23 @@
       "LayoutValue": {
         "additionalProperties": false,
         "properties": {
+          "counterAlign": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AxisAlign"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "counterAxisSpacing": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
           "counterSizing": {
             "$ref": "#/$defs/LayoutSizing"
           },
@@ -1018,8 +1045,24 @@
             "format": "double",
             "type": "number"
           },
+          "primaryAlign": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AxisAlign"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "primarySizing": {
             "$ref": "#/$defs/LayoutSizing"
+          },
+          "wrap": {
+            "type": [
+              "boolean",
+              "null"
+            ]
           }
         },
         "required": [
@@ -3640,6 +3683,16 @@
   },
   "get_nodes": {
     "$defs": {
+      "AxisAlign": {
+        "enum": [
+          "min",
+          "center",
+          "max",
+          "spaceBetween",
+          "baseline"
+        ],
+        "type": "string"
+      },
       "CanonicalErrorMessage": {
         "description": "code-owned canonical error message; bounded by UTF-8 encoded byte length",
         "maxLength": 1024,
@@ -4472,6 +4525,23 @@
       "LayoutValue": {
         "additionalProperties": false,
         "properties": {
+          "counterAlign": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AxisAlign"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "counterAxisSpacing": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
           "counterSizing": {
             "$ref": "#/$defs/LayoutSizing"
           },
@@ -4498,8 +4568,24 @@
             "format": "double",
             "type": "number"
           },
+          "primaryAlign": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AxisAlign"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "primarySizing": {
             "$ref": "#/$defs/LayoutSizing"
+          },
+          "wrap": {
+            "type": [
+              "boolean",
+              "null"
+            ]
           }
         },
         "required": [
@@ -6453,6 +6539,16 @@
   },
   "get_selection": {
     "$defs": {
+      "AxisAlign": {
+        "enum": [
+          "min",
+          "center",
+          "max",
+          "spaceBetween",
+          "baseline"
+        ],
+        "type": "string"
+      },
       "Color": {
         "additionalProperties": false,
         "properties": {
@@ -7100,6 +7196,23 @@
       "LayoutValue": {
         "additionalProperties": false,
         "properties": {
+          "counterAlign": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AxisAlign"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "counterAxisSpacing": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
           "counterSizing": {
             "$ref": "#/$defs/LayoutSizing"
           },
@@ -7126,8 +7239,24 @@
             "format": "double",
             "type": "number"
           },
+          "primaryAlign": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AxisAlign"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "primarySizing": {
             "$ref": "#/$defs/LayoutSizing"
+          },
+          "wrap": {
+            "type": [
+              "boolean",
+              "null"
+            ]
           }
         },
         "required": [

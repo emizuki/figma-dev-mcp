@@ -9,6 +9,7 @@ import type {
   AppliedStylePropValue,
   AvailableAnimationStyle,
   AvailableStyleProp,
+  AxisAlign,
   CodeSyntax,
   Color,
   CompactNodeData,
@@ -538,18 +539,31 @@ function parseEffect(value: unknown, label: string): EffectValue {
   }
 }
 
+const AXIS_ALIGN_VALUES: readonly AxisAlign[] = [
+  "min",
+  "center",
+  "max",
+  "spaceBetween",
+  "baseline",
+]
+
 function parseLayout(value: unknown, label: string): LayoutValue {
-  const object = exact(value, label, [
-    "mode",
-    "primarySizing",
-    "counterSizing",
-    "gap",
-    "paddingTop",
-    "paddingRight",
-    "paddingBottom",
-    "paddingLeft",
-  ])
-  return {
+  const object = exact(
+    value,
+    label,
+    [
+      "mode",
+      "primarySizing",
+      "counterSizing",
+      "gap",
+      "paddingTop",
+      "paddingRight",
+      "paddingBottom",
+      "paddingLeft",
+    ],
+    ["primaryAlign", "counterAlign", "wrap", "counterAxisSpacing"],
+  )
+  const result: LayoutValue = {
     mode: oneOf<LayoutMode>(
       object.mode,
       ["none", "horizontal", "vertical", "grid"],
@@ -571,6 +585,30 @@ function parseLayout(value: unknown, label: string): LayoutValue {
     paddingBottom: finite(object.paddingBottom, `${label}.paddingBottom`),
     paddingLeft: finite(object.paddingLeft, `${label}.paddingLeft`),
   }
+  if (Object.hasOwn(object, "primaryAlign")) {
+    result.primaryAlign = oneOf<AxisAlign>(
+      object.primaryAlign,
+      AXIS_ALIGN_VALUES,
+      `${label}.primaryAlign`,
+    )
+  }
+  if (Object.hasOwn(object, "counterAlign")) {
+    result.counterAlign = oneOf<AxisAlign>(
+      object.counterAlign,
+      AXIS_ALIGN_VALUES,
+      `${label}.counterAlign`,
+    )
+  }
+  if (Object.hasOwn(object, "wrap")) {
+    result.wrap = boolean(object.wrap, `${label}.wrap`)
+  }
+  if (Object.hasOwn(object, "counterAxisSpacing")) {
+    result.counterAxisSpacing = finite(
+      object.counterAxisSpacing,
+      `${label}.counterAxisSpacing`,
+    )
+  }
+  return result
 }
 
 function parseLineHeight(value: unknown, label: string): LineHeightValue {

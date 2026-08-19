@@ -6,13 +6,17 @@ import {
 } from "../shared/limits"
 import { settleOrSkip } from "./common"
 import type {
+  AxisAlign,
   CompactNodeData,
   ComponentPropertyValue,
   ComponentValue,
+  ConstraintAxis,
   DesignNode,
   EffectValue,
   FullNodeData,
   InstanceValue,
+  LayoutConstraints,
+  LayoutValue,
   LetterSpacingValue,
   LineHeightValue,
   MinimalNodeDetails,
@@ -84,6 +88,10 @@ function string(value: unknown, fallback = ""): string {
 
 function finite(value: unknown, fallback = 0): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback
+}
+
+function optionalFinite(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined
 }
 
 function boolean(value: unknown, fallback = false): boolean {
@@ -325,24 +333,61 @@ function geometry(node: UnknownRecord) {
   return result
 }
 
-function autoLayout(node: UnknownRecord) {
-  const layoutMode = node.layoutMode
+const AXIS_ALIGNS: Record<string, AxisAlign> = {
+  MIN: "min",
+  CENTER: "center",
+  MAX: "max",
+  SPACE_BETWEEN: "spaceBetween",
+  BASELINE: "baseline",
+}
+
+function autoLayout(node: UnknownRecord): LayoutValue | undefined {
+  const layoutMode = hostGet(node, "layoutMode")
   if (typeof layoutMode !== "string" || layoutMode === "NONE") return undefined
-  return {
+  const layout: LayoutValue = {
     mode:
       layoutMode === "HORIZONTAL"
         ? "horizontal"
         : layoutMode === "VERTICAL"
           ? "vertical"
           : "grid",
-    primarySizing: sizing(node.primaryAxisSizingMode),
-    counterSizing: sizing(node.counterAxisSizingMode),
-    gap: finite(node.itemSpacing),
-    paddingTop: finite(node.paddingTop),
-    paddingRight: finite(node.paddingRight),
-    paddingBottom: finite(node.paddingBottom),
-    paddingLeft: finite(node.paddingLeft),
-  } as const
+    primarySizing: sizing(hostGet(node, "primaryAxisSizingMode")),
+    counterSizing: sizing(hostGet(node, "counterAxisSizingMode")),
+    gap: finite(hostGet(node, "itemSpacing")),
+    paddingTop: finite(hostGet(node, "paddingTop")),
+    paddingRight: finite(hostGet(node, "paddingRight")),
+    paddingBottom: finite(hostGet(node, "paddingBottom")),
+    paddingLeft: finite(hostGet(node, "paddingLeft")),
+  }
+  // Alignment is justify-content and align-items: always emitted when the node has
+  // auto-layout, including the Figma default MIN. Absence means the getter was
+  // unreadable, not that the layout is left-aligned.
+  const primaryAlign = AXIS_ALIGNS[hostString(node, "primaryAxisAlignItems")]
+  if (primaryAlign !== undefined) layout.primaryAlign = primaryAlign
+  const counterAlign = AXIS_ALIGNS[hostString(node, "counterAxisAlignItems")]
+  if (counterAlign !== undefined) layout.counterAlign = counterAlign
+  if (hostGet(node, "layoutWrap") === "WRAP") {
+    layout.wrap = true
+    const spacing = optionalFinite(hostGet(node, "counterAxisSpacing"))
+    if (spacing !== undefined) layout.counterAxisSpacing = spacing
+  }
+  return layout
+}
+
+const CONSTRAINT_AXES: Record<string, ConstraintAxis> = {
+  MIN: "min",
+  CENTER: "center",
+  MAX: "max",
+  STRETCH: "stretch",
+  SCALE: "scale",
+}
+
+function layoutConstraints(node: UnknownRecord): LayoutConstraints | undefined {
+  const source = record(hostGet(node, "constraints"))
+  const horizontal = CONSTRAINT_AXES[string(hostGet(source, "horizontal"))]
+  const vertical = CONSTRAINT_AXES[string(hostGet(source, "vertical"))]
+  if (horizontal === undefined || vertical === undefined) return undefined
+  return { horizontal, vertical }
 }
 
 function sizing(value: unknown): "fixed" | "hug" | "fill" {
@@ -526,6 +571,8 @@ function nodeData(
   }
   const layout = autoLayout(node)
   if (layout !== undefined) compact.autoLayout = layout
+  const constraints = layoutConstraints(node)
+  if (constraints !== undefined) compact.constraints = constraints
   const component = componentValue(node)
   if (component !== undefined) compact.component = component
   const instance = instanceValue(node, identities)
@@ -546,6 +593,7 @@ function nodeData(
   }
   if (compact.geometry !== undefined) full.geometry = compact.geometry
   if (compact.autoLayout !== undefined) full.autoLayout = compact.autoLayout
+  if (compact.constraints !== undefined) full.constraints = compact.constraints
   if (compact.component !== undefined) full.component = compact.component
   if (compact.instance !== undefined) full.instance = compact.instance
   if (node.type === "TEXT") {

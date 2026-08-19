@@ -74,6 +74,7 @@ export type EffectValue =
 
 export type LayoutMode = "none" | "horizontal" | "vertical" | "grid"
 export type LayoutSizing = "fixed" | "hug" | "fill"
+export type AxisAlign = "min" | "center" | "max" | "spaceBetween" | "baseline"
 
 export interface LayoutValue {
   mode: LayoutMode
@@ -84,6 +85,10 @@ export interface LayoutValue {
   paddingRight: number
   paddingBottom: number
   paddingLeft: number
+  primaryAlign?: AxisAlign
+  counterAlign?: AxisAlign
+  wrap?: boolean
+  counterAxisSpacing?: number
 }
 
 export type LineHeightValue =

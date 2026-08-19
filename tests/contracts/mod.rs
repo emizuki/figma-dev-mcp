@@ -8,12 +8,12 @@ mod tools_catalog;
 
 use figma_dev_mcp_protocol::{
     domain::{
-        ComponentValue, ConnectionId, DesignNode, GetDesignContextResult, GetMotionResult,
-        GetNodesResult, GetReactionsResult, GetSelectionResult, InstanceValue, ItemIdentifier,
-        LetterSpacingValue, LineHeightValue, MinimalNodeDetails, NodeForest, NodeId, NodeTypeList,
-        NodeTypeName, NodesSelector, PageId, PagesSelector, PaintValue, RasterScale,
-        ReactionAction, RequestId, ReturnedList, ScreenshotAsset, SearchNodesInput, Selector,
-        TextStyle,
+        AxisAlign, ComponentValue, ConnectionId, DesignNode, GetDesignContextResult,
+        GetMotionResult, GetNodesResult, GetReactionsResult, GetSelectionResult, InstanceValue,
+        ItemIdentifier, LayoutValue, LetterSpacingValue, LineHeightValue, MinimalNodeDetails,
+        NodeForest, NodeId, NodeTypeList, NodeTypeName, NodesSelector, PageId, PagesSelector,
+        PaintValue, RasterScale, ReactionAction, RequestId, ReturnedList, ScreenshotAsset,
+        SearchNodesInput, Selector, TextStyle,
     },
     error::{ErrorCode, ItemError, PluginFailure, ToolError},
     limits::{
@@ -1621,7 +1621,13 @@ fn full_node_fixture() -> Value {
                 }
             },
             "constraints": {"horizontal": "stretch", "vertical": "min"},
-            "autoLayout": null,
+            "autoLayout": {
+                "mode": "horizontal", "primarySizing": "hug", "counterSizing": "fixed",
+                "gap": 8.0, "paddingTop": 4.0, "paddingRight": 12.0,
+                "paddingBottom": 4.0, "paddingLeft": 12.0,
+                "primaryAlign": "spaceBetween", "counterAlign": "center",
+                "wrap": true, "counterAxisSpacing": 6.0
+            },
             "text": {
                 "characters": "Card", "defaultStyle": {
                     "fontFamily": "Inter", "fontStyle": "Regular", "fontSize": 16.0,
@@ -2077,5 +2083,43 @@ fn text_style_units_round_trip_and_reject_unknown_units() {
     assert!(
         serde_json::from_value::<LetterSpacingValue>(json!({"unit": "auto"})).is_err(),
         "letter spacing has no auto variant"
+    );
+}
+
+#[test]
+fn layout_alignment_round_trips_and_rejects_unknown_values() {
+    let value = json!({
+        "mode": "horizontal",
+        "primarySizing": "hug",
+        "counterSizing": "fixed",
+        "gap": 8.0,
+        "paddingTop": 4.0,
+        "paddingRight": 12.0,
+        "paddingBottom": 4.0,
+        "paddingLeft": 12.0,
+        "primaryAlign": "spaceBetween",
+        "counterAlign": "baseline",
+        "wrap": true,
+        "counterAxisSpacing": 6.0
+    });
+    let parsed: LayoutValue = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(serde_json::to_value(parsed).unwrap(), value);
+
+    let bare = json!({
+        "mode": "vertical",
+        "primarySizing": "fixed",
+        "counterSizing": "fixed",
+        "gap": 0.0,
+        "paddingTop": 0.0,
+        "paddingRight": 0.0,
+        "paddingBottom": 0.0,
+        "paddingLeft": 0.0
+    });
+    let parsed: LayoutValue = serde_json::from_value(bare.clone()).unwrap();
+    assert_eq!(serde_json::to_value(parsed).unwrap(), bare);
+
+    assert!(
+        serde_json::from_value::<AxisAlign>(json!("spaceAround")).is_err(),
+        "axis alignment must stay closed"
     );
 }

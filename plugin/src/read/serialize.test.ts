@@ -280,6 +280,158 @@ describe("bounded node serializer", () => {
     })
   })
 
+  test("compact auto-layout carries alignment, wrap, and counter-axis spacing", () => {
+    const node = base({
+      layoutMode: "HORIZONTAL",
+      primaryAxisSizingMode: "AUTO",
+      counterAxisSizingMode: "FIXED",
+      itemSpacing: 8,
+      paddingTop: 4,
+      paddingRight: 12,
+      paddingBottom: 4,
+      paddingLeft: 12,
+      primaryAxisAlignItems: "SPACE_BETWEEN",
+      counterAxisAlignItems: "BASELINE",
+      layoutWrap: "WRAP",
+      counterAxisSpacing: 6,
+    })
+
+    const result = serializeNodeForest([node], {
+      detail: "compact",
+      depth: 0,
+      dedupeComponents: false,
+    })
+
+    expect(result.nodes[0]?.data).toMatchObject({
+      autoLayout: {
+        mode: "horizontal",
+        primarySizing: "hug",
+        counterSizing: "fixed",
+        gap: 8,
+        paddingTop: 4,
+        paddingRight: 12,
+        paddingBottom: 4,
+        paddingLeft: 12,
+        primaryAlign: "spaceBetween",
+        counterAlign: "baseline",
+        wrap: true,
+        counterAxisSpacing: 6,
+      },
+    })
+  })
+
+  test("auto-layout emits min alignment but omits wrap fields when not wrapping", () => {
+    const node = base({
+      layoutMode: "VERTICAL",
+      primaryAxisAlignItems: "MIN",
+      counterAxisAlignItems: "MIN",
+      layoutWrap: "NO_WRAP",
+      counterAxisSpacing: 6,
+    })
+
+    const layout = (
+      serializeNodeForest([node], {
+        detail: "compact",
+        depth: 0,
+        dedupeComponents: false,
+      }).nodes[0]?.data as { autoLayout?: Record<string, unknown> }
+    ).autoLayout
+
+    expect(layout?.primaryAlign).toBe("min")
+    expect(layout?.counterAlign).toBe("min")
+    expect(Object.hasOwn(layout ?? {}, "wrap")).toBe(false)
+    expect(Object.hasOwn(layout ?? {}, "counterAxisSpacing")).toBe(false)
+  })
+
+  test("layout constraints are emitted at compact and full", () => {
+    const node = base({
+      constraints: { horizontal: "STRETCH", vertical: "SCALE" },
+    })
+
+    for (const detail of ["compact", "full"] as const) {
+      const result = serializeNodeForest([node], {
+        detail,
+        depth: 0,
+        dedupeComponents: false,
+      })
+      expect(result.nodes[0]?.data).toMatchObject({
+        constraints: { horizontal: "stretch", vertical: "scale" },
+      })
+    }
+  })
+
+  test("unknown constraint axes drop the whole constraints field", () => {
+    const node = base({
+      constraints: { horizontal: "STRETCH", vertical: "WOBBLE" },
+    })
+
+    const data = serializeNodeForest([node], {
+      detail: "compact",
+      depth: 0,
+      dedupeComponents: false,
+    }).nodes[0]?.data as Record<string, unknown>
+
+    expect(Object.hasOwn(data, "constraints")).toBe(false)
+  })
+
+  test("throwing layout getters leave the node serializable", () => {
+    const node = base({ layoutMode: "HORIZONTAL" })
+    Object.defineProperty(node, "primaryAxisAlignItems", {
+      get() {
+        throw new Error("write-only under dynamic-page")
+      },
+      enumerable: true,
+    })
+    Object.defineProperty(node, "constraints", {
+      get() {
+        throw new Error("write-only under dynamic-page")
+      },
+      enumerable: true,
+    })
+
+    const data = serializeNodeForest([node], {
+      detail: "compact",
+      depth: 0,
+      dedupeComponents: false,
+    }).nodes[0]?.data as { autoLayout?: Record<string, unknown> }
+
+    expect(data.autoLayout?.mode).toBe("horizontal")
+    expect(Object.hasOwn(data.autoLayout ?? {}, "primaryAlign")).toBe(false)
+    expect(Object.hasOwn(data, "constraints")).toBe(false)
+  })
+
+  test("layout and constraint additions survive the wire validator", () => {
+    const node = base({
+      layoutMode: "HORIZONTAL",
+      primaryAxisAlignItems: "CENTER",
+      counterAxisAlignItems: "MAX",
+      layoutWrap: "WRAP",
+      counterAxisSpacing: 2,
+      constraints: { horizontal: "MIN", vertical: "CENTER" },
+    })
+
+    const serialized = serializeNodeForest([node], {
+      detail: "compact",
+      depth: 0,
+      dedupeComponents: false,
+    })
+
+    const parsed = parseReadResult({
+      operation: "get_nodes",
+      result: {
+        detail: "compact",
+        items: [{ status: "success", value: serialized.nodes[0] }],
+        truncated: false,
+        observation: {
+          startedAt: "2026-08-19T00:00:00.000Z",
+          completedAt: "2026-08-19T00:00:01.000Z",
+        },
+      },
+    })
+
+    expect(parsed).toBeDefined()
+  })
+
   test("terminates repeated-node cycles and enforces node and byte budgets", () => {
     const cyclic = base({ id: "C:1", type: "COMPONENT" })
     cyclic.children = [cyclic]
