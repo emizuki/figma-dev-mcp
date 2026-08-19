@@ -140,12 +140,27 @@ export type LetterSpacingValue =
   | { unit: "pixels"; value: number }
   | { unit: "percent"; value: number }
 
+// "none" is the Figma default for textDecoration and is never emitted; it stays in
+// the union so the schema describes the full domain (absence means "default").
+export type TextDecoration = "none" | "underline" | "strikethrough"
+// "left" is the Figma default for textAlignHorizontal and is never emitted; it stays
+// in the union so the schema describes the full domain (absence means "default").
+export type TextAlignHorizontal = "left" | "center" | "right" | "justified"
+// "top" is the Figma default for textAlignVertical and is never emitted; it stays in
+// the union so the schema describes the full domain (absence means "default").
+export type TextAlignVertical = "top" | "center" | "bottom"
+// "none" is the Figma default for textAutoResize and is never emitted; it stays in
+// the union so the schema describes the full domain (absence means "default").
+export type TextAutoResize = "none" | "widthAndHeight" | "height" | "truncate"
+
 export interface TextStyle {
   fontFamily: string
   fontStyle: string
   fontSize?: number
   lineHeight?: LineHeightValue
   letterSpacing?: LetterSpacingValue
+  fontWeight?: number
+  textDecoration?: TextDecoration
   paints: PaintValue[]
 }
 
@@ -159,6 +174,9 @@ export interface TextValue {
   characters: string
   defaultStyle: TextStyle
   styledRanges: StyledTextRange[]
+  alignHorizontal?: TextAlignHorizontal
+  alignVertical?: TextAlignVertical
+  autoResize?: TextAutoResize
 }
 
 export interface TextSummary {

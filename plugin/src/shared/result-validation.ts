@@ -90,6 +90,10 @@ import type {
   StyleReference,
   StyleIdentity,
   StyleValue,
+  TextAlignHorizontal,
+  TextAlignVertical,
+  TextAutoResize,
+  TextDecoration,
   TextStyle,
   TextSummary,
   TextValue,
@@ -733,7 +737,7 @@ function parseTextStyle(value: unknown, label: string): TextStyle {
     value,
     label,
     ["fontFamily", "fontStyle", "paints"],
-    ["fontSize", "lineHeight", "letterSpacing"],
+    ["fontSize", "lineHeight", "letterSpacing", "fontWeight", "textDecoration"],
   )
   const result: TextStyle = {
     fontFamily: string(object.fontFamily, `${label}.fontFamily`),
@@ -755,6 +759,16 @@ function parseTextStyle(value: unknown, label: string): TextStyle {
       `${label}.letterSpacing`,
     )
   }
+  if (Object.hasOwn(object, "fontWeight")) {
+    result.fontWeight = finite(object.fontWeight, `${label}.fontWeight`)
+  }
+  if (Object.hasOwn(object, "textDecoration")) {
+    result.textDecoration = oneOf<TextDecoration>(
+      object.textDecoration,
+      ["none", "underline", "strikethrough"],
+      `${label}.textDecoration`,
+    )
+  }
   return result
 }
 
@@ -768,12 +782,13 @@ function parseStyledRange(value: unknown, label: string): StyledTextRange {
 }
 
 function parseTextValue(value: unknown, label: string): TextValue {
-  const object = exact(value, label, [
-    "characters",
-    "defaultStyle",
-    "styledRanges",
-  ])
-  return {
+  const object = exact(
+    value,
+    label,
+    ["characters", "defaultStyle", "styledRanges"],
+    ["alignHorizontal", "alignVertical", "autoResize"],
+  )
+  const result: TextValue = {
     characters: string(object.characters, `${label}.characters`),
     defaultStyle: parseTextStyle(object.defaultStyle, `${label}.defaultStyle`),
     styledRanges: arrayOf(
@@ -782,6 +797,28 @@ function parseTextValue(value: unknown, label: string): TextValue {
       parseStyledRange,
     ),
   }
+  if (Object.hasOwn(object, "alignHorizontal")) {
+    result.alignHorizontal = oneOf<TextAlignHorizontal>(
+      object.alignHorizontal,
+      ["left", "center", "right", "justified"],
+      `${label}.alignHorizontal`,
+    )
+  }
+  if (Object.hasOwn(object, "alignVertical")) {
+    result.alignVertical = oneOf<TextAlignVertical>(
+      object.alignVertical,
+      ["top", "center", "bottom"],
+      `${label}.alignVertical`,
+    )
+  }
+  if (Object.hasOwn(object, "autoResize")) {
+    result.autoResize = oneOf<TextAutoResize>(
+      object.autoResize,
+      ["none", "widthAndHeight", "height", "truncate"],
+      `${label}.autoResize`,
+    )
+  }
+  return result
 }
 
 function parseTextSummary(value: unknown, label: string): TextSummary {

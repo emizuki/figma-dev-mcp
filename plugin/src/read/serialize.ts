@@ -27,7 +27,12 @@ import type {
   StrokeAlign,
   StrokeValue,
   StyleReference,
+  TextAlignHorizontal,
+  TextAlignVertical,
+  TextAutoResize,
+  TextDecoration,
   TextStyle,
+  TextValue,
   Truncation,
   VariableReference,
 } from "../shared/results"
@@ -340,6 +345,30 @@ function letterSpacingValue(
   }
 }
 
+// Figma default values are deliberately absent: an absent key means the field is
+// omitted at its default (see the TextDecoration/TextAlign*/TextAutoResize unions).
+const TEXT_DECORATIONS: Record<string, TextDecoration> = {
+  UNDERLINE: "underline",
+  STRIKETHROUGH: "strikethrough",
+}
+
+const TEXT_ALIGN_HORIZONTALS: Record<string, TextAlignHorizontal> = {
+  CENTER: "center",
+  RIGHT: "right",
+  JUSTIFIED: "justified",
+}
+
+const TEXT_ALIGN_VERTICALS: Record<string, TextAlignVertical> = {
+  CENTER: "center",
+  BOTTOM: "bottom",
+}
+
+const TEXT_AUTO_RESIZES: Record<string, TextAutoResize> = {
+  WIDTH_AND_HEIGHT: "widthAndHeight",
+  HEIGHT: "height",
+  TRUNCATE: "truncate",
+}
+
 export function textStyle(source: UnknownRecord): TextStyle {
   const font = record(hostGet(source, "fontName"))
   const style: TextStyle = {
@@ -355,12 +384,18 @@ export function textStyle(source: UnknownRecord): TextStyle {
   if (lineHeight !== undefined) style.lineHeight = lineHeight
   const letterSpacing = letterSpacingValue(source)
   if (letterSpacing !== undefined) style.letterSpacing = letterSpacing
+  const fontWeight = optionalFinite(hostGet(source, "fontWeight"))
+  if (fontWeight !== undefined) style.fontWeight = fontWeight
+  const decoration = TEXT_DECORATIONS[hostString(source, "textDecoration")]
+  if (decoration !== undefined) style.textDecoration = decoration
   return style
 }
 
 const TEXT_SEGMENT_FIELDS = [
   "fontName",
   "fontSize",
+  "fontWeight",
+  "textDecoration",
   "lineHeight",
   "letterSpacing",
   "fills",
@@ -690,11 +725,20 @@ function nodeData(
   const blend = blendMode(node)
   if (blend !== undefined) full.blendMode = blend
   if (node.type === "TEXT") {
-    full.text = {
-      characters: string(node.characters),
+    const text: TextValue = {
+      characters: string(hostGet(node, "characters")),
       defaultStyle: textStyle(node),
       styledRanges: getStyledRanges(node),
     }
+    const alignHorizontal =
+      TEXT_ALIGN_HORIZONTALS[hostString(node, "textAlignHorizontal")]
+    if (alignHorizontal !== undefined) text.alignHorizontal = alignHorizontal
+    const alignVertical =
+      TEXT_ALIGN_VERTICALS[hostString(node, "textAlignVertical")]
+    if (alignVertical !== undefined) text.alignVertical = alignVertical
+    const autoResize = TEXT_AUTO_RESIZES[hostString(node, "textAutoResize")]
+    if (autoResize !== undefined) text.autoResize = autoResize
+    full.text = text
   }
   return full
 }

@@ -1633,15 +1633,18 @@ fn full_node_fixture() -> Value {
                 "characters": "Card", "defaultStyle": {
                     "fontFamily": "Inter", "fontStyle": "Regular", "fontSize": 16.0,
                     "lineHeight": {"unit": "pixels", "value": 24.0},
-                    "letterSpacing": {"unit": "pixels", "value": 0.0}, "paints": []
+                    "letterSpacing": {"unit": "pixels", "value": 0.0},
+                    "fontWeight": 400.0, "paints": []
                 },
                 "styledRanges": [{
                     "start": 0, "end": 4, "style": {
                         "fontFamily": "Inter", "fontStyle": "Bold", "fontSize": 16.0,
                         "lineHeight": {"unit": "pixels", "value": 24.0},
-                        "letterSpacing": {"unit": "pixels", "value": 0.0}, "paints": []
+                        "letterSpacing": {"unit": "pixels", "value": 0.0},
+                        "fontWeight": 400.0, "paints": []
                     }
-                }]
+                }],
+                "alignHorizontal": "center", "autoResize": "height"
             },
             "paints": [{
                 "type": "solid",

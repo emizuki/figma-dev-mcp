@@ -1375,6 +1375,49 @@ pub enum LetterSpacingValue {
     Percent(f64),
 }
 
+/// `None` is the Figma default for textDecoration and is never emitted; it stays in
+/// the enum so the schema describes the full domain (absence means "default").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum TextDecoration {
+    None,
+    Underline,
+    Strikethrough,
+}
+
+/// `Left` is the Figma default for textAlignHorizontal and is never emitted; it
+/// stays in the enum so the schema describes the full domain (absence means
+/// "default").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum TextAlignHorizontal {
+    Left,
+    Center,
+    Right,
+    Justified,
+}
+
+/// `Top` is the Figma default for textAlignVertical and is never emitted; it stays
+/// in the enum so the schema describes the full domain (absence means "default").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum TextAlignVertical {
+    Top,
+    Center,
+    Bottom,
+}
+
+/// `None` is the Figma default for textAutoResize and is never emitted; it stays in
+/// the enum so the schema describes the full domain (absence means "default").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum TextAutoResize {
+    None,
+    WidthAndHeight,
+    Height,
+    Truncate,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TextStyle {
@@ -1386,6 +1429,10 @@ pub struct TextStyle {
     pub line_height: Option<LineHeightValue>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub letter_spacing: Option<LetterSpacingValue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_weight: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_decoration: Option<TextDecoration>,
     pub paints: ReturnedList<PaintValue>,
 }
 
@@ -1403,6 +1450,12 @@ pub struct TextValue {
     pub characters: String,
     pub default_style: TextStyle,
     pub styled_ranges: ReturnedList<StyledTextRange>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub align_horizontal: Option<TextAlignHorizontal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub align_vertical: Option<TextAlignVertical>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_resize: Option<TextAutoResize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -2622,7 +2675,7 @@ pub struct BoundedItems<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::BlendMode;
+    use super::{BlendMode, TextAutoResize, TextDecoration, TextValue};
     use serde_json::json;
 
     #[test]
@@ -2634,6 +2687,35 @@ mod tests {
         assert!(
             serde_json::from_value::<BlendMode>(json!("plusLighter")).is_err(),
             "blend mode must stay closed"
+        );
+    }
+
+    #[test]
+    fn text_properties_round_trip_and_stay_closed() {
+        let value = json!({
+            "characters": "Save",
+            "defaultStyle": {
+                "fontFamily": "Inter",
+                "fontStyle": "Light",
+                "fontWeight": 300.0,
+                "textDecoration": "underline",
+                "paints": []
+            },
+            "styledRanges": [],
+            "alignHorizontal": "justified",
+            "alignVertical": "center",
+            "autoResize": "widthAndHeight"
+        });
+        let parsed: TextValue = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(parsed).unwrap(), value);
+
+        assert!(
+            serde_json::from_value::<TextAutoResize>(json!("width")).is_err(),
+            "auto resize must stay closed"
+        );
+        assert!(
+            serde_json::from_value::<TextDecoration>(json!("overline")).is_err(),
+            "text decoration must stay closed"
         );
     }
 }

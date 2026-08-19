@@ -1713,6 +1713,44 @@
         ],
         "type": "object"
       },
+      "TextAlignHorizontal": {
+        "description": "`Left` is the Figma default for textAlignHorizontal and is never emitted; it\nstays in the enum so the schema describes the full domain (absence means\n\"default\").",
+        "enum": [
+          "left",
+          "center",
+          "right",
+          "justified"
+        ],
+        "type": "string"
+      },
+      "TextAlignVertical": {
+        "description": "`Top` is the Figma default for textAlignVertical and is never emitted; it stays\nin the enum so the schema describes the full domain (absence means \"default\").",
+        "enum": [
+          "top",
+          "center",
+          "bottom"
+        ],
+        "type": "string"
+      },
+      "TextAutoResize": {
+        "description": "`None` is the Figma default for textAutoResize and is never emitted; it stays in\nthe enum so the schema describes the full domain (absence means \"default\").",
+        "enum": [
+          "none",
+          "widthAndHeight",
+          "height",
+          "truncate"
+        ],
+        "type": "string"
+      },
+      "TextDecoration": {
+        "description": "`None` is the Figma default for textDecoration and is never emitted; it stays in\nthe enum so the schema describes the full domain (absence means \"default\").",
+        "enum": [
+          "none",
+          "underline",
+          "strikethrough"
+        ],
+        "type": "string"
+      },
       "TextStyle": {
         "additionalProperties": false,
         "properties": {
@@ -1728,6 +1766,13 @@
           },
           "fontStyle": {
             "type": "string"
+          },
+          "fontWeight": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
           },
           "letterSpacing": {
             "anyOf": [
@@ -1751,6 +1796,16 @@
           },
           "paints": {
             "$ref": "#/$defs/ReturnedList_of_PaintValue"
+          },
+          "textDecoration": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TextDecoration"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -1781,6 +1836,36 @@
       "TextValue": {
         "additionalProperties": false,
         "properties": {
+          "alignHorizontal": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TextAlignHorizontal"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "alignVertical": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TextAlignVertical"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "autoResize": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TextAutoResize"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "characters": {
             "type": "string"
           },
@@ -5416,6 +5501,44 @@
         ],
         "type": "object"
       },
+      "TextAlignHorizontal": {
+        "description": "`Left` is the Figma default for textAlignHorizontal and is never emitted; it\nstays in the enum so the schema describes the full domain (absence means\n\"default\").",
+        "enum": [
+          "left",
+          "center",
+          "right",
+          "justified"
+        ],
+        "type": "string"
+      },
+      "TextAlignVertical": {
+        "description": "`Top` is the Figma default for textAlignVertical and is never emitted; it stays\nin the enum so the schema describes the full domain (absence means \"default\").",
+        "enum": [
+          "top",
+          "center",
+          "bottom"
+        ],
+        "type": "string"
+      },
+      "TextAutoResize": {
+        "description": "`None` is the Figma default for textAutoResize and is never emitted; it stays in\nthe enum so the schema describes the full domain (absence means \"default\").",
+        "enum": [
+          "none",
+          "widthAndHeight",
+          "height",
+          "truncate"
+        ],
+        "type": "string"
+      },
+      "TextDecoration": {
+        "description": "`None` is the Figma default for textDecoration and is never emitted; it stays in\nthe enum so the schema describes the full domain (absence means \"default\").",
+        "enum": [
+          "none",
+          "underline",
+          "strikethrough"
+        ],
+        "type": "string"
+      },
       "TextStyle": {
         "additionalProperties": false,
         "properties": {
@@ -5431,6 +5554,13 @@
           },
           "fontStyle": {
             "type": "string"
+          },
+          "fontWeight": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
           },
           "letterSpacing": {
             "anyOf": [
@@ -5454,6 +5584,16 @@
           },
           "paints": {
             "$ref": "#/$defs/ReturnedList_of_PaintValue"
+          },
+          "textDecoration": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TextDecoration"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -5484,6 +5624,36 @@
       "TextValue": {
         "additionalProperties": false,
         "properties": {
+          "alignHorizontal": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TextAlignHorizontal"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "alignVertical": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TextAlignVertical"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "autoResize": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TextAutoResize"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "characters": {
             "type": "string"
           },
@@ -8267,6 +8437,44 @@
         ],
         "type": "object"
       },
+      "TextAlignHorizontal": {
+        "description": "`Left` is the Figma default for textAlignHorizontal and is never emitted; it\nstays in the enum so the schema describes the full domain (absence means\n\"default\").",
+        "enum": [
+          "left",
+          "center",
+          "right",
+          "justified"
+        ],
+        "type": "string"
+      },
+      "TextAlignVertical": {
+        "description": "`Top` is the Figma default for textAlignVertical and is never emitted; it stays\nin the enum so the schema describes the full domain (absence means \"default\").",
+        "enum": [
+          "top",
+          "center",
+          "bottom"
+        ],
+        "type": "string"
+      },
+      "TextAutoResize": {
+        "description": "`None` is the Figma default for textAutoResize and is never emitted; it stays in\nthe enum so the schema describes the full domain (absence means \"default\").",
+        "enum": [
+          "none",
+          "widthAndHeight",
+          "height",
+          "truncate"
+        ],
+        "type": "string"
+      },
+      "TextDecoration": {
+        "description": "`None` is the Figma default for textDecoration and is never emitted; it stays in\nthe enum so the schema describes the full domain (absence means \"default\").",
+        "enum": [
+          "none",
+          "underline",
+          "strikethrough"
+        ],
+        "type": "string"
+      },
       "TextStyle": {
         "additionalProperties": false,
         "properties": {
@@ -8282,6 +8490,13 @@
           },
           "fontStyle": {
             "type": "string"
+          },
+          "fontWeight": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
           },
           "letterSpacing": {
             "anyOf": [
@@ -8305,6 +8520,16 @@
           },
           "paints": {
             "$ref": "#/$defs/ReturnedList_of_PaintValue"
+          },
+          "textDecoration": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TextDecoration"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -8335,6 +8560,36 @@
       "TextValue": {
         "additionalProperties": false,
         "properties": {
+          "alignHorizontal": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TextAlignHorizontal"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "alignVertical": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TextAlignVertical"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "autoResize": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TextAutoResize"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "characters": {
             "type": "string"
           },
@@ -9188,6 +9443,44 @@
         ],
         "type": "object"
       },
+      "TextAlignHorizontal": {
+        "description": "`Left` is the Figma default for textAlignHorizontal and is never emitted; it\nstays in the enum so the schema describes the full domain (absence means\n\"default\").",
+        "enum": [
+          "left",
+          "center",
+          "right",
+          "justified"
+        ],
+        "type": "string"
+      },
+      "TextAlignVertical": {
+        "description": "`Top` is the Figma default for textAlignVertical and is never emitted; it stays\nin the enum so the schema describes the full domain (absence means \"default\").",
+        "enum": [
+          "top",
+          "center",
+          "bottom"
+        ],
+        "type": "string"
+      },
+      "TextAutoResize": {
+        "description": "`None` is the Figma default for textAutoResize and is never emitted; it stays in\nthe enum so the schema describes the full domain (absence means \"default\").",
+        "enum": [
+          "none",
+          "widthAndHeight",
+          "height",
+          "truncate"
+        ],
+        "type": "string"
+      },
+      "TextDecoration": {
+        "description": "`None` is the Figma default for textDecoration and is never emitted; it stays in\nthe enum so the schema describes the full domain (absence means \"default\").",
+        "enum": [
+          "none",
+          "underline",
+          "strikethrough"
+        ],
+        "type": "string"
+      },
       "TextStyle": {
         "additionalProperties": false,
         "properties": {
@@ -9203,6 +9496,13 @@
           },
           "fontStyle": {
             "type": "string"
+          },
+          "fontWeight": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
           },
           "letterSpacing": {
             "anyOf": [
@@ -9226,6 +9526,16 @@
           },
           "paints": {
             "$ref": "#/$defs/ReturnedList_of_PaintValue"
+          },
+          "textDecoration": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TextDecoration"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -9238,6 +9548,36 @@
       "TextValue": {
         "additionalProperties": false,
         "properties": {
+          "alignHorizontal": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TextAlignHorizontal"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "alignVertical": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TextAlignVertical"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "autoResize": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TextAutoResize"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "characters": {
             "type": "string"
           },

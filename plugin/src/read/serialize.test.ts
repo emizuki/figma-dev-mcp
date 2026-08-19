@@ -280,6 +280,170 @@ describe("bounded node serializer", () => {
     })
   })
 
+  test("text style carries font weight and decoration on default style and ranges", () => {
+    const node = base({
+      type: "TEXT",
+      characters: "Save",
+      fontName: { family: "Inter", style: "Light" },
+      fontSize: 12,
+      fontWeight: 300,
+      textDecoration: "UNDERLINE",
+      lineHeight: { unit: "PIXELS", value: 18 },
+      letterSpacing: { unit: "PERCENT", value: 0 },
+      fills: [],
+      getStyledTextSegments: () => [
+        {
+          start: 0,
+          end: 4,
+          fontName: { family: "Inter", style: "Bold" },
+          fontSize: 12,
+          fontWeight: 700,
+          textDecoration: "STRIKETHROUGH",
+          lineHeight: { unit: "PIXELS", value: 18 },
+          letterSpacing: { unit: "PERCENT", value: 0 },
+          fills: [],
+        },
+      ],
+    })
+
+    const text = (
+      serializeNodeForest([node], {
+        detail: "full",
+        depth: 0,
+        dedupeComponents: false,
+      }).nodes[0]?.data as { text?: Record<string, unknown> }
+    ).text
+
+    expect(text?.defaultStyle).toMatchObject({
+      fontWeight: 300,
+      textDecoration: "underline",
+    })
+    expect(
+      (text?.styledRanges as { style: Record<string, unknown> }[])[0]?.style,
+    ).toMatchObject({ fontWeight: 700, textDecoration: "strikethrough" })
+  })
+
+  test("mixed font weight and NONE decoration are omitted", () => {
+    const node = base({
+      type: "TEXT",
+      characters: "Save",
+      fontName: { family: "Inter", style: "Regular" },
+      fontWeight: Symbol("figma.mixed"),
+      textDecoration: "NONE",
+      fills: [],
+    })
+
+    const style = (
+      serializeNodeForest([node], {
+        detail: "full",
+        depth: 0,
+        dedupeComponents: false,
+      }).nodes[0]?.data as { text?: { defaultStyle: Record<string, unknown> } }
+    ).text?.defaultStyle
+
+    expect(Object.hasOwn(style ?? {}, "fontWeight")).toBe(false)
+    expect(Object.hasOwn(style ?? {}, "textDecoration")).toBe(false)
+  })
+
+  test("text alignment and auto-resize live on the text value, not on ranges", () => {
+    const node = base({
+      type: "TEXT",
+      characters: "Save",
+      fontName: { family: "Inter", style: "Regular" },
+      fills: [],
+      textAlignHorizontal: "CENTER",
+      textAlignVertical: "BOTTOM",
+      textAutoResize: "WIDTH_AND_HEIGHT",
+      getStyledTextSegments: () => [
+        {
+          start: 0,
+          end: 4,
+          fontName: { family: "Inter", style: "Regular" },
+          fills: [],
+        },
+      ],
+    })
+
+    const text = (
+      serializeNodeForest([node], {
+        detail: "full",
+        depth: 0,
+        dedupeComponents: false,
+      }).nodes[0]?.data as { text?: Record<string, unknown> }
+    ).text
+
+    expect(text).toMatchObject({
+      alignHorizontal: "center",
+      alignVertical: "bottom",
+      autoResize: "widthAndHeight",
+    })
+    const range = (
+      text?.styledRanges as { style: Record<string, unknown> }[]
+    )[0]
+    expect(Object.hasOwn(range?.style ?? {}, "alignHorizontal")).toBe(false)
+    expect(Object.hasOwn(range?.style ?? {}, "alignVertical")).toBe(false)
+    expect(Object.hasOwn(range?.style ?? {}, "autoResize")).toBe(false)
+  })
+
+  test("default text alignment and auto-resize are omitted", () => {
+    const node = base({
+      type: "TEXT",
+      characters: "Save",
+      fontName: { family: "Inter", style: "Regular" },
+      fills: [],
+      textAlignHorizontal: "LEFT",
+      textAlignVertical: "TOP",
+      textAutoResize: "NONE",
+    })
+
+    const text = (
+      serializeNodeForest([node], {
+        detail: "full",
+        depth: 0,
+        dedupeComponents: false,
+      }).nodes[0]?.data as { text?: Record<string, unknown> }
+    ).text
+
+    expect(Object.hasOwn(text ?? {}, "alignHorizontal")).toBe(false)
+    expect(Object.hasOwn(text ?? {}, "alignVertical")).toBe(false)
+    expect(Object.hasOwn(text ?? {}, "autoResize")).toBe(false)
+  })
+
+  test("text additions survive the wire validator", () => {
+    const node = base({
+      type: "TEXT",
+      characters: "Save",
+      fontName: { family: "Inter", style: "Light" },
+      fontWeight: 300,
+      textDecoration: "UNDERLINE",
+      fills: [],
+      textAlignHorizontal: "JUSTIFIED",
+      textAlignVertical: "CENTER",
+      textAutoResize: "HEIGHT",
+    })
+
+    const serialized = serializeNodeForest([node], {
+      detail: "full",
+      depth: 0,
+      dedupeComponents: false,
+    })
+
+    expect(
+      parseReadResult({
+        operation: "get_nodes",
+        result: {
+          detail: "full",
+          items: [{ status: "success", value: serialized.nodes[0] }],
+          truncated: false,
+          observation: {
+            startedAt: "2026-08-19T00:00:00.000Z",
+            completedAt: "2026-08-19T00:00:01.000Z",
+          },
+        },
+      }),
+    ).toBeDefined()
+  })
+
   test("compact auto-layout carries alignment, wrap, and counter-axis spacing", () => {
     const node = base({
       layoutMode: "HORIZONTAL",
