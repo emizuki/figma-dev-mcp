@@ -58,6 +58,7 @@ export interface SerializeNodeForestOptions {
   readonly dedupeComponents: boolean
   readonly includeHidden?: boolean
   readonly instanceIdentities?: ReadonlyMap<string, InstanceValue>
+  readonly styleNames?: ReadonlyMap<string, string>
   readonly signal?: CancellationSignal
   readonly progress?: ProgressReporter
   readonly limits?: Partial<SerializerLimits>
@@ -75,6 +76,7 @@ interface SerializerContext {
   readonly dedupeComponents: boolean
   readonly includeHidden: boolean | undefined
   readonly instanceIdentities: ReadonlyMap<string, InstanceValue> | undefined
+  readonly styleNames: ReadonlyMap<string, string> | undefined
   readonly signal: CancellationSignal | undefined
   readonly progress: ProgressReporter | undefined
   readonly limits: SerializerLimits
@@ -519,18 +521,34 @@ function sizing(value: unknown): "fixed" | "hug" | "fill" {
   }
 }
 
-function styleReferences(node: UnknownRecord): StyleReference[] {
+const STYLE_ID_FIELDS = [
+  ["fillStyleId", "paint"],
+  ["strokeStyleId", "stroke"],
+  ["textStyleId", "text"],
+  ["effectStyleId", "effect"],
+  ["gridStyleId", "grid"],
+] as const
+
+function styleId(node: UnknownRecord, field: string): string | undefined {
+  const id = hostGet(node, field)
+  if (typeof id !== "string" || id.length === 0 || id === "mixed")
+    return undefined
+  return id
+}
+
+function styleReferences(
+  node: UnknownRecord,
+  names: ReadonlyMap<string, string> | undefined,
+): StyleReference[] {
   const refs: StyleReference[] = []
-  for (const [field, kind] of [
-    ["fillStyleId", "paint"],
-    ["textStyleId", "text"],
-    ["effectStyleId", "effect"],
-    ["gridStyleId", "grid"],
-  ] as const) {
-    const id = node[field]
-    if (typeof id === "string" && id.length > 0 && id !== "mixed") {
-      refs.push({ id, kind })
-    }
+  for (const [field, kind] of STYLE_ID_FIELDS) {
+    const id = styleId(node, field)
+    if (id === undefined) continue
+    const reference: StyleReference = { id, kind }
+    const name = names?.get(id)
+    // Never guess and never emit an empty name: absence means "not resolved".
+    if (name !== undefined && name.length > 0) reference.name = clampText(name)
+    refs.push(reference)
   }
   return refs
 }
@@ -680,11 +698,12 @@ function nodeData(
   node: UnknownRecord,
   detail: DetailLevel,
   identities?: ReadonlyMap<string, InstanceValue>,
+  styleNames?: ReadonlyMap<string, string>,
 ): NodeData {
   if (detail === "minimal") return {}
   const compact: CompactNodeData = {
     geometry: geometry(node),
-    styleReferences: styleReferences(node),
+    styleReferences: styleReferences(node, styleNames),
     variableReferences: variableReferences(node),
   }
   const layout = autoLayout(node)
@@ -873,7 +892,12 @@ function serializeNode(
   const children = visibleChildren(node, context.includeHidden)
   const result: DesignNode<NodeData> = {
     summary: summarize(node, children),
-    data: nodeData(node, context.detail, context.instanceIdentities),
+    data: nodeData(
+      node,
+      context.detail,
+      context.instanceIdentities,
+      context.styleNames,
+    ),
     children: [],
     childrenTruncated: false,
   }
@@ -965,6 +989,7 @@ function createWalkContext(options: ForestWalkOptions): SerializerContext {
     dedupeComponents: false,
     includeHidden: options.includeHidden,
     instanceIdentities: undefined,
+    styleNames: undefined,
     signal: options.signal,
     progress: options.progress ?? progressFor(options.signal),
     emittedComponents: new Set<string>(),
@@ -1097,6 +1122,60 @@ export async function collectInstanceIdentities(
   return identities
 }
 
+export type StyleNameLookup = (id: string) => Promise<unknown>
+
+export const DEFAULT_STYLE_NAME_BUDGET_MS = 2_000
+export const MAX_STYLE_NAME_LOOKUPS = 200
+
+// One async call per unique style id, never one per node: a measured 233-node tree
+// made 15 style references across only 5 distinct ids.
+export async function collectStyleNames(
+  roots: readonly unknown[],
+  lookup: StyleNameLookup | undefined,
+  signal?: CancellationSignal,
+  depth: number = Number.POSITIVE_INFINITY,
+  budgetMs: number = DEFAULT_STYLE_NAME_BUDGET_MS,
+): Promise<Map<string, string>> {
+  const names = new Map<string, string>()
+  if (lookup === undefined) return names
+  const pending: string[] = []
+  const seen = new Set<string>()
+  const visit = (raw: unknown, level: number): void => {
+    signal?.throwIfAborted()
+    const node = record(raw)
+    for (const [field] of STYLE_ID_FIELDS) {
+      const id = styleId(node, field)
+      if (id === undefined || seen.has(id)) continue
+      seen.add(id)
+      if (pending.length < MAX_STYLE_NAME_LOOKUPS) pending.push(id)
+    }
+    if (level >= depth) return
+    const children = array(hostGet(node, "children"))
+    for (let index = 0; index < children.length; index += 1) {
+      throwIfAbortedAtBatch(signal, index, CANCEL_CHECK_BATCH)
+      visit(children[index], level + 1)
+    }
+  }
+  for (const root of roots) visit(root, 0)
+  const started = Date.now()
+  for (let index = 0; index < pending.length; index += 1) {
+    throwIfAbortedAtBatch(signal, index, CANCEL_CHECK_BATCH)
+    signal?.throwIfAborted()
+    // Running out of budget leaves the remaining names absent; the forest is
+    // never marked truncated over a missing label.
+    if (Date.now() - started >= budgetMs) break
+    const id = pending[index] as string
+    try {
+      const style = record(await settleOrSkip(lookup(id)))
+      const name = string(hostGet(style, "name"))
+      if (name.length > 0) names.set(id, name)
+    } catch {
+      // A missing or unreachable remote style must not fail the whole forest.
+    }
+  }
+  return names
+}
+
 async function resolveInstanceIdentity(
   node: UnknownRecord,
 ): Promise<InstanceValue | undefined> {
@@ -1136,6 +1215,7 @@ export function serializeNodeForest(
     dedupeComponents: options.dedupeComponents,
     includeHidden: options.includeHidden,
     instanceIdentities: options.instanceIdentities,
+    styleNames: options.styleNames,
     signal: options.signal,
     progress: options.progress ?? progressFor(options.signal),
     emittedComponents: new Set<string>(),

@@ -14,7 +14,7 @@ use figma_dev_mcp_protocol::{
         LineHeightValue, MinimalNodeDetails, NodeForest, NodeId, NodeTypeList, NodeTypeName,
         NodesSelector, PageId, PagesSelector, PaintValue, RasterScale, ReactionAction, RequestId,
         ReturnedList, ScreenshotAsset, SearchNodesInput, Selector, StrokeAlign, StrokeValue,
-        TextStyle,
+        StyleKind, StyleReference, TextStyle,
     },
     error::{ErrorCode, ItemError, PluginFailure, ToolError},
     limits::{
@@ -1668,7 +1668,10 @@ fn full_node_fixture() -> Value {
             "instance": {
                 "componentId": "C:1", "componentSetId": "CS:1", "properties": []
             },
-            "styleReferences": [{"id": "S:1", "kind": "paint"}],
+            "styleReferences": [
+                {"id": "S:1", "kind": "paint", "name": "Primary/500"},
+                {"id": "S:2", "kind": "stroke"}
+            ],
             "variableReferences": [{"id": "V:1", "name": "surface/background"}]
         },
         "children": [], "childrenTruncated": false
@@ -2199,5 +2202,28 @@ fn corner_radius_round_trips_and_stays_closed() {
         )
         .is_err(),
         "corner radius must reject unknown fields"
+    );
+}
+
+#[test]
+fn style_reference_carries_optional_name_and_stroke_kind() {
+    let named = json!({"id": "S:1", "kind": "stroke", "name": "Border/Default"});
+    let parsed: StyleReference = serde_json::from_value(named.clone()).unwrap();
+    assert_eq!(serde_json::to_value(parsed).unwrap(), named);
+
+    let bare = json!({"id": "S:1", "kind": "paint"});
+    let parsed: StyleReference = serde_json::from_value(bare.clone()).unwrap();
+    assert_eq!(serde_json::to_value(parsed).unwrap(), bare);
+
+    assert!(
+        serde_json::from_value::<StyleKind>(json!("variable")).is_err(),
+        "style kind must stay closed"
+    );
+    assert!(
+        serde_json::from_value::<StyleReference>(
+            json!({"id": "S:1", "kind": "paint", "label": "x"})
+        )
+        .is_err(),
+        "style reference must stay closed"
     );
 }

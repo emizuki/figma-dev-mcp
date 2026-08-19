@@ -2021,6 +2021,7 @@
         "StyleKind": {
           "enum": [
             "paint",
+            "stroke",
             "text",
             "effect",
             "grid"
@@ -2029,12 +2030,19 @@
         },
         "StyleReference": {
           "additionalProperties": false,
+          "description": "A style applied to a node.\n\n`name` is absent when the style could not be resolved (unreachable remote\nstyle, missing id, or an exhausted resolve budget). It is never an empty\nstring and never guessed.",
           "properties": {
             "id": {
               "type": "string"
             },
             "kind": {
               "$ref": "#/$defs/StyleKind"
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [
@@ -6415,6 +6423,7 @@
         "StyleKind": {
           "enum": [
             "paint",
+            "stroke",
             "text",
             "effect",
             "grid"
@@ -6423,12 +6432,19 @@
         },
         "StyleReference": {
           "additionalProperties": false,
+          "description": "A style applied to a node.\n\n`name` is absent when the style could not be resolved (unreachable remote\nstyle, missing id, or an exhausted resolve budget). It is never an empty\nstring and never guessed.",
           "properties": {
             "id": {
               "type": "string"
             },
             "kind": {
               "$ref": "#/$defs/StyleKind"
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [
@@ -9788,6 +9804,7 @@
         "StyleKind": {
           "enum": [
             "paint",
+            "stroke",
             "text",
             "effect",
             "grid"
@@ -9796,12 +9813,19 @@
         },
         "StyleReference": {
           "additionalProperties": false,
+          "description": "A style applied to a node.\n\n`name` is absent when the style could not be resolved (unreachable remote\nstyle, missing id, or an exhausted resolve budget). It is never an empty\nstring and never guessed.",
           "properties": {
             "id": {
               "type": "string"
             },
             "kind": {
               "$ref": "#/$defs/StyleKind"
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [

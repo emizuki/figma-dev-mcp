@@ -1635,6 +1635,7 @@ impl<'de> Visitor<'de> for VariableValueVisitor {
 #[serde(rename_all = "camelCase")]
 pub enum StyleKind {
     Paint,
+    Stroke,
     Text,
     Effect,
     Grid,
@@ -1892,11 +1893,18 @@ pub struct LayoutConstraints {
     pub vertical: ConstraintAxis,
 }
 
+/// A style applied to a node.
+///
+/// `name` is absent when the style could not be resolved (unreachable remote
+/// style, missing id, or an exhausted resolve budget). It is never an empty
+/// string and never guessed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct StyleReference {
     pub id: String,
     pub kind: StyleKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

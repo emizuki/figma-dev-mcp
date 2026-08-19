@@ -208,7 +208,7 @@ export type VariableValue =
   | { kind: "color"; value: Color }
   | { kind: "alias"; value: string }
 
-export type StyleKind = "paint" | "text" | "effect" | "grid"
+export type StyleKind = "paint" | "stroke" | "text" | "effect" | "grid"
 
 export interface StyleIdentity {
   id: string
@@ -254,6 +254,7 @@ export interface LayoutConstraints {
 export interface StyleReference {
   id: string
   kind: StyleKind
+  name?: string
 }
 
 export interface VariableReference {

@@ -6,6 +6,7 @@ import { parseReadResult } from "../shared/result-validation"
 import {
   clampText,
   collectInstanceIdentities,
+  collectStyleNames,
   namedComponentProperties,
   serializeNodeForest,
   TEXT_CLAMP_LIMIT,
@@ -1219,6 +1220,124 @@ describe("instance component properties", () => {
       (children[1]?.data as { instance?: { properties: unknown } }).instance
         ?.properties,
     ).toEqual([{ name: "Label#0:1", value: { kind: "text", value: "Cancel" } }])
+  })
+})
+
+describe("style name resolution", () => {
+  const styled = (id: string, overrides: Record<string, unknown> = {}) =>
+    base({ id, fillStyleId: "S:fill", strokeStyleId: "S:stroke", ...overrides })
+
+  test("resolves one lookup per unique style id, not per node", async () => {
+    const lookups: string[] = []
+    const lookup = async (id: string) => {
+      lookups.push(id)
+      return { name: `Name/${id}` }
+    }
+    const roots = [
+      styled("1:1", {
+        children: [styled("1:2"), styled("1:3", { fillStyleId: "S:other" })],
+      }),
+    ]
+
+    const names = await collectStyleNames(roots, lookup)
+
+    expect(lookups.sort()).toEqual(["S:fill", "S:other", "S:stroke"])
+    expect(names.get("S:fill")).toBe("Name/S:fill")
+  })
+
+  test("style references carry resolved names and the stroke kind", () => {
+    const node = styled("1:1")
+
+    const result = serializeNodeForest([node], {
+      detail: "full",
+      depth: 0,
+      dedupeComponents: false,
+      styleNames: new Map([
+        ["S:fill", "Primary/500"],
+        ["S:stroke", "Border/Default"],
+      ]),
+    })
+
+    expect(result.nodes[0]?.data).toMatchObject({
+      styleReferences: [
+        { id: "S:fill", kind: "paint", name: "Primary/500" },
+        { id: "S:stroke", kind: "stroke", name: "Border/Default" },
+      ],
+    })
+  })
+
+  test("unresolved style ids omit name rather than emitting an empty string", () => {
+    const node = styled("1:1")
+
+    const refs = (
+      serializeNodeForest([node], {
+        detail: "full",
+        depth: 0,
+        dedupeComponents: false,
+        styleNames: new Map([["S:fill", ""]]),
+      }).nodes[0]?.data as { styleReferences: Record<string, unknown>[] }
+    ).styleReferences
+
+    expect(Object.hasOwn(refs[0] ?? {}, "name")).toBe(false)
+    expect(Object.hasOwn(refs[1] ?? {}, "name")).toBe(false)
+  })
+
+  test("a failing lookup drops that name and leaves the rest resolved", async () => {
+    const lookup = async (id: string) => {
+      if (id === "S:fill") throw new Error("remote style unavailable")
+      return { name: "Border/Default" }
+    }
+
+    const names = await collectStyleNames([styled("1:1")], lookup)
+
+    expect(names.has("S:fill")).toBe(false)
+    expect(names.get("S:stroke")).toBe("Border/Default")
+  })
+
+  test("an exhausted budget leaves remaining names absent without truncating", async () => {
+    const lookup = async (id: string) => ({ name: `Name/${id}` })
+
+    const names = await collectStyleNames(
+      [styled("1:1")],
+      lookup,
+      undefined,
+      Number.POSITIVE_INFINITY,
+      0,
+    )
+
+    expect(names.size).toBe(0)
+
+    const result = serializeNodeForest([styled("1:1")], {
+      detail: "full",
+      depth: 0,
+      dedupeComponents: false,
+      styleNames: names,
+    })
+    expect(result.truncated).toBe(false)
+  })
+
+  test("style names survive the wire validator", () => {
+    const serialized = serializeNodeForest([styled("1:1")], {
+      detail: "full",
+      depth: 0,
+      dedupeComponents: false,
+      styleNames: new Map([["S:stroke", "Border/Default"]]),
+    })
+
+    expect(
+      parseReadResult({
+        operation: "get_nodes",
+        result: {
+          detail: "full",
+          items: [{ status: "success", value: serialized.nodes[0] }],
+          truncated: false,
+          observation: {
+            startedAt: "2026-08-19T00:00:00.000Z",
+            completedAt: "2026-08-19T00:00:01.000Z",
+          },
+        },
+      }),
+    ).toBeDefined()
   })
 })
 

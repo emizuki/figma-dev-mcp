@@ -948,15 +948,18 @@ function parseConstraints(value: unknown, label: string): LayoutConstraints {
 }
 
 function parseStyleReference(value: unknown, label: string): StyleReference {
-  const object = exact(value, label, ["id", "kind"])
-  return {
+  const object = exact(value, label, ["id", "kind"], ["name"])
+  const result: StyleReference = {
     id: string(object.id, `${label}.id`),
     kind: oneOf<StyleKind>(
       object.kind,
-      ["paint", "text", "effect", "grid"],
+      ["paint", "stroke", "text", "effect", "grid"],
       `${label}.kind`,
     ),
   }
+  if (Object.hasOwn(object, "name"))
+    result.name = displayText(object.name, `${label}.name`)
+  return result
 }
 
 function parseVariableReference(

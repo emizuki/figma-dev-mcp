@@ -23,6 +23,7 @@ import {
 } from "./common"
 import {
   collectInstanceIdentities,
+  collectStyleNames,
   serializeNodeForest,
   type SerializeNodeForestOptions,
 } from "./serialize"
@@ -113,23 +114,40 @@ async function loadDocumentPages(
 
 async function serializePreparedForest(
   roots: readonly unknown[],
-  options: Omit<SerializeNodeForestOptions, "signal" | "instanceIdentities">,
+  options: Omit<
+    SerializeNodeForestOptions,
+    "signal" | "instanceIdentities" | "styleNames"
+  >,
   signal?: CancellationSignal,
 ) {
   await loadDocumentPages(roots, signal)
   if (options.detail === "minimal") {
     return serializeNodeForest(roots, serializeOptions(options, signal))
   }
+  const instanceIdentities = await collectInstanceIdentities(
+    roots,
+    signal,
+    options.depth,
+  )
+  // Style names only matter at `full`; resolving them at `compact` would spend
+  // async lookups on a level that is not allowed to carry them.
+  const lookup = figma.getStyleByIdAsync
+  const styleNames =
+    options.detail === "full" && lookup !== undefined
+      ? await collectStyleNames(
+          roots,
+          (id) => lookup.call(figma, id),
+          signal,
+          options.depth,
+        )
+      : undefined
   return serializeNodeForest(
     roots,
     serializeOptions(
       {
         ...options,
-        instanceIdentities: await collectInstanceIdentities(
-          roots,
-          signal,
-          options.depth,
-        ),
+        instanceIdentities,
+        ...(styleNames === undefined ? {} : { styleNames }),
       },
       signal,
     ),
