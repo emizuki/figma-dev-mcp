@@ -1080,6 +1080,81 @@ describe("bounded node serializer", () => {
     ).toBe(true)
     expect(serializeFrames.at(-1)?.completed).toBe(2)
   })
+
+  test("a throwing getter on any content property leaves the node serializable", () => {
+    const sites = [
+      "absoluteTransform",
+      "absoluteBoundingBox",
+      "rotation",
+      "opacity",
+      "boundVariables",
+      "effects",
+    ] as const
+
+    for (const site of sites) {
+      const node = base({})
+      Object.defineProperty(node, site, {
+        get() {
+          throw new Error("write-only under dynamic-page")
+        },
+        enumerable: true,
+      })
+
+      const result = serializeNodeForest([node], {
+        detail: "full",
+        depth: 0,
+        dedupeComponents: false,
+      })
+
+      expect(result.nodes[0]?.summary.id).toBe("1:1")
+      expect(result.nodes[0]?.data).toBeDefined()
+      expect(result.truncated).toBe(false)
+    }
+  })
+
+  test("a throwing characters getter leaves a compact TEXT node serializable", () => {
+    const node = base({ type: "TEXT" })
+    Object.defineProperty(node, "characters", {
+      get() {
+        throw new Error("write-only under dynamic-page")
+      },
+      enumerable: true,
+    })
+
+    const data = serializeNodeForest([node], {
+      detail: "compact",
+      depth: 0,
+      dedupeComponents: false,
+    }).nodes[0]?.data as { text?: { characterCount: number; preview: string } }
+
+    expect(data.text).toEqual({ characterCount: 0, preview: "" })
+  })
+
+  test("a throwing getStyledTextSegments leaves a full TEXT node serializable", () => {
+    const node = base({
+      type: "TEXT",
+      characters: "Save",
+      fontName: { family: "Inter", style: "Regular" },
+      fills: [],
+    })
+    Object.defineProperty(node, "getStyledTextSegments", {
+      get() {
+        throw new Error("write-only under dynamic-page")
+      },
+      enumerable: true,
+    })
+
+    const data = serializeNodeForest([node], {
+      detail: "full",
+      depth: 0,
+      dedupeComponents: false,
+    }).nodes[0]?.data as {
+      text?: { characters: string; styledRanges: unknown[] }
+    }
+
+    expect(data.text?.characters).toBe("Save")
+    expect(data.text?.styledRanges).toEqual([])
+  })
 })
 
 describe("instance component properties", () => {

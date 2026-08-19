@@ -117,6 +117,12 @@ function own(value: UnknownRecord, key: string): boolean {
   return Object.hasOwn(value, key)
 }
 
+// Under `documentAccess: dynamic-page` some node properties are write-only and
+// throw on read. Every property describing a node's *content* is read through
+// here, so one hostile getter costs that field and not the whole node.
+// Identity and hierarchy — id, name, type, visible, parent, children — are read
+// directly on purpose: if those throw there is no node left to serialize, and
+// swallowing the error would turn a crash into silent empty data.
 function hostGet(value: UnknownRecord, key: string): unknown {
   try {
     return value[key]
@@ -410,7 +416,7 @@ const TEXT_SEGMENT_FIELDS = [
 ] as const
 
 function getStyledRanges(node: UnknownRecord) {
-  const readSegments = node.getStyledTextSegments
+  const readSegments = hostGet(node, "getStyledTextSegments")
   if (typeof readSegments !== "function") return []
   try {
     return array(readSegments.call(node, [...TEXT_SEGMENT_FIELDS])).map(
@@ -432,13 +438,13 @@ function getStyledRanges(node: UnknownRecord) {
 }
 
 function geometry(node: UnknownRecord) {
-  const transform = array(node.absoluteTransform)
+  const transform = array(hostGet(node, "absoluteTransform"))
   const row0 = array(transform[0])
   const row1 = array(transform[1])
-  const bounds = record(node.absoluteBoundingBox)
+  const bounds = record(hostGet(node, "absoluteBoundingBox"))
   const result = {
-    rotation: finite(node.rotation),
-    opacity: finite(node.opacity, 1),
+    rotation: finite(hostGet(node, "rotation")),
+    opacity: finite(hostGet(node, "opacity"), 1),
     transform: {
       m00: finite(row0[0], 1),
       m01: finite(row0[1]),
@@ -565,7 +571,7 @@ function styleReferences(
 }
 
 function variableReferences(node: UnknownRecord): VariableReference[] {
-  const values = record(node.boundVariables)
+  const values = record(hostGet(node, "boundVariables"))
   const seen = new Set<string>()
   const refs: VariableReference[] = []
   const visit = (value: unknown): void => {
@@ -726,7 +732,7 @@ function nodeData(
   const instance = instanceValue(node, identities)
   if (instance !== undefined) compact.instance = instance
   if (node.type === "TEXT") {
-    const characters = string(node.characters)
+    const characters = string(hostGet(node, "characters"))
     compact.text = {
       characterCount: characters.length,
       preview: clampText(characters),
@@ -737,7 +743,7 @@ function nodeData(
     styleReferences: compact.styleReferences,
     variableReferences: compact.variableReferences,
     paints: paints(hostGet(node, "fills")),
-    effects: effects(node.effects),
+    effects: effects(hostGet(node, "effects")),
   }
   if (compact.geometry !== undefined) full.geometry = compact.geometry
   if (compact.autoLayout !== undefined) full.autoLayout = compact.autoLayout
@@ -784,7 +790,7 @@ function visibleChildren(
 
 function summarize(node: UnknownRecord, children: readonly unknown[]) {
   const parent = record(node.parent)
-  const bounds = record(node.absoluteBoundingBox)
+  const bounds = record(hostGet(node, "absoluteBoundingBox"))
   const childIds = children
     .map((child) => string(record(child).id))
     .filter((id) => id.length > 0)
