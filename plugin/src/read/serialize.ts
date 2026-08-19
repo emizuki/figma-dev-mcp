@@ -842,11 +842,23 @@ function summarize(node: UnknownRecord, children: readonly unknown[]) {
   return result
 }
 
+// depthLimit is a local fact — this subtree stops here — and it is already
+// recorded per node in childrenTruncation. The document-level truncation must
+// name the budget that stopped the whole walk, because that is the one the
+// caller can act on: told depthLimit, a caller reduces depth and loses more.
+// Among the global budgets, first write still wins.
 function markTruncated(
   context: SerializerContext,
   truncation: Truncation,
 ): void {
-  if (context.truncation === undefined) context.truncation = truncation
+  const current = context.truncation
+  if (current === undefined) {
+    context.truncation = truncation
+    return
+  }
+  if (current.reason === "depthLimit" && truncation.reason !== "depthLimit") {
+    context.truncation = truncation
+  }
 }
 
 export function byteLength(value: unknown): number {
