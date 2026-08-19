@@ -241,8 +241,14 @@ const STROKE_ALIGNS: Record<string, StrokeAlign> = {
 
 // `paints` on FullNodeData is fills only; stroke colours live here.
 function strokes(node: UnknownRecord): StrokeValue | undefined {
-  const strokePaints = paints(hostGet(node, "strokes"))
-  if (strokePaints.length === 0) return undefined
+  const rawStrokes = hostGet(node, "strokes")
+  // Gate on the raw stroke list (or a mixed marker), not the parsed paint count: a
+  // paint type toPaint() cannot model (e.g. GRADIENT_ANGULAR) parses to nothing,
+  // but the node still has a visible border, so weight/align/dashPattern must
+  // still be reported with an empty paints array rather than the whole field
+  // disappearing.
+  if (!isMixed(rawStrokes) && array(rawStrokes).length === 0) return undefined
+  const strokePaints = paints(rawStrokes)
   const value: StrokeValue = { paints: strokePaints }
   const weight = optionalFinite(hostGet(node, "strokeWeight"))
   if (weight !== undefined) value.weight = weight
@@ -418,6 +424,9 @@ function getStyledRanges(node: UnknownRecord) {
       },
     )
   } catch {
+    // getStyledTextSegments rejects the whole call if any single field name in
+    // TEXT_SEGMENT_FIELDS is unsupported by the running Figma version, so one bad
+    // name here silently empties every styled range, not just the new field.
     return []
   }
 }
@@ -507,6 +516,8 @@ function layoutConstraints(node: UnknownRecord): LayoutConstraints | undefined {
   const horizontal = CONSTRAINT_AXES[string(hostGet(source, "horizontal"))]
   const vertical = CONSTRAINT_AXES[string(hostGet(source, "vertical"))]
   if (horizontal === undefined || vertical === undefined) return undefined
+  // Absence means Figma's default MIN/MIN; only emit when the pair differs from it.
+  if (horizontal === "min" && vertical === "min") return undefined
   return { horizontal, vertical }
 }
 
@@ -1159,7 +1170,6 @@ export async function collectStyleNames(
   for (const root of roots) visit(root, 0)
   const started = Date.now()
   for (let index = 0; index < pending.length; index += 1) {
-    throwIfAbortedAtBatch(signal, index, CANCEL_CHECK_BATCH)
     signal?.throwIfAborted()
     // Running out of budget leaves the remaining names absent; the forest is
     // never marked truncated over a missing label.

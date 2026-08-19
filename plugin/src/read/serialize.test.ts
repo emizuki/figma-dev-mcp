@@ -539,6 +539,22 @@ describe("bounded node serializer", () => {
     expect(Object.hasOwn(data, "constraints")).toBe(false)
   })
 
+  test("MIN/MIN constraints are omitted at compact and full, matching the Figma default", () => {
+    const node = base({
+      constraints: { horizontal: "MIN", vertical: "MIN" },
+    })
+
+    for (const detail of ["compact", "full"] as const) {
+      const data = serializeNodeForest([node], {
+        detail,
+        depth: 0,
+        dedupeComponents: false,
+      }).nodes[0]?.data as Record<string, unknown>
+
+      expect(Object.hasOwn(data, "constraints")).toBe(false)
+    }
+  })
+
   test("throwing layout getters leave the node serializable", () => {
     const node = base({ layoutMode: "HORIZONTAL" })
     Object.defineProperty(node, "primaryAxisAlignItems", {
@@ -658,6 +674,24 @@ describe("bounded node serializer", () => {
     }).nodes[0]?.data as Record<string, unknown>
 
     expect(Object.hasOwn(data, "strokes")).toBe(false)
+  })
+
+  test("an unmodelled stroke paint type still reports weight, align, and an empty paints array", () => {
+    const node = base({
+      strokes: [{ type: "GRADIENT_ANGULAR", gradientStops: [] }],
+      strokeWeight: 3,
+      strokeAlign: "OUTSIDE",
+    })
+
+    const strokes = (
+      serializeNodeForest([node], {
+        detail: "full",
+        depth: 0,
+        dedupeComponents: false,
+      }).nodes[0]?.data as { strokes?: Record<string, unknown> }
+    ).strokes
+
+    expect(strokes).toMatchObject({ paints: [], weight: 3, align: "outside" })
   })
 
   test("throwing stroke getters leave the node serializable", () => {
