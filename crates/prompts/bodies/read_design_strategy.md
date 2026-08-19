@@ -26,7 +26,9 @@ If you need to confirm what is selected, `get_selection` is a successful empty l
 
 - `minimal`: identity, hierarchy references, type, name, visibility, and bounds.
 - `compact`: minimal plus layout, text summary, style references, and component metadata. Use this for the first structural read.
-- `full`: compact plus resolved paint, effect, layout values, and tool-specific developer metadata. Use only on a small, explicit scope.
+- `full`: compact plus resolved paint, stroke, effect, corner, blend, and text values, plus tool-specific developer metadata. Use only on a small, explicit scope.
+
+Absent optional fields mean the Figma default, not missing data. `cornerRadius`, `strokes`, `clipsContent`, `blendMode`, `cornerSmoothing`, `wrap`, and the text alignment fields are omitted at their default values. `paints` on a node is fills only; border colour is `strokes.paints`. A `styleReferences` entry carries `name` when the style resolved; an absent `name` means it could not be resolved, not that the style is unnamed.
 
 No detail level is an unbounded recursive walk. Honor depth, node-count, and truncation metadata.
 
