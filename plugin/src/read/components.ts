@@ -19,7 +19,7 @@ import {
   throwIfAbortedAtBatch,
   type CancellationSignal,
 } from "../main/cancellation"
-import { settleOrSkip } from "./common"
+import { settleOrSkip, type FigmaReadApi } from "./common"
 import { PluginReadError, resolveDesignRoots } from "./navigation"
 import {
   byteLength,
@@ -28,6 +28,8 @@ import {
   type ForestWalkOptions,
   type SerializerLimits,
 } from "./serialize"
+
+declare const figma: FigmaReadApi
 
 type UnknownRecord = Record<string, unknown>
 
@@ -316,6 +318,50 @@ export async function getComponents(
         reason: "nodeLimit",
         visitedNodes: emission.considered,
       })
+      break
+    }
+  }
+
+  // Instances routinely reference components stored on another page or in a
+  // library, which the subtree walk cannot see. Resolve those by id, once
+  // each, reusing the same batching and wall-clock budget as the instance
+  // pass above rather than starting a fresh one.
+  const unresolved: string[] = []
+  const seen = new Set(componentOrder)
+  for (const relationship of emission.instances) {
+    const id = relationship.componentId
+    if (id.length === 0 || seen.has(id)) continue
+    seen.add(id)
+    unresolved.push(id)
+  }
+  for (let start = 0; start < unresolved.length; start += lookupBatch) {
+    throwIfAbortedAtBatch(signal, start, CANCEL_CHECK_BATCH)
+    signal?.throwIfAborted()
+    if (emission.emitTruncation !== undefined) break
+    if (Date.now() - budgetStarted >= budgetMs) {
+      emission.mark({ reason: "nodeLimit", visitedNodes: emission.considered })
+      break
+    }
+    const slice = unresolved.slice(start, start + lookupBatch)
+    const resolved = await Promise.all(
+      slice.map(async (id) => {
+        const lookup = figma.getNodeByIdAsync
+        if (lookup === undefined) return undefined
+        try {
+          const node = await settleOrSkip(lookup.call(figma, id))
+          return node ?? undefined
+        } catch {
+          return undefined
+        }
+      }),
+    )
+    for (const raw of resolved) {
+      if (raw === undefined) continue
+      const component = serializeComponent(raw)
+      if (component !== undefined && !emission.pushComponent(component)) break
+    }
+    if (Date.now() - budgetStarted >= budgetMs) {
+      emission.mark({ reason: "nodeLimit", visitedNodes: emission.considered })
       break
     }
   }
