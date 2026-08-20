@@ -2922,20 +2922,40 @@ fn visited_nodes_reaches_every_per_node_output_schema() {
     }
 }
 
-/// The three snapshots that describe what crosses the plugin socket. Included
-/// rather than read at run time so the fingerprint cannot depend on a working
-/// directory, and so cargo rebuilds this test when one of them changes.
+/// The three snapshots of the MCP surface: the published tool list and the
+/// input and output schemas. They are not the plugin wire format. The two
+/// overlap heavily — the output schemas are generated from the same result
+/// types the plugin sends back over its socket — which is what makes this a
+/// useful tripwire for a wire-shape change that arrives through a tool's
+/// payload. It is not a complete one: the socket envelope in
+/// `crates/protocol/src/wire.rs` (`Hello`, `Request`, `Response`, `Progress`,
+/// `Cancel`, `Ping`/`Pong`) has no representation here, so a breaking change to
+/// one of those passes this test untouched. Widening the fingerprint to cover
+/// the envelope is deliberately deferred; until then that case is caught by the
+/// version constants and the `hello` fixture pinned below, not by this hash.
+///
+/// Included rather than read at run time so the fingerprint cannot depend on a
+/// working directory, and so cargo rebuilds this test when one of them changes.
 const WIRE_SNAPSHOTS: [&str; 3] = [
     include_str!("snapshots/tools.json"),
     include_str!("snapshots/input-schemas.json"),
     include_str!("snapshots/output-schemas.json"),
 ];
 
-/// The fingerprint of `WIRE_SNAPSHOTS` at the current wire version.
+/// The fingerprint of `WIRE_SNAPSHOTS` at the current wire version, over
+/// LF-normalised bytes so it does not depend on the checkout's line endings.
 const EXPECTED_WIRE_FINGERPRINT: &str = "0xbd759802b174f283";
 
 /// FNV-1a, 64-bit, over the three snapshots in order, separated by a byte that
 /// cannot occur in UTF-8 so moving text between two files still changes it.
+///
+/// Carriage returns are dropped before hashing. `include_str!` hands back
+/// whatever bytes are on disk, so a checkout that materialises these files with
+/// CRLF endings would otherwise fingerprint differently from the same content
+/// with LF and fail this test with a message pointing at a version decision the
+/// reader does not have to make. Filtering here keeps the answer a property of
+/// the content rather than of the checkout, without a `.gitattributes` that
+/// every contributor would have to already have applied.
 ///
 /// Not `DefaultHasher`: that one is explicitly unstable across Rust releases,
 /// so a pinned constant would break on a toolchain upgrade rather than on a
@@ -2944,9 +2964,16 @@ const EXPECTED_WIRE_FINGERPRINT: &str = "0xbd759802b174f283";
 fn wire_snapshot_fingerprint() -> String {
     const OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
     const PRIME: u64 = 0x0000_0100_0000_01b3;
+    const CARRIAGE_RETURN: u8 = b'\r';
     let mut hash = OFFSET_BASIS;
     for snapshot in WIRE_SNAPSHOTS {
-        for byte in snapshot.as_bytes().iter().copied().chain([0xff]) {
+        for byte in snapshot
+            .as_bytes()
+            .iter()
+            .copied()
+            .filter(|byte| *byte != CARRIAGE_RETURN)
+            .chain([0xff])
+        {
             hash ^= u64::from(byte);
             hash = hash.wrapping_mul(PRIME);
         }
@@ -3001,10 +3028,10 @@ fn a_wire_snapshot_change_must_be_a_deliberate_version_decision() {
     let fingerprint = wire_snapshot_fingerprint();
     assert_eq!(
         fingerprint, EXPECTED_WIRE_FINGERPRINT,
-        "\nThe wire snapshots changed.\n\
-         If this is a breaking change to what crosses the plugin socket, bump \
-         PLUGIN_PROTOCOL_VERSION and plugin/src/ui/hello.ts together, then update \
-         EXPECTED_WIRE_FINGERPRINT.\n\
+        "\nThe MCP tool and schema snapshots changed.\n\
+         If this is a breaking change to a shape the plugin also sends over its \
+         socket, bump PLUGIN_PROTOCOL_VERSION and plugin/src/ui/hello.ts \
+         together, then update EXPECTED_WIRE_FINGERPRINT.\n\
          If it is only a description or documentation edit, update \
          EXPECTED_WIRE_FINGERPRINT alone.\n"
     );
