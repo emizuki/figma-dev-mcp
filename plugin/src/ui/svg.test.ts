@@ -302,6 +302,39 @@ describe("SVG safety policy", () => {
     expect(validate(fragment)).toEqual({ ok: true, source: fragment })
   })
 
+  // xml:base names the origin that every relative and fragment reference in
+  // the document is resolved against, so a remote base turns an otherwise safe
+  // href="#a" into a remote fetch. Deny by default, like href itself.
+  test("a base that names a remote origin is rejected", () => {
+    const bases = [
+      `xml:base="https://evil.example/"`,
+      `xml:base="//evil.example/"`,
+      `xml:base="http://evil.example/assets/"`,
+      // A relative base re-bases just as effectively.
+      `xml:base="../other.svg"`,
+      `xml:base="assets/"`,
+      // A prefix must not dodge the rule, and neither must its absence.
+      `base="https://evil.example/"`,
+      `xmlbase:base="https://evil.example/"`,
+    ]
+    for (const base of bases) {
+      const result = validate(
+        `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xmlbase="http://www.w3.org/XML/1998/namespace" ${base}><use href="#a"/></svg>`,
+      )
+      expect(result.ok).toBe(false)
+      expect(result.reason).toEqual({ kind: "unsafeAttribute", name: "base" })
+    }
+
+    // A same-document base fetches nothing, so it passes the same rule href does.
+    const fragment = `<svg xmlns="http://www.w3.org/2000/svg" xml:base="#a"><use href="#a"/></svg>`
+    expect(validate(fragment)).toEqual({ ok: true, source: fragment })
+
+    // A namespace declaration is an identifier, not a fetch, and stays exempt
+    // even though its local name is now a reference attribute.
+    const declaration = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:base="http://www.w3.org/1999/xlink"><rect/></svg>`
+    expect(validate(declaration)).toEqual({ ok: true, source: declaration })
+  })
+
   // A url() that does not resolve is still refused wherever it appears, which
   // is what still guards attributes that are no longer scheme-checked.
   test("an unresolvable url() is refused in any attribute", () => {

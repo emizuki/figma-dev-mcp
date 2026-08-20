@@ -341,10 +341,23 @@ function isXmlnsName(name: string): boolean {
 
 /** Attributes whose whole value addresses a resource. A value here is a URL or
  * it is nothing, so it must resolve to a same-document fragment or an allowed
- * data: payload. `localNameOf` has already dropped any prefix, so this covers
- * `xlink:href` too. */
+ * data: payload. Deny by default: anything that is not one of those two is
+ * refused, including a relative path.
+ *
+ * Matched on the local name, so a prefix cannot dodge the rule — this is what
+ * covers `xlink:href`, and it covers `xml:base` even if a document binds the
+ * XML namespace to some other prefix. The cost is that a bare, unprefixed
+ * `base` attribute is held to the same rule; no SVG defines one, so there is
+ * nothing legitimate to lose. `xmlns:base` is not affected, because a namespace
+ * declaration is exempted before this runs.
+ *
+ * `xml:base` belongs here rather than in the conditional tier because it names
+ * the origin that relative and fragment references are resolved against. A
+ * renderer honouring XML Base turns `href="#a"` under
+ * `xml:base="https://evil.example/"` into a remote fetch, so even a relative
+ * base has to be refused. */
 function isReferenceAttribute(localAttr: string): boolean {
-  return localAttr === "href" || localAttr === "src"
+  return localAttr === "href" || localAttr === "src" || localAttr === "base"
 }
 
 /** Attributes that may address a resource but usually hold a plain value.
