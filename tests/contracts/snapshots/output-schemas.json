@@ -2501,7 +2501,7 @@
         ]
       },
       "visitedNodes": {
-        "description": "Nodes walked, including those that reported nothing and are therefore\nabsent from `items`. Without this a caller cannot tell \"scanned and\nfound nothing\" from \"never reached\".",
+        "description": "Nodes inspected, including those that reported nothing and are\ntherefore absent from `items`. Without this a caller cannot tell\n\"scanned and found nothing\" from \"never reached\". Inspection stops at\nthe node that trips emit truncation, so this can be fewer than the\nnodes the walk reached when `truncated` is true.",
         "format": "uint",
         "minimum": 0,
         "type": "integer"
@@ -3980,7 +3980,7 @@
         ]
       },
       "visitedNodes": {
-        "description": "Nodes walked, including those that reported nothing and are therefore\nabsent from `items`. Without this a caller cannot tell \"scanned and\nfound nothing\" from \"never reached\".",
+        "description": "Nodes inspected, including those that reported nothing and are\ntherefore absent from `items`. Without this a caller cannot tell\n\"scanned and found nothing\" from \"never reached\". Inspection stops at\nthe node that trips emit truncation, so this can be fewer than the\nnodes the walk reached when `truncated` is true.",
         "format": "uint",
         "minimum": 0,
         "type": "integer"
@@ -6770,7 +6770,7 @@
         ]
       },
       "visitedNodes": {
-        "description": "Nodes walked, including those that reported nothing and are therefore\nabsent from `items`. Without this a caller cannot tell \"scanned and\nfound nothing\" from \"never reached\".",
+        "description": "Nodes inspected, including those that reported nothing and are\ntherefore absent from `items`. Without this a caller cannot tell\n\"scanned and found nothing\" from \"never reached\". Inspection stops at\nthe node that trips emit truncation, so this can be fewer than the\nnodes the walk reached when `truncated` is true.",
         "format": "uint",
         "minimum": 0,
         "type": "integer"

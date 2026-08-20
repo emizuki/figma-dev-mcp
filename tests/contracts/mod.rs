@@ -16,7 +16,7 @@ use figma_dev_mcp_protocol::{
         ReactionAction, RequestId, ReturnedList, ScreenshotAsset, SearchNodesInput, Selector,
         StrokeAlign, StrokeValue, StyleKind, StyleReference, SvgRejectionKind, TextStyle,
     },
-    error::{ErrorCode, ItemError, PluginFailure, ToolError},
+    error::{ErrorCode, ItemError, PluginFailure, ToolError, canonical_message},
     limits::{
         HEARTBEAT_SECS, IDLE_GRACE_SECS, INACTIVITY_TIMEOUT_SECS, MAX_DEPTH,
         MAX_DISPLAY_TEXT_BYTES, MAX_ENVELOPE_BYTES, MAX_IDENTIFIER_BYTES, MAX_IN_FLIGHT,
@@ -266,27 +266,32 @@ fn read_result_name(result: &ReadResult) -> &'static str {
     }
 }
 
+/// The wire order of the stable error codes. Mirrored by `ERROR_CODES` in
+/// `plugin/src/shared/protocol.ts`; the mirror test below checks that this list
+/// is still the set the enum declares, so a member added to `ErrorCode` and not
+/// added here fails rather than going unnoticed.
+pub const ERROR_CODES: [ErrorCode; 16] = [
+    ErrorCode::NoFigmaConnection,
+    ErrorCode::AmbiguousConnection,
+    ErrorCode::ConnectionNotFound,
+    ErrorCode::ConnectionLost,
+    ErrorCode::ProtocolMismatch,
+    ErrorCode::NodeNotFound,
+    ErrorCode::PageNotFound,
+    ErrorCode::UnsupportedNode,
+    ErrorCode::EmptyNodeBounds,
+    ErrorCode::CapabilityUnavailable,
+    ErrorCode::UnsafeSvg,
+    ErrorCode::InvalidCursor,
+    ErrorCode::LimitExceeded,
+    ErrorCode::Timeout,
+    ErrorCode::Cancelled,
+    ErrorCode::InternalError,
+];
+
 #[test]
 fn stable_error_codes_are_exact_and_screaming_snake_case() {
-    let codes = [
-        ErrorCode::NoFigmaConnection,
-        ErrorCode::AmbiguousConnection,
-        ErrorCode::ConnectionNotFound,
-        ErrorCode::ConnectionLost,
-        ErrorCode::ProtocolMismatch,
-        ErrorCode::NodeNotFound,
-        ErrorCode::PageNotFound,
-        ErrorCode::UnsupportedNode,
-        ErrorCode::EmptyNodeBounds,
-        ErrorCode::CapabilityUnavailable,
-        ErrorCode::UnsafeSvg,
-        ErrorCode::InvalidCursor,
-        ErrorCode::LimitExceeded,
-        ErrorCode::Timeout,
-        ErrorCode::Cancelled,
-        ErrorCode::InternalError,
-    ];
-    let encoded: Vec<String> = codes
+    let encoded: Vec<String> = ERROR_CODES
         .iter()
         .map(|code| {
             let expected = error_code_tag(*code);
@@ -565,7 +570,12 @@ fn quoted_tags(source: &str, start: &str, end: &str) -> Vec<String> {
     let stop = rest
         .find(end)
         .unwrap_or_else(|| panic!("plugin source must terminate {start}"));
-    let mut tags: Vec<String> = rest[..stop]
+    sorted_quoted(&rest[..stop])
+}
+
+/// The sorted, deduplicated double-quoted strings in one slice of plugin source.
+fn sorted_quoted(segment: &str) -> Vec<String> {
+    let mut tags: Vec<String> = segment
         .split('"')
         .skip(1)
         .step_by(2)
@@ -574,6 +584,160 @@ fn quoted_tags(source: &str, start: &str, end: &str) -> Vec<String> {
     tags.sort();
     tags.dedup();
     tags
+}
+
+/// The two halves of the plugin's `ERROR_CODES` declaration: the tuple type
+/// that gives `ErrorCode` its members, and the value list the validator checks
+/// an incoming code against. The plugin writes the sixteen strings out twice
+/// and nothing else pins the two copies to each other.
+fn plugin_error_code_lists(source: &str) -> (Vec<String>, Vec<String>) {
+    const START: &str = "export const ERROR_CODES: readonly [";
+    const SPLIT: &str = "] = [";
+    let begin = source
+        .find(START)
+        .expect("plugin protocol.ts must declare ERROR_CODES")
+        + START.len();
+    let rest = &source[begin..];
+    let split = rest
+        .find(SPLIT)
+        .expect("the ERROR_CODES tuple type must terminate");
+    let values = &rest[split + SPLIT.len()..];
+    let end = values
+        .find("\n]")
+        .expect("the ERROR_CODES value list must terminate");
+    (sorted_quoted(&rest[..split]), sorted_quoted(&values[..end]))
+}
+
+/// The `CODE: "message"` pairs of a `Record<ErrorCode, string>` literal, sorted.
+/// Pairs rather than two sets: a message swapped between two codes leaves both
+/// sets identical and is still a dropped session.
+fn plugin_message_map(source: &str, start: &str) -> Vec<(String, String)> {
+    let begin = source
+        .find(start)
+        .unwrap_or_else(|| panic!("plugin source must contain {start}"))
+        + start.len();
+    let rest = &source[begin..];
+    let end = rest
+        .find("\n}")
+        .unwrap_or_else(|| panic!("plugin source must terminate {start}"));
+    let mut pairs: Vec<(String, String)> = rest[..end]
+        .lines()
+        .filter_map(|line| {
+            let (code, tail) = line.split_once(':')?;
+            let message = tail.split('"').nth(1)?;
+            Some((code.trim().to_owned(), message.to_owned()))
+        })
+        .collect();
+    pairs.sort();
+    pairs
+}
+
+/// Every `ErrorCode` tag, read out of the derived schema rather than a list
+/// written by hand. A member added to the enum turns up here whether or not
+/// anyone remembers the copies, which is what makes the mirror below catch a
+/// Rust-only member instead of silently comparing two stale lists.
+fn schema_error_codes() -> Vec<String> {
+    let schema = serde_json::to_value(schemars::schema_for!(ErrorCode)).unwrap();
+    let mut tags = Vec::new();
+    collect_schema_string_tags(&schema, &mut tags);
+    tags.sort();
+    tags.dedup();
+    assert!(
+        !tags.is_empty(),
+        "the ErrorCode schema must enumerate its members"
+    );
+    tags
+}
+
+/// Schemars splits a unit enum into a bare `enum` for the members with no doc
+/// comment and a separate `const` for each one that has one, so both shapes
+/// have to be gathered or documenting a member would silently hide it.
+fn collect_schema_string_tags(value: &Value, out: &mut Vec<String>) {
+    match value {
+        Value::Object(map) => {
+            for (key, child) in map {
+                match (key.as_str(), child) {
+                    ("const", Value::String(tag)) => out.push(tag.clone()),
+                    ("enum", Value::Array(items)) => {
+                        out.extend(items.iter().filter_map(Value::as_str).map(str::to_owned));
+                    }
+                    _ => collect_schema_string_tags(child, out),
+                }
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_schema_string_tags(item, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[test]
+fn the_plugin_mirrors_every_error_code_and_its_canonical_message() {
+    // A code present on one end and absent on the other is not a failed
+    // request: the decoder refuses the frame and the whole broker session
+    // drops. So the two ends are pinned in BOTH directions. The Rust side
+    // comes from the derived schema, so a Rust-only seventeenth member is
+    // caught; the plugin side comes from the plugin's own lists, so a
+    // plugin-only one is caught too.
+    let plugin = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("tests crate has a workspace parent")
+        .join("plugin/src");
+    let protocol = std::fs::read_to_string(plugin.join("shared/protocol.ts")).unwrap();
+    let validation = std::fs::read_to_string(plugin.join("shared/result-validation.ts")).unwrap();
+    let render = std::fs::read_to_string(plugin.join("read/render.ts")).unwrap();
+
+    let rust = schema_error_codes();
+    let mut listed: Vec<String> = ERROR_CODES
+        .iter()
+        .map(|code| error_code_tag(*code).to_owned())
+        .collect();
+    listed.sort();
+    assert_eq!(
+        listed, rust,
+        "ERROR_CODES in this file is not the set the enum declares"
+    );
+
+    let (declared, accepted) = plugin_error_code_lists(&protocol);
+    assert_eq!(
+        declared, rust,
+        "plugin protocol.ts declares a different set of error codes than Rust"
+    );
+    assert_eq!(
+        accepted, rust,
+        "plugin protocol.ts's ERROR_CODES value list differs from its own tuple type"
+    );
+
+    // The message is code-owned, and the Rust decoder refuses any frame whose
+    // message is not the canonical one for its code. A drifted string is
+    // therefore also a dropped session, not a cosmetic difference. Three lists
+    // hold these strings and nothing else pins them to each other.
+    let mut expected: Vec<(String, String)> = ERROR_CODES
+        .iter()
+        .map(|code| {
+            (
+                error_code_tag(*code).to_owned(),
+                canonical_message(*code).to_owned(),
+            )
+        })
+        .collect();
+    expected.sort();
+    assert_eq!(
+        plugin_message_map(
+            &validation,
+            "const CANONICAL_MESSAGES: Record<ErrorCode, string> = {"
+        ),
+        expected,
+        "plugin result-validation.ts carries different canonical messages than Rust"
+    );
+    assert_eq!(
+        plugin_message_map(&render, "const MESSAGES: Record<ErrorCode, string> = {"),
+        expected,
+        "plugin read/render.ts carries different canonical messages than Rust"
+    );
 }
 
 #[test]
@@ -646,13 +810,13 @@ fn the_empty_bounds_code_round_trips_and_owns_its_message() {
     // A code one end knows and the other does not is not a failed request: the
     // decoder refuses the frame and the whole broker session drops. This pins
     // the wire tag the plugin has to mirror exactly.
-    let wire = r#"{"code":"EMPTY_NODE_BOUNDS","message":"The requested node has no area to render.","retryable":false}"#;
+    let wire = r#"{"code":"EMPTY_NODE_BOUNDS","message":"The requested node renders nothing.","retryable":false}"#;
     let error: ToolError = serde_json::from_str(wire).unwrap();
     assert_eq!(error.code(), ErrorCode::EmptyNodeBounds);
     assert_eq!(serde_json::to_string(&error).unwrap(), wire);
 
     let item: ItemError = serde_json::from_str(
-        r#"{"index":0,"code":"EMPTY_NODE_BOUNDS","message":"The requested node has no area to render.","retryable":false}"#,
+        r#"{"index":0,"code":"EMPTY_NODE_BOUNDS","message":"The requested node renders nothing.","retryable":false}"#,
     )
     .unwrap();
     assert_eq!(item.code(), ErrorCode::EmptyNodeBounds);

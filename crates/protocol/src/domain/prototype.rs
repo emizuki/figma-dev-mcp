@@ -71,9 +71,11 @@ pub struct DevModeNodeData {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GetDevModeDataResult {
     pub items: ReturnedList<ItemResult<DevModeNodeData>>,
-    /// Nodes walked, including those that reported nothing and are therefore
-    /// absent from `items`. Without this a caller cannot tell "scanned and
-    /// found nothing" from "never reached".
+    /// Nodes inspected, including those that reported nothing and are
+    /// therefore absent from `items`. Without this a caller cannot tell
+    /// "scanned and found nothing" from "never reached". Inspection stops at
+    /// the node that trips emit truncation, so this can be fewer than the
+    /// nodes the walk reached when `truncated` is true.
     pub visited_nodes: usize,
     pub truncated: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -416,9 +418,11 @@ pub struct NodeReactions {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GetReactionsResult {
     pub items: ReturnedList<ItemResult<NodeReactions>>,
-    /// Nodes walked, including those that reported nothing and are therefore
-    /// absent from `items`. Without this a caller cannot tell "scanned and
-    /// found nothing" from "never reached".
+    /// Nodes inspected, including those that reported nothing and are
+    /// therefore absent from `items`. Without this a caller cannot tell
+    /// "scanned and found nothing" from "never reached". Inspection stops at
+    /// the node that trips emit truncation, so this can be fewer than the
+    /// nodes the walk reached when `truncated` is true.
     pub visited_nodes: usize,
     pub truncated: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -701,9 +705,11 @@ pub struct NodeMotion {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GetMotionResult {
     pub items: ReturnedList<ItemResult<NodeMotion>>,
-    /// Nodes walked, including those that reported nothing and are therefore
-    /// absent from `items`. Without this a caller cannot tell "scanned and
-    /// found nothing" from "never reached".
+    /// Nodes inspected, including those that reported nothing and are
+    /// therefore absent from `items`. Without this a caller cannot tell
+    /// "scanned and found nothing" from "never reached". Inspection stops at
+    /// the node that trips emit truncation, so this can be fewer than the
+    /// nodes the walk reached when `truncated` is true.
     pub visited_nodes: usize,
     #[serde(default, skip_serializing_if = "ReturnedList::is_empty")]
     pub available_styles: ReturnedList<AvailableAnimationStyle>,

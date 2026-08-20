@@ -156,9 +156,9 @@ The advertised catalog is exactly these 14 tools. Each tool is annotated `readOn
 | `get_motion` | Return bounded motion data when the Figma Motion API is available. Times are seconds. |
 | `get_nodes` | Fetch one or more nodes by opaque ID while preserving input order. |
 | `get_reactions` | Return prototype reactions and explicit target references. Trigger `timeout` is seconds on the live Plugin API (UI 800ms → `0.8`). `delay`, `transitionDuration`, and `mediaHitTime` are host numbers with no conversion. |
-| `get_screenshot` | Render bounded nodes or the captured selection as raster or safe SVG assets. |
+| `get_screenshot` | Render bounded nodes or the captured selection as raster or SVG assets. SVG source is always returned, carrying a `safe` verdict and, when unsafe, the `rejection` that fired. |
 | `get_selection` | Return the current selection with a requested detail level and bounded depth. |
-| `get_styles` | Return local styles and styles referenced by a bounded scope. |
+| `get_styles` | Return styles referenced by a bounded scope, and the document's local styles. `selector` constrains only the `referenced` half; the `local` half is document-wide and ignores it. |
 | `get_variables` | Return variable collections, modes, aliases, scopes, and code syntax. |
 | `list_files` | List live Figma connections. Connection IDs expire when plugin sockets reconnect. |
 | `search_nodes` | Search exactly one explicit page or node scope with bounded predicates. |
@@ -183,9 +183,10 @@ The advertised catalog is exactly these three argumentless prompts. Each returns
 - SVG uses Figma `exportAsync({ format: "SVG_STRING" })`. The result includes `image/svg+xml` content for clients that can preview it **and** the UTF-8 **SVG source** in structured content so a developer can use the vector asset directly.
 - `scale` is invalid for SVG. Supported SVG options map to Figma's API: `svgOutlineText` defaults to `true`, `svgIdAttribute` to `false`, and `svgSimplifyStroke` to `true`.
 - Safe vector structure is preserved, including `viewBox` and internal fragment references such as `url(#gradient)`.
-- Before return, the iframe parses the SVG as XML and flags scripts, `foreignObject`, inline event handlers, `javascript:` URLs, CSS `@import`, and non-fragment network references. The source is never rewritten and never withheld: every SVG asset carries a `safe` verdict, and an unsafe one also carries a `rejection` naming the rule that fired (`parserError`, `unsafeElement`, `unsafeAttribute`, `unsafeCss`, `unsafeProcessingInstruction`) plus the offending local name where the rule has one — never an attribute value.
-- The caller decides what an unsafe verdict is worth. The reason is precise because the risks are not equal: an embedded `@font-face` data URL fetches nothing, while a `<script>` element executes if the source is written to disk and later opened in a browser. `UNSAFE_SVG` is reserved and no longer emitted.
-
+- Before return, the iframe parses the SVG as XML and flags scripts, `foreignObject`, inline event handlers, `javascript:` URLs, CSS `@import`, and references that address anything but the document itself. The source is never rewritten and never withheld: every SVG asset carries a `safe` verdict, and an unsafe one also carries a `rejection` naming the rule that fired (`parserError`, `unsafeElement`, `unsafeAttribute`, `unsafeCss`, `unsafeProcessingInstruction`) plus the offending local name where the rule has one — never an attribute value.
+- References are deny-by-default: a same-document `#fragment` passes, and so does a `data:` URL carrying a font media type or a PNG, JPEG, or WebP whose bytes validate. Every other scheme and media type is refused, as is a relative path and an `xml:base` naming an origin. Embedded fonts are therefore safe, which is what keeps `svgOutlineText: false` usable.
+- **The `safe` verdict travels in structured content only.** The `image/svg+xml` content block is emitted for every SVG asset, safe or not, and carries no marker. A client that auto-previews that block renders an unsafe SVG with nothing to distinguish it. Read `safe` from structured content before trusting a preview.
+- The caller decides what an unsafe verdict is worth. The reason is precise because the risks are not equal: a remote `@font-face` URL at worst leaks a fetch when the file is opened, while a `<script>` element executes if the source is written to disk and later opened in a browser. `UNSAFE_SVG` is reserved and no longer emitted.
 - A node that puts no ink on the page fails with a per-asset `EMPTY_NODE_BOUNDS`, in every format. An empty SVG or a 1×1 transparent pixel would be a success carrying nothing, and `INTERNAL_ERROR` is reserved for failures whose cause we do not know. The test is the host's own `absoluteRenderBounds`, which is measured after strokes and effects rather than from width and height: a `LINE` is exactly zero pixels high by API contract, so every divider and underline would fail a geometric test while rendering perfectly. Nodes that are switched off — their own `visible`, or any ancestor's — are left to the exporter, because the host reports no render bounds for anything invisible and that says nothing about whether the node is empty. So is a node whose bounds the host will not report at all.
 
 The tool does not choose or write a local path.
@@ -204,6 +205,7 @@ Read-only in Figma and side-effect-free on the local filesystem:
 - Results are bounded (depth, node count, serialized size, deadlines). Large or deep reads truncate instead of walking the whole document.
 - `get_motion` fails with `CAPABILITY_UNAVAILABLE` when the live Motion surface is absent.
 - `search_nodes` is single-scope only; document-wide and multi-page search are rejected.
+- An SVG asset's `safe` verdict is carried in structured content only. The `image/svg+xml` content block is unlabelled, so a client that previews it renders an unsafe SVG exactly like a safe one.
 
 Threat-model caveat: the MVP trusts processes running as the **same local** operating-system user and the browser context hosting the Figma plugin. Loopback binding blocks direct remote connections, but `Origin: null` is **not authentication** and can be reproduced by intentionally sandboxed browser content. Such content may register a fake session or cause denial of service; socket-bound correlation and the closed plugin-role protocol prevent it from reading or completing work for an existing Figma connection. Protection against a malicious local process requires per-install pairing in a separate design.
 

@@ -52,7 +52,7 @@ pub const fn canonical_message(code: ErrorCode) -> &'static str {
         ErrorCode::NodeNotFound => "The requested node was not found.",
         ErrorCode::PageNotFound => "The requested page was not found.",
         ErrorCode::UnsupportedNode => "The requested node type is not supported.",
-        ErrorCode::EmptyNodeBounds => "The requested node has no area to render.",
+        ErrorCode::EmptyNodeBounds => "The requested node renders nothing.",
         ErrorCode::CapabilityUnavailable => "The required Figma capability is unavailable.",
         ErrorCode::UnsafeSvg => "The SVG was rejected by the safety policy.",
         ErrorCode::InvalidCursor => "The search cursor is invalid or stale.",

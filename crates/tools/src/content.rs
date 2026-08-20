@@ -121,6 +121,14 @@ fn screenshot_image(asset: &domain::ScreenshotAsset) -> Result<AccountedImage, T
             image_base64: data_base64.as_str().to_owned(),
             mime_type: "image/jpeg".into(),
         }),
+        // Deliberate: the `image/svg+xml` block is emitted for every SVG asset,
+        // safe or not, and carries no trace of the verdict. `safe` and
+        // `rejection` travel in `structured_item` beside it, so an agent
+        // reading structured output sees the verdict; a client that only
+        // auto-previews the image block renders an unsafe SVG unlabelled. This
+        // was weighed and kept: withholding or annotating the block would
+        // reintroduce the blocking behaviour the verdict design replaced. The
+        // limitation is stated in the `get_screenshot` description and README.
         domain::ScreenshotAsset::Svg {
             node_id, source, ..
         } => Ok(AccountedImage {

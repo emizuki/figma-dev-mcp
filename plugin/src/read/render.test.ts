@@ -901,7 +901,7 @@ describe("screenshot result validation", () => {
     // the boundary, which costs the whole session rather than one asset.
     const error = {
       code: "EMPTY_NODE_BOUNDS",
-      message: "The requested node has no area to render.",
+      message: "The requested node renders nothing.",
       retryable: false,
     }
     expect(parseReadResult(errorResult(error))).toEqual(
@@ -923,7 +923,7 @@ describe("screenshot result validation", () => {
       parseReadResult(
         errorResult({
           code: "EMPTY_BOUNDS",
-          message: "The requested node has no area to render.",
+          message: "The requested node renders nothing.",
           retryable: false,
         }),
       ),

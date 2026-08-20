@@ -3015,7 +3015,7 @@
           ]
         },
         "visitedNodes": {
-          "description": "Nodes walked, including those that reported nothing and are therefore\nabsent from `items`. Without this a caller cannot tell \"scanned and\nfound nothing\" from \"never reached\".",
+          "description": "Nodes inspected, including those that reported nothing and are\ntherefore absent from `items`. Without this a caller cannot tell\n\"scanned and found nothing\" from \"never reached\". Inspection stops at\nthe node that trips emit truncation, so this can be fewer than the\nnodes the walk reached when `truncated` is true.",
           "format": "uint",
           "minimum": 0,
           "type": "integer"
@@ -4855,7 +4855,7 @@
           ]
         },
         "visitedNodes": {
-          "description": "Nodes walked, including those that reported nothing and are therefore\nabsent from `items`. Without this a caller cannot tell \"scanned and\nfound nothing\" from \"never reached\".",
+          "description": "Nodes inspected, including those that reported nothing and are\ntherefore absent from `items`. Without this a caller cannot tell\n\"scanned and found nothing\" from \"never reached\". Inspection stops at\nthe node that trips emit truncation, so this can be fewer than the\nnodes the walk reached when `truncated` is true.",
           "format": "uint",
           "minimum": 0,
           "type": "integer"
@@ -7890,7 +7890,7 @@
           ]
         },
         "visitedNodes": {
-          "description": "Nodes walked, including those that reported nothing and are therefore\nabsent from `items`. Without this a caller cannot tell \"scanned and\nfound nothing\" from \"never reached\".",
+          "description": "Nodes inspected, including those that reported nothing and are\ntherefore absent from `items`. Without this a caller cannot tell\n\"scanned and found nothing\" from \"never reached\". Inspection stops at\nthe node that trips emit truncation, so this can be fewer than the\nnodes the walk reached when `truncated` is true.",
           "format": "uint",
           "minimum": 0,
           "type": "integer"
@@ -7911,7 +7911,7 @@
       "openWorldHint": false,
       "readOnlyHint": true
     },
-    "description": "Render bounded nodes or the captured selection as raster or SVG assets. SVG source is always returned, with a `safe` verdict and, when unsafe, a `rejection` naming the rule that fired; safety never withholds the source. Treat an unsafe verdict as a caller decision: writing such source to disk can execute a `<script>` element if a browser later opens it. A node the host reports as putting no ink on the page fails with `EMPTY_NODE_BOUNDS` in every format rather than returning an empty asset. A connectionId is ephemeral and expires when its plugin socket reconnects.",
+    "description": "Render bounded nodes or the captured selection as raster or SVG assets. SVG source is always returned, with a `safe` verdict and, when unsafe, a `rejection` naming the rule that fired; safety never withholds the source. The verdict lives only in structured content: the `image/svg+xml` content block is emitted for every SVG asset, safe or not, so a client that previews that block renders an unsafe SVG unlabelled. Treat an unsafe verdict as a caller decision: writing such source to disk can execute a `<script>` element if a browser later opens it. A node the host reports as putting no ink on the page fails with `EMPTY_NODE_BOUNDS` in every format rather than returning an empty asset. A connectionId is ephemeral and expires when its plugin socket reconnects.",
     "inputSchema": {
       "$defs": {
         "ConnectionId": {

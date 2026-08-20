@@ -410,11 +410,10 @@ pub struct SvgRejection {
     name: Option<SvgRejectionName>,
 }
 
+// No constructor: the plugin builds the verdict and Rust only deserialises it.
+// A `new` here would be an unused second way to make a value that never
+// originates on this end.
 impl SvgRejection {
-    pub fn new(kind: SvgRejectionKind, name: Option<SvgRejectionName>) -> Self {
-        Self { kind, name }
-    }
-
     pub fn kind(&self) -> SvgRejectionKind {
         self.kind
     }
