@@ -6,6 +6,7 @@ mod response_accounting;
 mod structured_outputs;
 mod tools_catalog;
 
+use figma_dev_mcp_broker::PLUGIN_PROTOCOL_VERSION;
 use figma_dev_mcp_protocol::{
     domain::{
         AxisAlign, ComponentValue, ConnectionId, CornerRadiusValue, DesignNode,
@@ -2919,4 +2920,92 @@ fn visited_nodes_reaches_every_per_node_output_schema() {
             "visitedNodes must be required in the output schema"
         );
     }
+}
+
+/// The three snapshots that describe what crosses the plugin socket. Included
+/// rather than read at run time so the fingerprint cannot depend on a working
+/// directory, and so cargo rebuilds this test when one of them changes.
+const WIRE_SNAPSHOTS: [&str; 3] = [
+    include_str!("snapshots/tools.json"),
+    include_str!("snapshots/input-schemas.json"),
+    include_str!("snapshots/output-schemas.json"),
+];
+
+/// The fingerprint of `WIRE_SNAPSHOTS` at the current wire version.
+const EXPECTED_WIRE_FINGERPRINT: &str = "0xbd759802b174f283";
+
+/// FNV-1a, 64-bit, over the three snapshots in order, separated by a byte that
+/// cannot occur in UTF-8 so moving text between two files still changes it.
+///
+/// Not `DefaultHasher`: that one is explicitly unstable across Rust releases,
+/// so a pinned constant would break on a toolchain upgrade rather than on a
+/// real change. Not a cryptographic digest either: this detects change, it does
+/// not resist forgery, and it is not worth a dependency.
+fn wire_snapshot_fingerprint() -> String {
+    const OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+    let mut hash = OFFSET_BASIS;
+    for snapshot in WIRE_SNAPSHOTS {
+        for byte in snapshot.as_bytes().iter().copied().chain([0xff]) {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(PRIME);
+        }
+    }
+    format!("{hash:#018x}")
+}
+
+/// The first double-quoted value on the line declaring `key`.
+fn extract_string_literal(source: &str, key: &str) -> Option<String> {
+    let prefix = format!("{key}:");
+    source
+        .lines()
+        .find(|line| line.trim_start().starts_with(&prefix))?
+        .split('"')
+        .nth(1)
+        .map(str::to_owned)
+}
+
+fn plugin_src() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("tests crate has a workspace parent")
+        .join("plugin/src")
+}
+
+#[test]
+fn both_ends_declare_the_same_wire_version() {
+    // Two constants in two languages drift. When they do, the broker refuses
+    // every connection at the hello, so this is the whole product down rather
+    // than one request failing.
+    let hello = std::fs::read_to_string(plugin_src().join("ui/hello.ts")).unwrap();
+    let declared = extract_string_literal(&hello, "protocolVersion")
+        .expect("plugin hello declares protocolVersion");
+    assert_eq!(
+        declared, PLUGIN_PROTOCOL_VERSION,
+        "the plugin announces {declared} and the broker expects {PLUGIN_PROTOCOL_VERSION}; \
+         a mismatch here refuses every connection"
+    );
+
+    // The checked-in hello is the frame both ends are read against elsewhere in
+    // this file and in the plugin's own round-trip test, so it goes stale the
+    // same way and is pinned with them.
+    let fixture: Value = serde_json::from_str(FIXTURES[0]).unwrap();
+    assert_eq!(
+        fixture["protocolVersion"], PLUGIN_PROTOCOL_VERSION,
+        "fixtures/hello.json announces a version no live plugin would send"
+    );
+}
+
+#[test]
+fn a_wire_snapshot_change_must_be_a_deliberate_version_decision() {
+    let fingerprint = wire_snapshot_fingerprint();
+    assert_eq!(
+        fingerprint, EXPECTED_WIRE_FINGERPRINT,
+        "\nThe wire snapshots changed.\n\
+         If this is a breaking change to what crosses the plugin socket, bump \
+         PLUGIN_PROTOCOL_VERSION and plugin/src/ui/hello.ts together, then update \
+         EXPECTED_WIRE_FINGERPRINT.\n\
+         If it is only a description or documentation edit, update \
+         EXPECTED_WIRE_FINGERPRINT alone.\n"
+    );
 }

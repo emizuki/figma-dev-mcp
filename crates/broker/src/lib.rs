@@ -27,7 +27,7 @@ mod rpc;
 mod ws;
 
 pub use client::{BrokerClient, OpenCall};
-pub use config::{BrokerConfig, Limits};
+pub use config::{BrokerConfig, Limits, PLUGIN_PROTOCOL_VERSION};
 pub use election::{ElectionError, ElectionOutcome, FollowerElection, LeaderElection, elect};
 pub use lifecycle::FrontendLease;
 pub use pending::{

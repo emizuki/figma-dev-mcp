@@ -9,7 +9,13 @@ use figma_dev_mcp_protocol::limits::{
 
 pub const PLUGIN_ADDRESS: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 3056);
 pub const FRONTEND_ADDRESS: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 3057);
-pub const PLUGIN_PROTOCOL_VERSION: &str = "1";
+// Bumped to "2" because the wire changed four times without it moving:
+// visitedNodes on three per-node results, the SVG rejection reason, that
+// reason moving onto the screenshot asset while leaving the shared ToolError,
+// and the EMPTY_NODE_BOUNDS error code. A plugin announcing "1" cannot talk to
+// today's decoders, and being refused at connect time is strictly better than
+// the silent session drop it replaces.
+pub const PLUGIN_PROTOCOL_VERSION: &str = "2";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Limits {

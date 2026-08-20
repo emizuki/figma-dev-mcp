@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 
-use figma_dev_mcp_broker::{Broker, BrokerConfig, Limits};
+use figma_dev_mcp_broker::{Broker, BrokerConfig, Limits, PLUGIN_PROTOCOL_VERSION};
 use figma_dev_mcp_protocol::domain::ConnectionId;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
@@ -40,7 +40,7 @@ async fn accepts_exact_null_origin_and_rejects_missing_or_other_origins() {
 
     let (mut socket, _) = connect_async(request(address, Some("null"))).await.unwrap();
     socket.send(Message::Text(serde_json::to_string(&json!({
-        "type": "hello", "protocolVersion": "1", "connectionId": "123e4567-e89b-42d3-a456-426614174000",
+        "type": "hello", "protocolVersion": PLUGIN_PROTOCOL_VERSION, "connectionId": "123e4567-e89b-42d3-a456-426614174000",
         "displayName": "File", "fileName": "File", "currentPage": {"id": "0:1", "name": "Page"},
         "editorType": "dev", "pluginVersion": "0.1.0", "capabilities": {}
     })).unwrap().into())).await.unwrap();
@@ -86,6 +86,48 @@ async fn first_frame_must_be_hello_and_protocol_mismatch_is_rejected() {
     task.abort();
 }
 
+#[tokio::test]
+async fn a_plugin_announcing_an_old_wire_version_is_refused() {
+    // The check runs before the session is registered. What this pins is that
+    // it is reachable with the version a shipped-but-stale plugin actually
+    // announces, and that such a plugin never appears in the registry: the
+    // failure mode being prevented is a silent session drop several requests
+    // later, once a frame the old plugin cannot decode crosses the socket.
+    let (address, broker, task) = running_broker().await;
+    let (mut stale, _) = connect_async(request(address, Some("null"))).await.unwrap();
+    stale.send(Message::Text(serde_json::to_string(&json!({
+        "type": "hello", "protocolVersion": "1", "connectionId": "123e4567-e89b-42d3-a456-426614174000",
+        "displayName": "Stale", "fileName": "Stale", "currentPage": {"id": "0:1", "name": "Page"},
+        "editorType": "dev", "pluginVersion": "0.1.0", "capabilities": {}
+    })).unwrap().into())).await.unwrap();
+    // The socket ending is the broker's answer, and reaching it proves the
+    // hello was read rather than still sitting in a buffer.
+    assert!(matches!(
+        stale.next().await,
+        None | Some(Ok(Message::Close(_))) | Some(Err(_))
+    ));
+    assert_eq!(broker.live_file_count().await, 0);
+
+    // The same body at the current version registers, so the refusal above is
+    // the version and not some other defect in the frame.
+    let (mut current, _) = connect_async(request(address, Some("null"))).await.unwrap();
+    current
+        .send(hello_frame(
+            "123e4567-e89b-42d3-a456-426614174000",
+            "Current",
+        ))
+        .await
+        .unwrap();
+    for _ in 0..20 {
+        if broker.live_file_count().await == 1 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+    }
+    assert_eq!(broker.live_file_count().await, 1);
+    task.abort();
+}
+
 #[tokio::test(start_paused = true)]
 async fn close_and_heartbeat_expiry_remove_the_registered_session() {
     let (address, broker, task) = running_broker().await;
@@ -93,7 +135,7 @@ async fn close_and_heartbeat_expiry_remove_the_registered_session() {
     socket
         .send(Message::Text(
             serde_json::to_string(&json!({
-                "type": "hello", "protocolVersion": "1", "connectionId": "123e4567-e89b-42d3-a456-426614174000",
+                "type": "hello", "protocolVersion": PLUGIN_PROTOCOL_VERSION, "connectionId": "123e4567-e89b-42d3-a456-426614174000",
                 "displayName": "File", "fileName": "File", "currentPage": {"id": "0:1", "name": "Page"},
                 "editorType": "dev", "pluginVersion": "0.1.0", "capabilities": {}
             }))
@@ -122,7 +164,7 @@ async fn close_and_heartbeat_expiry_remove_the_registered_session() {
     stale
         .send(Message::Text(
             serde_json::to_string(&json!({
-                "type": "hello", "protocolVersion": "1", "connectionId": "123e4567-e89b-42d3-a456-426614174001",
+                "type": "hello", "protocolVersion": PLUGIN_PROTOCOL_VERSION, "connectionId": "123e4567-e89b-42d3-a456-426614174001",
                 "displayName": "Stale", "fileName": "Stale", "currentPage": {"id": "0:1", "name": "Page"},
                 "editorType": "dev", "pluginVersion": "0.1.0", "capabilities": {}
             }))
@@ -152,7 +194,7 @@ async fn close_and_heartbeat_expiry_remove_the_registered_session() {
 fn hello_frame(connection_id: &str, file_name: &str) -> Message {
     Message::Text(
         serde_json::to_string(&json!({
-            "type": "hello", "protocolVersion": "1", "connectionId": connection_id,
+            "type": "hello", "protocolVersion": PLUGIN_PROTOCOL_VERSION, "connectionId": connection_id,
             "displayName": file_name, "fileName": file_name,
             "currentPage": {"id": "0:1", "name": "Page"},
             "editorType": "dev", "pluginVersion": "0.1.0", "capabilities": {}

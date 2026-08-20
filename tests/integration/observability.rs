@@ -2,7 +2,7 @@ use std::io::Write;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use figma_dev_mcp_broker::{Broker, BrokerConfig, Limits};
+use figma_dev_mcp_broker::{Broker, BrokerConfig, Limits, PLUGIN_PROTOCOL_VERSION};
 use figma_dev_mcp_tools::McpService;
 use futures_util::{SinkExt, StreamExt};
 use rmcp::ServiceExt;
@@ -77,7 +77,7 @@ async fn tool_logs_are_schema_safe_and_stdout_stays_protocol_only() {
     plugin
         .send(Message::Text(
             json!({
-                "type": "hello", "protocolVersion": "1", "connectionId": CONNECTION,
+                "type": "hello", "protocolVersion": PLUGIN_PROTOCOL_VERSION, "connectionId": CONNECTION,
                 "displayName": SENTINEL_FILE_NAME, "fileName": SENTINEL_FILE_NAME,
                 "currentPage": {"id": "0:1", "name": SENTINEL_NODE_TEXT},
                 "editorType": "dev", "pluginVersion": "0.1.0", "capabilities": {}
