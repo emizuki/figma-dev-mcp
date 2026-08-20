@@ -1,78 +1,41 @@
 # figma-dev-mcp
 
-A local-first, read-only Model Context Protocol server for developers who inspect Figma designs in Dev Mode and turn that intent into implementation context.
+Give your coding agent a way to read Figma designs — layout, styles, variables, components, prototypes, images — straight from Dev Mode, without copying screenshots into a chat.
 
-It does not expose, dispatch, or compile any operation that mutates a Figma document. It does not write screenshots, SVG, or other exports to the local filesystem.
+It reads and nothing else. No tool in it can change a Figma document, and none writes a file to your disk.
 
-Starting an MCP client that launches this binary starts or discovers the shared loopback broker **without a separate daemon**. There is no daemon setup step.
+Everything runs on your machine. There is no account, no cloud service, and no daemon to install: your MCP client launches the binary, and the first one to start also becomes the broker that other clients share.
 
-## Architecture
+## Requirements
 
-One Rust executable serves MCP over stdio. The first process binds the broker; later processes become frontends and share the same Figma sessions.
+- Figma **desktop**, with the file open in **Dev Mode**
+- Rust 1.95.0 and Bun 1.3.14
+- An MCP client that can launch a local command
 
-```text
-MCP client A ──stdio──┐
-                     │
-MCP client B ──stdio──┼── Rust frontend/broker ──loopback WebSocket── Figma plugin: file A
-                     │                    └───────loopback WebSocket── Figma plugin: file B
-MCP client N ──stdio──┘
-```
-
-Default loopback endpoints (not configurable in the MVP):
-
-- plugin WebSockets: `127.0.0.1:3056` (`ws://localhost:3056` in the plugin; Figma rejects `127.0.0.1` in `allowedDomains`)
-- internal frontend RPC (raw TCP, not HTTP): `127.0.0.1:3057`
-
-The TypeScript companion plugin runs only in Figma Dev Mode. Its hidden UI connects to `ws://localhost:3056` with `Origin: null`. That origin check is **not authentication**; see [Limitations](#limitations).
-
-## Operational constraints
-
-The plugin bundle and the built binary must come from the same revision. Both ends reject unknown fields, so a newer plugin talking to an older binary drops the session rather than failing a single request.
-
-## Quick start
-
-1. Build the release binary: `cargo build --release`.
-2. Build the companion: `(cd plugin && bun install --frozen-lockfile && bun run build)`.
-3. In Figma desktop, switch the file to **Dev Mode** and import `plugin/manifest.json` as a **development plugin**.
-4. Point an MCP client at `target/release/figma-dev-mcp` over **stdio** (no extra flags). Snippets: [Install in MCP clients](#install-in-mcp-clients).
-5. Run the plugin in each relevant Figma file.
-6. Call `list_files` to see live connections.
-
-Full operator steps: [docs/setup.md](docs/setup.md). Local verification: [docs/testing.md](docs/testing.md).
-
-## Install in MCP clients
-
-The production binary is **stdio only**. It has no HTTP listener and takes no bind, port, or extra flags. Replace `/absolute/path/to/figma-dev-mcp` with this repository's path. Restart the client or start a new session after you change the config.
-
-Build the release binary first (`cargo build --release`). Import and run the Dev Mode plugin as in [Quick start](#quick-start).
-
-### Claude Code
+## Build
 
 ```bash
-claude mcp add --transport stdio --scope user figma-dev-mcp -- /absolute/path/to/figma-dev-mcp/target/release/figma-dev-mcp
+cargo build --release
+(cd plugin && bun install --frozen-lockfile && bun run build)
 ```
 
-`--scope local` writes `.mcp.json` in the current project. `--scope user` writes `~/.claude.json`. Equivalent project file:
+That produces the server at `target/release/figma-dev-mcp` and the Figma plugin in `plugin/dist/`.
 
-```json
-{
-  "mcpServers": {
-    "figma-dev-mcp": {
-      "type": "stdio",
-      "command": "/absolute/path/to/figma-dev-mcp/target/release/figma-dev-mcp",
-      "args": []
-    }
-  }
-}
+Rebuild **both** together. The two halves check that they come from the same version and refuse to connect if they do not — better than the confusing mid-session failures that mismatch used to cause.
+
+## Connect an MCP client
+
+The server speaks **stdio** only. It takes no flags, no port, and no URL. Replace `/absolute/path/to/figma-dev-mcp` with your clone's path, then restart the client.
+
+**Claude Code**
+
+```bash
+claude mcp add --scope user figma-dev-mcp -- /absolute/path/to/figma-dev-mcp/target/release/figma-dev-mcp
 ```
 
-### Claude Desktop
+Use `--scope project` instead to write a `.mcp.json` into the current project.
 
-Edit the desktop config, then restart Claude Desktop.
-
-- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
-- Linux: `~/.config/Claude/claude_desktop_config.json`
-- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+**Claude Desktop** — edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS), `~/.config/Claude/claude_desktop_config.json` (Linux), or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
 
 ```json
 {
@@ -84,28 +47,14 @@ Edit the desktop config, then restart Claude Desktop.
 }
 ```
 
-### Codex
+**Codex** — `codex mcp add figma-dev-mcp -- /absolute/path/to/figma-dev-mcp/target/release/figma-dev-mcp`
 
-Add to `~/.codex/config.toml`, or to `.codex/config.toml` in a project:
+**Grok Build** — `grok mcp add figma-dev-mcp -- /absolute/path/to/figma-dev-mcp/target/release/figma-dev-mcp`
 
-```toml
-[mcp_servers.figma-dev-mcp]
-command = "/absolute/path/to/figma-dev-mcp/target/release/figma-dev-mcp"
-```
-
-Or:
-
-```bash
-codex mcp add figma-dev-mcp -- /absolute/path/to/figma-dev-mcp/target/release/figma-dev-mcp
-```
-
-### OpenCode
-
-User config: `~/.config/opencode/opencode.json`. Project config: `opencode.json`.
+**OpenCode** — in `~/.config/opencode/opencode.json`:
 
 ```json
 {
-  "$schema": "https://opencode.ai/config.json",
   "mcp": {
     "figma-dev-mcp": {
       "type": "local",
@@ -116,110 +65,69 @@ User config: `~/.config/opencode/opencode.json`. Project config: `opencode.json`
 }
 ```
 
-Or: `opencode mcp add`.
+## Use it
 
-### Grok Build
+1. In Figma desktop, switch the file to **Dev Mode**.
+2. **Plugins → Development → Import plugin from manifest…**, and pick this repository's `plugin/manifest.json`. You only do this once.
+3. Run the **Figma Dev MCP** plugin in each file you want to read. Keep it running while you work — closing it ends that file's session.
+4. Ask your agent for something. It will usually start with `list_files`.
 
-```bash
-grok mcp add figma-dev-mcp -- /absolute/path/to/figma-dev-mcp/target/release/figma-dev-mcp
-```
+You can connect several Figma files at once. Each gets its own `connectionId`, which `list_files` reports. With exactly one file connected the agent can leave `connectionId` out; with more than one it must say which file it means, and the server refuses to guess.
 
-That writes `~/.grok/config.toml`. For this repository only: `grok mcp add --scope project figma-dev-mcp -- /absolute/path/to/figma-dev-mcp/target/release/figma-dev-mcp` (`.grok/config.toml`). Equivalent TOML:
+Connection ids are temporary. If a plugin reconnects it gets a new one, so call `list_files` again rather than reusing an old id.
 
-```toml
-[mcp_servers.figma-dev-mcp]
-command = "/absolute/path/to/figma-dev-mcp/target/release/figma-dev-mcp"
-```
-
-In an existing TUI session, run `/mcps` and press `r` to reload.
-
-## Connection selection
-
-`connectionId` is an opaque, ephemeral handle from `list_files`. It is valid only while that plugin socket stays live. A reconnect issues a new id; rediscover it with `list_files`.
-
-- If **exactly one** Figma file is connected, file-scoped tools may omit `connectionId`.
-- If several files are connected, every file-scoped call must provide `connectionId`. The server returns `AMBIGUOUS_CONNECTION` instead of choosing a file implicitly.
-
-`list_files` itself is not file-scoped.
+Step-by-step operator instructions live in [docs/setup.md](docs/setup.md).
 
 ## Tools
 
-The advertised catalog is exactly these 14 tools. Each tool is annotated `readOnlyHint: true`, `destructiveHint: false`, and `openWorldHint: false`.
+Fourteen tools, all read-only.
 
-| Tool | Purpose |
+| Tool | What it gives you |
 | --- | --- |
-| `get_components` | Return components and component sets in a bounded node or page scope. |
-| `get_design_context` | Return an implementation-oriented bounded design tree. |
-| `get_dev_mode_data` | Return annotations, documentation, resources, and ownership metadata. |
-| `get_fonts` | Return fonts used by a bounded scope and whether they appear in the editor font picker (`listAvailableFontsAsync`). |
-| `get_metadata` | Return file, page, editor, and plugin capability metadata without descendants. |
-| `get_motion` | Return bounded motion data when the Figma Motion API is available. Times are seconds. |
-| `get_nodes` | Fetch one or more nodes by opaque ID while preserving input order. |
-| `get_reactions` | Return prototype reactions and explicit target references. Trigger `timeout` is seconds on the live Plugin API (UI 800ms → `0.8`). `delay`, `transitionDuration`, and `mediaHitTime` are host numbers with no conversion. |
-| `get_screenshot` | Render bounded nodes or the captured selection as raster or SVG assets. SVG source is always returned, carrying a `safe` verdict and, when unsafe, the `rejection` that fired. |
-| `get_selection` | Return the current selection with a requested detail level and bounded depth. |
-| `get_styles` | Return styles referenced by a bounded scope, and the document's local styles. `selector` constrains only the `referenced` half; the `local` half is document-wide and ignores it. |
-| `get_variables` | Return variable collections, modes, aliases, scopes, and code syntax. |
-| `list_files` | List live Figma connections. Connection IDs expire when plugin sockets reconnect. |
-| `search_nodes` | Search exactly one explicit page or node scope with bounded predicates. |
+| `list_files` | The Figma files currently connected, and their connection ids. |
+| `get_metadata` | File name, pages, editor type, and what this Figma build supports. |
+| `get_selection` | Whatever is selected in Figma right now. |
+| `get_nodes` | Specific nodes by id, in the order you asked for them. |
+| `get_design_context` | A bounded design tree shaped for implementing from. |
+| `search_nodes` | Find nodes by name, text, or type within one page or subtree. |
+| `get_styles` | Styles used in a scope, plus the document's local styles. |
+| `get_variables` | Variables bound in a scope, with their collections, modes, and values. |
+| `get_components` | Components and component sets behind the instances in a scope. |
+| `get_dev_mode_data` | Annotations, documentation, dev resources, and ownership. |
+| `get_reactions` | Prototype interactions and where they lead. |
+| `get_motion` | Motion and timeline data, when this Figma build has the Motion API. |
+| `get_fonts` | Fonts a scope uses, and whether they are available in the editor. |
+| `get_screenshot` | PNG, JPEG, or SVG. SVG comes back as source you can use directly. |
 
-At `detail: "full"` a node's `paints` field carries **fills only**; border colour, width, alignment, and dash pattern live under `strokes`. Optional style fields are omitted at their Figma default value.
+There are also three prompts, which suggest an efficient order to call the tools in. They only advise; they do not run anything.
 
-## Prompts
-
-The advertised catalog is exactly these three argumentless prompts. Each returns one user-role text message that guides tool choice. Prompts do not execute tools.
-
-| Prompt | Purpose |
+| Prompt | When to reach for it |
 | --- | --- |
-| `prototype_flow_strategy` | Read-only prototype journey analysis using reactions, optional motion, and targeted node context. |
-| `read_design_strategy` | Token-efficient, read-only sequence for inspecting a Figma file with the 14-tool catalog. |
-| `style_audit_strategy` | Bounded, report-only audit of raw values versus linked styles and variables. |
+| `read_design_strategy` | Inspecting a file without burning tokens on the whole document. |
+| `prototype_flow_strategy` | Tracing what happens when someone clicks through a prototype. |
+| `style_audit_strategy` | Finding raw values that should have been styles or variables. |
 
-## Visual output and SVG source
-
-`get_screenshot` accepts `format: "png" | "jpeg" | "svg"`.
-
-- PNG and JPEG return MCP image content. `scale` is allowed only on raster variants (0.25–4.0).
-- SVG uses Figma `exportAsync({ format: "SVG_STRING" })`. The result includes `image/svg+xml` content for clients that can preview it **and** the UTF-8 **SVG source** in structured content so a developer can use the vector asset directly.
-- `scale` is invalid for SVG. Supported SVG options map to Figma's API: `svgOutlineText` defaults to `true`, `svgIdAttribute` to `false`, and `svgSimplifyStroke` to `true`.
-- Safe vector structure is preserved, including `viewBox` and internal fragment references such as `url(#gradient)`.
-- Before return, the iframe parses the SVG as XML and flags scripts, `foreignObject`, inline event handlers, `javascript:` URLs, CSS `@import`, and references that address anything but the document itself. The source is never rewritten and never withheld: every SVG asset carries a `safe` verdict, and an unsafe one also carries a `rejection` naming the rule that fired (`parserError`, `unsafeElement`, `unsafeAttribute`, `unsafeCss`, `unsafeProcessingInstruction`) plus the offending local name where the rule has one — never an attribute value.
-- References are deny-by-default: a same-document `#fragment` passes, and so does a `data:` URL carrying a font media type or a PNG, JPEG, or WebP whose bytes validate. Every other scheme and media type is refused, as is a relative path and an `xml:base` naming an origin. Embedded fonts are therefore safe, which is what keeps `svgOutlineText: false` usable.
-- **The `safe` verdict travels in structured content only.** The `image/svg+xml` content block is emitted for every SVG asset, safe or not, and carries no marker. A client that auto-previews that block renders an unsafe SVG with nothing to distinguish it. Read `safe` from structured content before trusting a preview.
-- The caller decides what an unsafe verdict is worth. The reason is precise because the risks are not equal: a remote `@font-face` URL at worst leaks a fetch when the file is opened, while a `<script>` element executes if the source is written to disk and later opened in a browser. `UNSAFE_SVG` is reserved and no longer emitted.
-- A node that puts no ink on the page fails with a per-asset `EMPTY_NODE_BOUNDS`, in every format. An empty SVG or a 1×1 transparent pixel would be a success carrying nothing, and `INTERNAL_ERROR` is reserved for failures whose cause we do not know. The test is the host's own `absoluteRenderBounds`, which is measured after strokes and effects rather than from width and height: a `LINE` is exactly zero pixels high by API contract, so every divider and underline would fail a geometric test while rendering perfectly. Nodes that are switched off — their own `visible`, or any ancestor's — are left to the exporter, because the host reports no render bounds for anything invisible and that says nothing about whether the node is empty. So is a node whose bounds the host will not report at all.
-
-The tool does not choose or write a local path.
-
-Motion fields use seconds (`duration`, `timelineOffset`, `timelineDuration`, `timelinePosition`). They are not converted to milliseconds.
-
-Reaction `timeout` is **seconds** on the live Plugin API (UI After delay 800ms → host `0.8`). Official Trigger docs that say milliseconds are wrong. `delay`, `transitionDuration`, and `mediaHitTime` are copied without conversion; Transition/Motion examples are also seconds.
-
-## Limitations
-
-Read-only in Figma and side-effect-free on the local filesystem:
-
-- The plugin targets Dev Mode (`editorType: ["dev"]`) with `capabilities: ["inspect"]` only.
-- No public tool creates, deletes, moves, restyles, or otherwise mutates document content, the current page, the selection, plugin data, or relaunch data.
-- No MVP operation creates a local export file. There is no filesystem-path argument.
-- Results are bounded (depth, node count, serialized size, deadlines). Large or deep reads truncate instead of walking the whole document.
-- `get_motion` fails with `CAPABILITY_UNAVAILABLE` when the live Motion surface is absent.
-- `search_nodes` is single-scope only; document-wide and multi-page search are rejected.
-- An SVG asset's `safe` verdict is carried in structured content only. The `image/svg+xml` content block is unlabelled, so a client that previews it renders an unsafe SVG exactly like a safe one.
-
-Threat-model caveat: the MVP trusts processes running as the **same local** operating-system user and the browser context hosting the Figma plugin. Loopback binding blocks direct remote connections, but `Origin: null` is **not authentication** and can be reproduced by intentionally sandboxed browser content. Such content may register a fake session or cause denial of service; socket-bound correlation and the closed plugin-role protocol prevent it from reading or completing work for an existing Figma connection. Protection against a malicious local process requires per-install pairing in a separate design.
+Details that will surprise you eventually, such as how SVG safety verdicts work and which fields are omitted at their Figma defaults, are in [docs/reference.md](docs/reference.md).
 
 ## Non-goals
 
-- Creating, deleting, moving, resizing, renaming, or restyling Figma nodes.
-- Editing text, variables, styles, components, prototypes, annotations, or plugin data.
-- Persisting connection identifiers in the Figma document.
-- Replacing Figma's editor or designer workflow.
-- Writing screenshots, PDFs, or other exports to arbitrary local paths.
-- Cloud hosting, shared team state, authentication, or remote network access.
-- A general Figma REST API client.
-- Any prompt whose intended outcome mutates Figma, or client-specific workflow skills.
+- Changing anything in Figma. No creating, deleting, moving, restyling, or editing text, variables, styles, components, prototypes, or annotations.
+- Writing exports to your filesystem. There is no path argument anywhere.
+- Replacing the Figma editor or a designer's workflow.
+- Cloud hosting, shared team state, accounts, or any remote network access.
+- Being a general Figma REST API client.
+
+It also assumes anything running as your operating-system user is trustworthy. See the threat-model note in [docs/reference.md](docs/reference.md#threat-model) before running it somewhere that is not your own machine.
 
 ## Development
 
-Pinned toolchain: Rust 1.95.0 and Bun 1.3.14. See [docs/testing.md](docs/testing.md) for the seven local verification commands and the stdio versus official lifecycle-smoke evidence split.
+Pinned toolchain: Rust 1.95.0, Bun 1.3.14.
+
+```bash
+cargo test --workspace --all-features
+(cd plugin && bun test)
+```
+
+Free ports `3056` and `3057` before running the Rust suite — a broker left running from an earlier session will fail tests in a way that looks like a code defect.
+
+[docs/testing.md](docs/testing.md) has the full verification commands, and [docs/manual-acceptance.md](docs/manual-acceptance.md) is the record of what has actually been checked against a live Figma session, including what has not.

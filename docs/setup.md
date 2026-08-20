@@ -46,7 +46,7 @@ The companion is not a Figma Community publish in the MVP. Re-import or refresh 
 
 ## 4. Configure an MCP client over stdio
 
-Point the client at the release binary with **stdio** transport and no extra arguments. Client-specific snippets for Claude Code, Claude Desktop, Codex, OpenCode, and Grok Build are in the [README](../README.md#install-in-mcp-clients). Generic `mcpServers` JSON:
+Point the client at the release binary with **stdio** transport and no extra arguments. Client-specific snippets for Claude Code, Claude Desktop, Codex, OpenCode, and Grok Build are in the [README](../README.md#connect-an-mcp-client). Generic `mcpServers` JSON:
 
 ```json
 {
@@ -94,4 +94,4 @@ The server logs to stderr so MCP stdio framing stays clean. See [testing.md](tes
 
 The server is **read-only**. It does not change document content, page, selection, plugin data, or relaunch data, and it does not create a local export file.
 
-`Origin: null` on the plugin socket is origin filtering, **not authentication**. The MVP trusts the same local operating-system user. See the README threat-model caveat.
+`Origin: null` on the plugin socket is origin filtering, **not authentication**. The MVP trusts the same local operating-system user. See the [threat model](reference.md#threat-model).
