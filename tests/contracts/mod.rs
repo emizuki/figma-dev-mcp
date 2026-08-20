@@ -16,7 +16,7 @@ use figma_dev_mcp_protocol::{
         ReactionAction, RequestId, ReturnedList, ScreenshotAsset, SearchNodesInput, Selector,
         StrokeAlign, StrokeValue, StyleKind, StyleReference, TextStyle,
     },
-    error::{ErrorCode, ItemError, PluginFailure, ToolError},
+    error::{ErrorCode, ItemError, PluginFailure, SvgRejectionKind, ToolError},
     limits::{
         HEARTBEAT_SECS, IDLE_GRACE_SECS, INACTIVITY_TIMEOUT_SECS, MAX_DEPTH,
         MAX_DISPLAY_TEXT_BYTES, MAX_ENVELOPE_BYTES, MAX_IDENTIFIER_BYTES, MAX_IN_FLIGHT,
@@ -322,6 +322,159 @@ fn stable_error_codes_are_exact_and_screaming_snake_case() {
     let encoded = serde_json::to_value(error).unwrap();
     assert!(encoded.get("source").is_none());
     assert!(encoded.get("pluginPayload").is_none());
+}
+
+/// Exhaustive by construction: a new rule fails to compile here until it is
+/// given a wire tag, which is the same tag the plugin must mirror.
+pub fn svg_rejection_kind_tag(kind: SvgRejectionKind) -> &'static str {
+    match kind {
+        SvgRejectionKind::ParserError => "parserError",
+        SvgRejectionKind::UnsafeElement => "unsafeElement",
+        SvgRejectionKind::UnsafeAttribute => "unsafeAttribute",
+        SvgRejectionKind::UnsafeCss => "unsafeCss",
+        SvgRejectionKind::UnsafeProcessingInstruction => "unsafeProcessingInstruction",
+    }
+}
+
+pub const SVG_REJECTION_KINDS: [SvgRejectionKind; 5] = [
+    SvgRejectionKind::ParserError,
+    SvgRejectionKind::UnsafeElement,
+    SvgRejectionKind::UnsafeAttribute,
+    SvgRejectionKind::UnsafeCss,
+    SvgRejectionKind::UnsafeProcessingInstruction,
+];
+
+fn unsafe_svg_error(rejection: Value) -> Value {
+    json!({
+        "code": "UNSAFE_SVG",
+        "message": "The SVG was rejected by the safety policy.",
+        "retryable": false,
+        "svgRejection": rejection,
+    })
+}
+
+#[test]
+fn every_svg_rejection_rule_round_trips_named_and_unnamed() {
+    for kind in SVG_REJECTION_KINDS {
+        let tag = svg_rejection_kind_tag(kind);
+        for name in [None, Some("href")] {
+            let mut rejection = json!({ "kind": tag });
+            if let Some(name) = name {
+                rejection["name"] = json!(name);
+            }
+            let encoded = unsafe_svg_error(rejection);
+            let error: ToolError = serde_json::from_value(encoded.clone()).unwrap();
+            let decoded = error.svg_rejection().expect("rule survives decoding");
+            assert_eq!(decoded.kind(), kind);
+            assert_eq!(
+                decoded.name().map(|value| value.as_str()),
+                name,
+                "{tag} must keep its offender name exactly as sent"
+            );
+            assert_eq!(
+                serde_json::to_value(&error).unwrap(),
+                encoded,
+                "{tag} must re-encode byte for byte"
+            );
+        }
+    }
+
+    let plain: ToolError = serde_json::from_value(json!({
+        "code": "UNSAFE_SVG",
+        "message": "The SVG was rejected by the safety policy.",
+        "retryable": false
+    }))
+    .unwrap();
+    assert!(plain.svg_rejection().is_none());
+    assert!(
+        serde_json::to_value(&plain)
+            .unwrap()
+            .get("svgRejection")
+            .is_none(),
+        "an absent rule must not materialise as null"
+    );
+}
+
+#[test]
+fn svg_rejection_rules_stay_closed() {
+    // An unknown rule must be refused, not ignored: a variant only one end
+    // knows about would drop the session rather than one request.
+    assert!(
+        serde_json::from_value::<ToolError>(unsafe_svg_error(json!({ "kind": "unsafeFont" })))
+            .is_err()
+    );
+    assert!(
+        serde_json::from_value::<ToolError>(unsafe_svg_error(json!({ "kind": "parsererror" })))
+            .is_err()
+    );
+    assert!(serde_json::from_value::<ToolError>(unsafe_svg_error(json!({}))).is_err());
+    assert!(
+        serde_json::from_value::<ToolError>(unsafe_svg_error(
+            json!({ "kind": "unsafeElement", "value": "fill:#ff0000" })
+        ))
+        .is_err(),
+        "the rule carries names, never values"
+    );
+    assert!(
+        serde_json::from_value::<ToolError>(unsafe_svg_error(
+            json!({ "kind": "unsafeElement", "name": "a".repeat(MAX_IDENTIFIER_BYTES + 1) })
+        ))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<ToolError>(unsafe_svg_error(json!({
+            "kind": "unsafeElement", "name": ""
+        })))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<ToolError>(unsafe_svg_error(json!("unsafeElement"))).is_err(),
+        "the rule is an object, not a bare tag"
+    );
+}
+
+#[test]
+fn the_plugin_mirrors_every_svg_rejection_rule() {
+    // A rule present on one end and absent on the other drops the whole broker
+    // session, not one request, so the two ends are pinned to each other here.
+    let plugin = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("tests crate has a workspace parent")
+        .join("plugin/src/shared");
+    let results = std::fs::read_to_string(plugin.join("results.ts")).unwrap();
+    let validation = std::fs::read_to_string(plugin.join("result-validation.ts")).unwrap();
+    for kind in SVG_REJECTION_KINDS {
+        let quoted = format!("\"{}\"", svg_rejection_kind_tag(kind));
+        assert!(
+            results.contains(&quoted),
+            "plugin results.ts must declare SVG rejection rule {quoted}"
+        );
+        assert!(
+            validation.contains(&quoted),
+            "plugin result-validation.ts must accept SVG rejection rule {quoted}"
+        );
+    }
+    assert!(
+        results.contains("svgRejection?:") && validation.contains("\"svgRejection\""),
+        "plugin must carry the rule on its tool error"
+    );
+}
+
+#[test]
+fn a_rejected_screenshot_asset_carries_its_rule_through_the_result() {
+    let payload = json!({
+        "assets": [{ "status": "error", "error": unsafe_svg_error(json!({
+            "kind": "unsafeAttribute", "name": "href"
+        }))}],
+        "truncated": false,
+        "observation": {
+            "startedAt": "2026-08-19T00:00:00.000Z",
+            "completedAt": "2026-08-19T00:00:01.000Z"
+        }
+    });
+    let result: figma_dev_mcp_protocol::domain::GetScreenshotResult =
+        serde_json::from_value(payload.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&result).unwrap(), payload);
 }
 
 #[test]

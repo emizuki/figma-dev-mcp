@@ -215,6 +215,12 @@ bounded_string_newtype!(
     true
 );
 bounded_string_newtype!(SvgSource, MAX_SVG_BYTES, "SVG source", true);
+bounded_string_newtype!(
+    SvgRejectionName,
+    MAX_IDENTIFIER_BYTES,
+    "SVG element or attribute local name",
+    false
+);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[serde(transparent)]

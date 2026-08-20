@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test"
 import { DOMParser, onErrorStopParsing } from "@xmldom/xmldom"
 
-import { MAX_RASTER_DECODED_BYTES, MAX_SVG_BYTES } from "../shared/limits"
+import {
+  MAX_IDENTIFIER_BYTES,
+  MAX_RASTER_DECODED_BYTES,
+  MAX_SVG_BYTES,
+} from "../shared/limits"
 import { validateDataUrl, validateSvgSource } from "./svg"
 
 const parser = new DOMParser({ onError: onErrorStopParsing })
@@ -36,9 +40,9 @@ describe("SVG safety policy", () => {
     const script = await fixture("unsafe-script.svg")
     const external = await fixture("unsafe-external.svg")
     const nested = await fixture("unsafe-nested-data.svg")
-    expect(validate(script)).toEqual({ ok: false, code: "UNSAFE_SVG" })
-    expect(validate(external)).toEqual({ ok: false, code: "UNSAFE_SVG" })
-    expect(validate(nested)).toEqual({ ok: false, code: "UNSAFE_SVG" })
+    expect(validate(script)).toMatchObject({ ok: false, code: "UNSAFE_SVG" })
+    expect(validate(external)).toMatchObject({ ok: false, code: "UNSAFE_SVG" })
+    expect(validate(nested)).toMatchObject({ ok: false, code: "UNSAFE_SVG" })
 
     const cases = [
       `<svg xmlns="http://www.w3.org/2000/svg"><foreignObject width="1" height="1"/></svg>`,
@@ -53,16 +57,16 @@ describe("SVG safety policy", () => {
       `<svg xmlns="http://www.w3.org/2000/svg"`,
     ]
     for (const source of cases) {
-      expect(validate(source)).toEqual({ ok: false, code: "UNSAFE_SVG" })
+      expect(validate(source)).toMatchObject({ ok: false, code: "UNSAFE_SVG" })
     }
   })
 
   test("rejects invalid UTF-8 transfer and oversized source", () => {
-    expect(validate(Uint8Array.of(0xff, 0xfe, 0xfd))).toEqual({
+    expect(validate(Uint8Array.of(0xff, 0xfe, 0xfd))).toMatchObject({
       ok: false,
       code: "UNSAFE_SVG",
     })
-    expect(validate("\uD800")).toEqual({ ok: false, code: "UNSAFE_SVG" })
+    expect(validate("\uD800")).toMatchObject({ ok: false, code: "UNSAFE_SVG" })
     expect(
       validate(
         `<svg xmlns="http://www.w3.org/2000/svg">${"a".repeat(MAX_SVG_BYTES)}`,
@@ -82,7 +86,7 @@ describe("SVG safety policy", () => {
       `<svg xmlns="http://www.w3.org/2000/svg"><rect fill="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E"/></svg>`,
     ]
     for (const source of cases) {
-      expect(validate(source)).toEqual({ ok: false, code: "UNSAFE_SVG" })
+      expect(validate(source)).toMatchObject({ ok: false, code: "UNSAFE_SVG" })
     }
     const safe = `<svg xmlns="http://www.w3.org/2000/svg"><image href="#ok"/></svg>`
     expect(validate(safe)).toEqual({ ok: true, source: safe })
@@ -100,7 +104,9 @@ describe("SVG safety policy", () => {
     // These must keep failing. Written before the predicate is widened.
     for (const source of [
       svgWithCss(`@font-face{src:url(data:text/html;base64,PGh0bWw+)}`),
-      svgWithCss(`@font-face{src:url(data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=)}`),
+      svgWithCss(
+        `@font-face{src:url(data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=)}`,
+      ),
       svgWithCss(
         `@font-face{src:url(data:application/javascript;base64,YWxlcnQoMSk=)}`,
       ),
@@ -159,6 +165,93 @@ describe("SVG safety policy", () => {
       "base64",
     )
     expect(validateDataUrl(`data:font/woff2;base64,${oversized}`)).toBe(false)
+  })
+
+  test("a rejection says which rule fired", () => {
+    const script = validate(
+      `<svg xmlns="http://www.w3.org/2000/svg"><script/></svg>`,
+    )
+    expect(script.ok).toBe(false)
+    expect(script.reason).toEqual({ kind: "unsafeElement", name: "script" })
+
+    const external = validate(
+      `<svg xmlns="http://www.w3.org/2000/svg"><image href="https://x/y"/></svg>`,
+    )
+    expect(external.reason?.kind).toBe("unsafeAttribute")
+  })
+
+  test("every rejection kind is reachable and names the offender", () => {
+    // parserError: unterminated root element.
+    expect(validate(`<svg xmlns="http://www.w3.org/2000/svg"`).reason).toEqual({
+      kind: "parserError",
+    })
+    // parserError: the transfer never decoded, so no node ever existed.
+    expect(validate(Uint8Array.of(0xff, 0xfe, 0xfd)).reason).toEqual({
+      kind: "parserError",
+    })
+    // unsafeElement: foreignObject, named by its lower-cased local name.
+    expect(
+      validate(
+        `<svg xmlns="http://www.w3.org/2000/svg"><foreignObject width="1" height="1"/></svg>`,
+      ).reason,
+    ).toEqual({ kind: "unsafeElement", name: "foreignobject" })
+    // unsafeAttribute: an event handler, named without its prefix.
+    expect(
+      validate(
+        `<svg xmlns="http://www.w3.org/2000/svg"><rect onclick="alert(1)"/></svg>`,
+      ).reason,
+    ).toEqual({ kind: "unsafeAttribute", name: "onclick" })
+    // unsafeAttribute: a namespaced href keeps the local name only.
+    expect(
+      validate(
+        `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><use xlink:href="https://evil.example/x.svg#a"/></svg>`,
+      ).reason,
+    ).toEqual({ kind: "unsafeAttribute", name: "href" })
+    // unsafeCss: a <style> body, named by the element that carried it.
+    expect(
+      validate(svgWithCss(`@import url(https://evil.example/x.css);`)).reason,
+    ).toEqual({ kind: "unsafeCss", name: "style" })
+    // unsafeCss: an attribute value that reached the CSS fallback, named by
+    // the attribute that carried it.
+    expect(
+      validate(
+        `<svg xmlns="http://www.w3.org/2000/svg"><rect fill="url(https://evil.example/x)"/></svg>`,
+      ).reason,
+    ).toEqual({ kind: "unsafeCss", name: "fill" })
+    // Ordering fact, not a policy change: the active-URL check runs before the
+    // CSS fallback, so a `token:token` value is reported against the attribute
+    // rule even when the attribute is `style`.
+    expect(
+      validate(
+        `<svg xmlns="http://www.w3.org/2000/svg"><rect style="fill:url(https://evil.example/x)"/></svg>`,
+      ).reason,
+    ).toEqual({ kind: "unsafeAttribute", name: "style" })
+    // unsafeProcessingInstruction: named by the pseudo-attribute that failed.
+    expect(
+      validate(
+        `<?xml-stylesheet href="https://evil.example/x.css" type="text/css"?><svg xmlns="http://www.w3.org/2000/svg"/>`,
+      ).reason,
+    ).toEqual({ kind: "unsafeProcessingInstruction", name: "href" })
+  })
+
+  test("a size rejection carries no rule, and an accepted document carries none either", () => {
+    const oversized = validate(
+      `<svg xmlns="http://www.w3.org/2000/svg">${"a".repeat(MAX_SVG_BYTES)}`,
+    )
+    expect(oversized).toEqual({ ok: false, code: "LIMIT_EXCEEDED" })
+    expect(oversized.reason).toBeUndefined()
+
+    const safe = `<svg xmlns="http://www.w3.org/2000/svg"><image href="#ok"/></svg>`
+    expect(validate(safe).reason).toBeUndefined()
+  })
+
+  test("an unusable offender name is omitted rather than sent oversized", () => {
+    const huge = `a${"b".repeat(MAX_IDENTIFIER_BYTES)}`
+    expect(
+      validate(
+        `<svg xmlns="http://www.w3.org/2000/svg"><rect ${huge}="https://evil.example/x"/></svg>`,
+      ).reason,
+    ).toEqual({ kind: "unsafeAttribute" })
   })
 
   test("validateDataUrl accepts a font payload at the byte ceiling", () => {

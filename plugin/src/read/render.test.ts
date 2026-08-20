@@ -9,6 +9,7 @@ import {
   createProgressReporter,
   type ProgressFrame,
 } from "../main/progress"
+import { parseReadResult } from "../shared/result-validation"
 import { parseBrokerToPlugin } from "../shared/validation"
 import {
   completeScreenshotValidation,
@@ -379,6 +380,89 @@ describe("get_screenshot export selection", () => {
     })
   })
 
+  test("carries the SVG rejection rule from the codec into the asset error", async () => {
+    const node = exportNode("10:1", async () => "<svg/>")
+    installFigma({ nodes: new Map([["10:1", node]]) })
+    const rejecting: ScreenshotCodec = {
+      ...passthrough,
+      async encodeSvg() {
+        return {
+          ok: false,
+          code: "UNSAFE_SVG",
+          svgRejection: { kind: "unsafeAttribute", name: "id" },
+        }
+      },
+    }
+
+    const result = await getScreenshot(
+      {
+        format: "svg",
+        selector: { nodeId: "10:1" },
+        svgOutlineText: true,
+        svgIdAttribute: false,
+        svgSimplifyStroke: true,
+      },
+      undefined,
+      rejecting,
+    )
+    expect(result.assets[0]).toEqual({
+      status: "error",
+      error: {
+        code: "UNSAFE_SVG",
+        message: "The SVG was rejected by the safety policy.",
+        retryable: false,
+        svgRejection: { kind: "unsafeAttribute", name: "id" },
+      },
+    })
+  })
+
+  test("keeps the SVG rejection rule across the UI validation round trip", async () => {
+    const node = exportNode("11:1", async () => "<svg/>")
+    installFigma({
+      nodes: new Map([["11:1", node]]),
+      ui: {
+        postMessage(message: unknown) {
+          const { validationId } = message as { validationId: string }
+          completeScreenshotValidation({
+            type: "screenshotValidated",
+            validationId,
+            asset: {
+              status: "error",
+              error: {
+                code: "UNSAFE_SVG",
+                message: "The SVG was rejected by the safety policy.",
+                retryable: false,
+                svgRejection: { kind: "unsafeCss", name: "style" },
+              },
+            },
+          })
+        },
+      },
+    })
+
+    const result = await getScreenshot(
+      {
+        format: "svg",
+        selector: { nodeId: "11:1" },
+        svgOutlineText: true,
+        svgIdAttribute: false,
+        svgSimplifyStroke: true,
+      },
+      undefined,
+      undefined,
+      1_000,
+    )
+    expect(result.assets[0]).toEqual({
+      status: "error",
+      error: {
+        code: "UNSAFE_SVG",
+        message: "The SVG was rejected by the safety policy.",
+        retryable: false,
+        svgRejection: { kind: "unsafeCss", name: "style" },
+      },
+    })
+  })
+
   test("propagates cancellation between captured nodes", async () => {
     const controller = new LocalCancellationController()
     const nodes = new Map<string, unknown>([
@@ -482,5 +566,66 @@ describe("get_screenshot export selection", () => {
         1_000,
       ),
     ).rejects.toBeInstanceOf(LocalCancellationError)
+  })
+})
+
+describe("screenshot result validation", () => {
+  const screenshotResult = (error: Record<string, unknown>): unknown => ({
+    operation: "get_screenshot",
+    result: {
+      assets: [{ status: "error", error }],
+      truncated: false,
+      observation: {
+        startedAt: "2026-08-19T00:00:00.000Z",
+        completedAt: "2026-08-19T00:00:01.000Z",
+      },
+    },
+  })
+
+  const unsafeSvg = (
+    svgRejection: Record<string, unknown>,
+  ): Record<string, unknown> => ({
+    code: "UNSAFE_SVG",
+    message: "The SVG was rejected by the safety policy.",
+    retryable: false,
+    svgRejection,
+  })
+
+  test("accepts every rejection kind, with and without a name", () => {
+    for (const kind of [
+      "parserError",
+      "unsafeElement",
+      "unsafeAttribute",
+      "unsafeCss",
+      "unsafeProcessingInstruction",
+    ]) {
+      expect(parseReadResult(screenshotResult(unsafeSvg({ kind })))).toEqual(
+        screenshotResult(unsafeSvg({ kind })) as never,
+      )
+      expect(
+        parseReadResult(screenshotResult(unsafeSvg({ kind, name: "id" }))),
+      ).toEqual(screenshotResult(unsafeSvg({ kind, name: "id" })) as never)
+    }
+  })
+
+  test("refuses an unknown kind, an unknown field, and an oversized name", () => {
+    expect(() =>
+      parseReadResult(screenshotResult(unsafeSvg({ kind: "unsafeFont" }))),
+    ).toThrow()
+    expect(() =>
+      parseReadResult(
+        screenshotResult(unsafeSvg({ kind: "unsafeElement", value: "secret" })),
+      ),
+    ).toThrow()
+    expect(() =>
+      parseReadResult(
+        screenshotResult(
+          unsafeSvg({ kind: "unsafeElement", name: "a".repeat(257) }),
+        ),
+      ),
+    ).toThrow()
+    expect(() =>
+      parseReadResult(screenshotResult(unsafeSvg({ name: "id" }))),
+    ).toThrow()
   })
 })

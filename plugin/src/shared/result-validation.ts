@@ -90,6 +90,8 @@ import type {
   StyleReference,
   StyleIdentity,
   StyleValue,
+  SvgRejection,
+  SvgRejectionKind,
   TextAlignHorizontal,
   TextAlignVertical,
   TextAutoResize,
@@ -303,12 +305,30 @@ function parseItemError(value: unknown, label: string): ItemError {
   return result
 }
 
+const SVG_REJECTION_KINDS: readonly SvgRejectionKind[] = [
+  "parserError",
+  "unsafeElement",
+  "unsafeAttribute",
+  "unsafeCss",
+  "unsafeProcessingInstruction",
+]
+
+function parseSvgRejection(value: unknown, label: string): SvgRejection {
+  const object = exact(value, label, ["kind"], ["name"])
+  const result: SvgRejection = {
+    kind: oneOf(object.kind, SVG_REJECTION_KINDS, `${label}.kind`),
+  }
+  const name = optionalString(object, "name", identifier)
+  if (name !== undefined) result.name = name
+  return result
+}
+
 function parseToolError(value: unknown, label: string): ToolError {
   const object = exact(
     value,
     label,
     ["code", "message", "retryable"],
-    ["items"],
+    ["items", "svgRejection"],
   )
   const code = errorCode(object.code)
   const message = string(object.message, `${label}.message`)
@@ -325,6 +345,12 @@ function parseToolError(value: unknown, label: string): ToolError {
       `${label}.items`,
       parseItemError,
       MAX_INPUT_IDS,
+    )
+  }
+  if (Object.hasOwn(object, "svgRejection")) {
+    result.svgRejection = parseSvgRejection(
+      object.svgRejection,
+      `${label}.svgRejection`,
     )
   }
   return result

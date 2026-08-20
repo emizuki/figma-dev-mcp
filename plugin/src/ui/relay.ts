@@ -4,6 +4,7 @@ import type {
   ControllerOutboundMessage,
   ErrorCode,
 } from "../shared/protocol"
+import type { SvgRejection } from "../shared/results"
 import { parseControllerOutboundMessage } from "../shared/validation"
 import { encodeValidatedRaster, type RasterFormat } from "./raster"
 import { validateSvgSource } from "./svg"
@@ -46,13 +47,26 @@ function asBytes(value: unknown): Uint8Array | null {
   return bytes
 }
 
-function itemError(code: "UNSAFE_SVG" | "LIMIT_EXCEEDED" | "INTERNAL_ERROR"): {
+function itemError(
+  code: "UNSAFE_SVG" | "LIMIT_EXCEEDED" | "INTERNAL_ERROR",
+  svgRejection?: SvgRejection,
+): {
   status: "error"
-  error: { code: ErrorCode; message: string; retryable: false }
+  error: {
+    code: ErrorCode
+    message: string
+    retryable: false
+    svgRejection?: SvgRejection
+  }
 } {
+  const error = {
+    code,
+    message: ERROR_MESSAGES[code],
+    retryable: false as const,
+  }
   return {
     status: "error",
-    error: { code, message: ERROR_MESSAGES[code], retryable: false },
+    error: svgRejection === undefined ? error : { ...error, svgRejection },
   }
 }
 
@@ -61,7 +75,7 @@ function finalizeScreenshotItem(item: Record<string, unknown>): unknown {
   if (item.format === "svg") {
     if (typeof item.source !== "string") return itemError("INTERNAL_ERROR")
     const result = validateSvgSource(item.source, new DOMParser())
-    if (!result.ok) return itemError(result.code)
+    if (!result.ok) return itemError(result.code, result.reason)
     return {
       status: "success",
       value: { format: "svg", nodeId, source: result.source },

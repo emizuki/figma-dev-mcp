@@ -5,7 +5,7 @@ import type {
   ScreenshotAsset,
   ScreenshotSelector,
 } from "../shared/protocol"
-import type { ItemResult, ToolError } from "../shared/results"
+import type { ItemResult, SvgRejection, ToolError } from "../shared/results"
 import {
   type CancellationListener,
   type CancellationSignal,
@@ -37,7 +37,12 @@ export type RasterEncodeResult =
   | RasterEncodeSuccess
   | { ok: false; code: ErrorCode }
 
-export type SvgEncodeResult = SvgEncodeSuccess | { ok: false; code: ErrorCode }
+/** The SVG safety policy runs in the UI context, so the rule that rejected an
+ * export has to ride back with the code or it is lost before the result is
+ * built. */
+export type SvgEncodeResult =
+  | SvgEncodeSuccess
+  | { ok: false; code: ErrorCode; svgRejection?: SvgRejection }
 
 export interface ScreenshotCodec {
   encodeRaster(
@@ -73,12 +78,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object"
 }
 
-function itemError(code: ErrorCode): ItemResult<ScreenshotAsset> {
+function itemError(
+  code: ErrorCode,
+  svgRejection?: SvgRejection,
+): ItemResult<ScreenshotAsset> {
   const error: ToolError = {
     code,
     message: MESSAGES[code],
     retryable: false,
   }
+  if (svgRejection !== undefined) error.svgRejection = svgRejection
   return { status: "error", error }
 }
 
@@ -252,8 +261,12 @@ function createUiCodec(
         signal,
         timeoutMs,
       )
-      if (result.status === "error")
-        return { ok: false, code: result.error.code }
+      if (result.status === "error") {
+        const rejection = result.error.svgRejection
+        return rejection === undefined
+          ? { ok: false, code: result.error.code }
+          : { ok: false, code: result.error.code, svgRejection: rejection }
+      }
       if (result.value.format !== "svg")
         return { ok: false, code: "INTERNAL_ERROR" }
       return { ok: true, source: result.value.source }
@@ -270,7 +283,7 @@ async function encodeAsset(
   if (input.format === "svg") {
     if (typeof exported !== "string") return itemError("INTERNAL_ERROR")
     const encoded = await codec.encodeSvg(exported)
-    if (!encoded.ok) return itemError(encoded.code)
+    if (!encoded.ok) return itemError(encoded.code, encoded.svgRejection)
     return {
       status: "success",
       value: { format: "svg", nodeId, source: encoded.source },

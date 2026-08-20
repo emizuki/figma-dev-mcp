@@ -1,7 +1,9 @@
 //! Stable, safe errors that may cross an MCP or plugin boundary.
 
 use crate::{
-    domain::{BoundaryValueError, DisplayText, ItemIdentifier, bounded_string_schema},
+    domain::{
+        BoundaryValueError, DisplayText, ItemIdentifier, SvgRejectionName, bounded_string_schema,
+    },
     limits::{MAX_DISPLAY_TEXT_BYTES, MAX_INPUT_IDS},
 };
 use schemars::{JsonSchema, Schema, SchemaGenerator};
@@ -49,6 +51,50 @@ pub const fn canonical_message(code: ErrorCode) -> &'static str {
         ErrorCode::Timeout => "The operation timed out.",
         ErrorCode::Cancelled => "The operation was cancelled.",
         ErrorCode::InternalError => "The operation failed.",
+    }
+}
+
+// `UNSAFE_SVG` alone cannot be diagnosed from outside the plugin, so the rule
+// that fired travels with the error.
+//
+// Modelled as a closed discriminant plus an optional name rather than as a
+// tagged enum. An adjacently tagged enum would have forced a required `content`
+// object on every name-carrying variant, but the plugin drops a name it cannot
+// bound, so the name is optional for every rule. A struct closes under
+// `deny_unknown_fields` exactly as adjacent tagging does, needs no hand-written
+// `Visitor`, and keeps one shape on both ends of the wire.
+/// Which safety rule rejected an SVG export.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum SvgRejectionKind {
+    ParserError,
+    UnsafeElement,
+    UnsafeAttribute,
+    UnsafeCss,
+    UnsafeProcessingInstruction,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SvgRejection {
+    kind: SvgRejectionKind,
+    // Never an attribute value: values carry design content.
+    /// Local name of the offending element or attribute, where the rule has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    name: Option<SvgRejectionName>,
+}
+
+impl SvgRejection {
+    pub fn new(kind: SvgRejectionKind, name: Option<SvgRejectionName>) -> Self {
+        Self { kind, name }
+    }
+
+    pub fn kind(&self) -> SvgRejectionKind {
+        self.kind
+    }
+
+    pub fn name(&self) -> Option<&SvgRejectionName> {
+        self.name.as_ref()
     }
 }
 
@@ -149,6 +195,7 @@ pub struct ToolError {
     code: ErrorCode,
     retryable: bool,
     items: Option<Vec<ItemError>>,
+    svg_rejection: Option<SvgRejection>,
 }
 
 impl ToolError {
@@ -157,6 +204,7 @@ impl ToolError {
             code,
             retryable,
             items: None,
+            svg_rejection: None,
         }
     }
 
@@ -164,6 +212,15 @@ impl ToolError {
         validate_item_count(items.len())?;
         self.items = Some(items);
         Ok(self)
+    }
+
+    pub fn with_svg_rejection(mut self, rejection: SvgRejection) -> Self {
+        self.svg_rejection = Some(rejection);
+        self
+    }
+
+    pub fn svg_rejection(&self) -> Option<&SvgRejection> {
+        self.svg_rejection.as_ref()
     }
 
     pub fn code(&self) -> ErrorCode {
@@ -188,12 +245,15 @@ impl Serialize for ToolError {
     where
         S: Serializer,
     {
-        let mut state = serializer.serialize_struct("ToolError", 4)?;
+        let mut state = serializer.serialize_struct("ToolError", 5)?;
         state.serialize_field("code", &self.code)?;
         state.serialize_field("message", self.message())?;
         state.serialize_field("retryable", &self.retryable)?;
         if let Some(items) = &self.items {
             state.serialize_field("items", items)?;
+        }
+        if let Some(rejection) = &self.svg_rejection {
+            state.serialize_field("svgRejection", rejection)?;
         }
         state.end()
     }
@@ -212,6 +272,8 @@ impl<'de> Deserialize<'de> for ToolError {
             retryable: bool,
             #[serde(default, deserialize_with = "deserialize_optional_error_items")]
             items: Option<Vec<ItemError>>,
+            #[serde(default)]
+            svg_rejection: Option<SvgRejection>,
         }
 
         let raw = RawToolError::deserialize(deserializer)?;
@@ -224,6 +286,7 @@ impl<'de> Deserialize<'de> for ToolError {
             code: raw.code,
             retryable: raw.retryable,
             items: raw.items,
+            svg_rejection: raw.svg_rejection,
         })
     }
 }
@@ -353,6 +416,9 @@ impl From<PluginFailure> for ToolError {
             code: failure.code,
             retryable: failure.retryable,
             items,
+            // A plugin-level failure envelope reports no per-asset SVG rule; the
+            // rule only exists on the item results inside a screenshot payload.
+            svg_rejection: None,
         }
     }
 }
@@ -487,6 +553,8 @@ struct ToolErrorSchema {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(length(max = 2000))]
     items: Option<Vec<ItemError>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    svg_rejection: Option<SvgRejection>,
 }
 
 struct CanonicalMessageSchema;

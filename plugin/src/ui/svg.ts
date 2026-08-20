@@ -1,4 +1,9 @@
-import { MAX_RASTER_DECODED_BYTES, MAX_SVG_BYTES } from "../shared/limits"
+import {
+  MAX_IDENTIFIER_BYTES,
+  MAX_RASTER_DECODED_BYTES,
+  MAX_SVG_BYTES,
+} from "../shared/limits"
+import type { SvgRejection, SvgRejectionKind } from "../shared/results"
 import { tokenizeCss } from "./css-syntax"
 import {
   decodeBase64,
@@ -46,9 +51,16 @@ export interface InjectedDomParser {
   parseFromString(source: string, type: string): SvgDocument
 }
 
+/** `reason` is declared absent on the success arm so a caller can read it off
+ * the union without narrowing first; only an `UNSAFE_SVG` failure carries one.
+ * A `LIMIT_EXCEEDED` failure has no rule to report. */
 export type SvgValidation =
-  | { ok: true; source: string }
-  | { ok: false; code: "UNSAFE_SVG" | "LIMIT_EXCEEDED" }
+  | { ok: true; source: string; reason?: undefined }
+  | {
+      ok: false
+      code: "UNSAFE_SVG" | "LIMIT_EXCEEDED"
+      reason?: SvgRejection
+    }
 
 const ELEMENT_NODE = 1
 const PROCESSING_INSTRUCTION_NODE = 7
@@ -71,6 +83,25 @@ function utf8ByteLength(value: string): number {
     }
   }
   return bytes
+}
+
+/** Names are structural (element and attribute local names), so they carry no
+ * design content; values are never reported. A name that does not fit the
+ * identifier bound is dropped rather than truncated, because a truncated name
+ * is a name that reads as a different, real one. */
+function rejected(kind: SvgRejectionKind, name?: string): SvgRejection {
+  if (
+    name === undefined ||
+    name.length === 0 ||
+    utf8ByteLength(name) > MAX_IDENTIFIER_BYTES
+  ) {
+    return { kind }
+  }
+  return { kind, name }
+}
+
+function unsafeSvg(reason: SvgRejection): SvgValidation {
+  return { ok: false, code: "UNSAFE_SVG", reason }
 }
 
 function hasLoneSurrogate(value: string): boolean {
@@ -308,21 +339,31 @@ function isXmlnsName(name: string): boolean {
   return name.length === 5 || name.charCodeAt(5) === 0x3a
 }
 
-function attributeValueUnsafe(name: string, value: string): boolean {
-  if (isXmlnsName(name)) return false
+/** Returns the rule that rejected the value, or `undefined` when it is safe.
+ * The CSS fallback applies to every attribute, so separating `unsafeCss` from
+ * `unsafeAttribute` is what tells a reader which of the two paths fired. */
+function attributeValueUnsafe(
+  name: string,
+  value: string,
+): SvgRejection | undefined {
+  if (isXmlnsName(name)) return undefined
   const localAttr = localNameOf(name)
   if (
     localAttr.length >= 2 &&
     localAttr.charCodeAt(0) === 0x6f &&
     localAttr.charCodeAt(1) === 0x6e
   ) {
-    return true
+    return rejected("unsafeAttribute", localAttr)
   }
   if (localAttr === "href" || localAttr === "src") {
-    return !validateReference(value)
+    if (validateReference(value)) return undefined
+    return rejected("unsafeAttribute", localAttr)
   }
-  if (looksLikeActiveUrl(value) && !validateReference(value)) return true
-  return !validateCssText(value)
+  if (looksLikeActiveUrl(value) && !validateReference(value)) {
+    return rejected("unsafeAttribute", localAttr)
+  }
+  if (validateCssText(value)) return undefined
+  return rejected("unsafeCss", localAttr)
 }
 
 function readPiIdent(
@@ -374,7 +415,10 @@ function readPiValue(
   return { value: data.slice(begin, index), next: index }
 }
 
-function piDataUnsafe(data: string): boolean {
+/** A pseudo-attribute failure is reported as `unsafeProcessingInstruction`,
+ * named by the pseudo-attribute, rather than as the attribute rule: where the
+ * value sits is the fact a reader needs. */
+function piDataUnsafe(data: string): SvgRejection | undefined {
   let index = 0
   const target = readPiIdent(data, index)
   index = target.next
@@ -390,13 +434,20 @@ function piDataUnsafe(data: string): boolean {
       const parsed = readPiValue(data, index)
       if (parsed === null) break
       index = parsed.next
-      if (attributeValueUnsafe(attribute.name, parsed.value)) return true
+      if (attributeValueUnsafe(attribute.name, parsed.value) !== undefined) {
+        return rejected(
+          "unsafeProcessingInstruction",
+          localNameOf(attribute.name),
+        )
+      }
     }
   }
-  return false
+  return undefined
 }
 
-function sourceProcessingInstructionsUnsafe(source: string): boolean {
+function sourceProcessingInstructionsUnsafe(
+  source: string,
+): SvgRejection | undefined {
   let index = 0
   while (index + 1 < source.length) {
     if (
@@ -414,13 +465,14 @@ function sourceProcessingInstructionsUnsafe(source: string): boolean {
       ) {
         index += 1
       }
-      if (piDataUnsafe(source.slice(begin, index))) return true
+      const reason = piDataUnsafe(source.slice(begin, index))
+      if (reason !== undefined) return reason
       if (index + 1 < source.length) index += 2
       continue
     }
     index += 1
   }
-  return false
+  return undefined
 }
 
 function validateCssText(value: string): boolean {
@@ -474,29 +526,35 @@ function elementLocalName(element: SvgElement): string {
   return localNameOf(element.tagName)
 }
 
-function walkUnsafe(node: SvgNode): boolean {
+function walkUnsafe(node: SvgNode): SvgRejection | undefined {
   if (node.nodeType === PROCESSING_INSTRUCTION_NODE) {
     return piDataUnsafe(node.data ?? node.nodeValue ?? "")
   }
   if (node.nodeType === ELEMENT_NODE) {
     const element = node as SvgElement
     const local = elementLocalName(element)
-    if (local === "script" || local === "foreignobject") return true
+    if (local === "script" || local === "foreignobject") {
+      return rejected("unsafeElement", local)
+    }
     if (local === "style" && !validateCssText(element.textContent ?? "")) {
-      return true
+      return rejected("unsafeCss", local)
     }
     for (const name of attributeNames(element)) {
-      if (attributeValueUnsafe(name, element.getAttribute(name) ?? "")) {
-        return true
-      }
+      const reason = attributeValueUnsafe(
+        name,
+        element.getAttribute(name) ?? "",
+      )
+      if (reason !== undefined) return reason
     }
   }
   const children = node.childNodes
   for (let index = 0; index < children.length; index += 1) {
     const child = childAt(node, index)
-    if (child !== null && walkUnsafe(child)) return true
+    if (child === null) continue
+    const reason = walkUnsafe(child)
+    if (reason !== undefined) return reason
   }
-  return false
+  return undefined
 }
 
 function hasParserError(document: SvgDocument): boolean {
@@ -513,7 +571,9 @@ export function validateSvgSource(
   parser: InjectedDomParser,
 ): SvgValidation {
   const source = decodeTransfer(input)
-  if (source === null) return { ok: false, code: "UNSAFE_SVG" }
+  // A source that never decoded produced no tree to walk, which is the same
+  // fact a parser error reports.
+  if (source === null) return unsafeSvg(rejected("parserError"))
   if (utf8ByteLength(source) > MAX_SVG_BYTES) {
     return { ok: false, code: "LIMIT_EXCEEDED" }
   }
@@ -521,11 +581,12 @@ export function validateSvgSource(
   try {
     document = parser.parseFromString(source, "image/svg+xml")
   } catch {
-    return { ok: false, code: "UNSAFE_SVG" }
+    return unsafeSvg(rejected("parserError"))
   }
-  if (hasParserError(document)) return { ok: false, code: "UNSAFE_SVG" }
-  if (sourceProcessingInstructionsUnsafe(source) || walkUnsafe(document)) {
-    return { ok: false, code: "UNSAFE_SVG" }
-  }
+  if (hasParserError(document)) return unsafeSvg(rejected("parserError"))
+  const piReason = sourceProcessingInstructionsUnsafe(source)
+  if (piReason !== undefined) return unsafeSvg(piReason)
+  const reason = walkUnsafe(document)
+  if (reason !== undefined) return unsafeSvg(reason)
   return { ok: true, source }
 }

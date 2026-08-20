@@ -22,11 +22,33 @@ export interface ItemError {
   retryable: boolean
 }
 
+/** Which safety rule rejected an SVG export.
+ *
+ * `UNSAFE_SVG` on its own cannot be diagnosed from outside the plugin, so the
+ * rule that fired travels with the error. Modelled as a struct with a closed
+ * `kind` rather than a tagged union: the Rust mirror then closes under plain
+ * derive, and both ends carry exactly one shape. */
+export type SvgRejectionKind =
+  | "parserError"
+  | "unsafeElement"
+  | "unsafeAttribute"
+  | "unsafeCss"
+  | "unsafeProcessingInstruction"
+
+export interface SvgRejection {
+  kind: SvgRejectionKind
+  /** Local name of the offending element or attribute, where the rule has one
+   * and it fits the identifier bound. Never the attribute value: values carry
+   * design content. */
+  name?: string
+}
+
 export interface ToolError {
   code: ErrorCode
   message: string
   retryable: boolean
   items?: ItemError[]
+  svgRejection?: SvgRejection
 }
 
 export type ItemResult<T> =
