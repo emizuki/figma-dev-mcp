@@ -496,6 +496,28 @@ describe("SVG safety policy", () => {
     expect(validate(svgWithAttr("to", "jav ascript:alert(1)")).safe).toBe(true)
   })
 
+  // The other side of the segment split. `values` is the only semicolon list
+  // among the resource-value attributes; everywhere else a semicolon is
+  // content. Splitting these tore one value into pieces that are not values —
+  // a truncated `data:image/png` that parses as nothing, and a fragment name
+  // read as though it were a second entry — and rejected what a browser never
+  // fetches.
+  test("a semicolon in a single-valued attribute is content, not a list", () => {
+    const png =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+    for (const value of [
+      `data:image/png;base64,${png}`,
+      `data:font/woff2;base64,d09GMgABAAAAAAAA`,
+      `#a;javascript:alert(1)`,
+    ]) {
+      for (const attribute of ["to", "from", "by", "fill", "stroke"]) {
+        expect(validate(svgWithAttr(attribute, value)).safe).toBe(true)
+      }
+      // Tier 1 reads the whole value for the same reason, and always did.
+      expect(validate(svgWithAttr("href", value)).safe).toBe(true)
+    }
+  })
+
   test("every segment of a list value is inspected", () => {
     // `values` on an animation element is semicolon-separated. The classifier
     // read only the head, so a harmless first segment carried the rest through.

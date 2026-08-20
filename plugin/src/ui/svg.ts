@@ -266,11 +266,16 @@ function stripUrlWhitespace(value: string): string {
   return out
 }
 
+/** Deliberately not normalised here. Normalisation happens once, at the head of
+ * `looksLikeActiveUrl`, which is the only caller whose answer it can change:
+ * `validateReference` denies by default, so a value spelling `jav<TAB>ascript:`
+ * is refused there whether or not this prefix test recognises it. A strip in
+ * this function was measurably dead — reverting it left the whole suite green —
+ * and a security-relevant line that no test can fail is a line the next reader
+ * deletes by accident. If an allow-branch is ever added to `validateReference`
+ * after this call, normalise the value there and pin it with a test. */
 function isJavascriptUrl(value: string): boolean {
-  return startsWithIgnoreCase(
-    stripUrlWhitespace(trimAscii(value)),
-    "javascript:",
-  )
+  return startsWithIgnoreCase(trimAscii(value), "javascript:")
 }
 
 function allowedDataMime(mime: string): EmbeddedImageMime | null {
@@ -457,13 +462,19 @@ function attributeValueUnsafe(
     return rejected("unsafeAttribute", localAttr)
   }
   if (isResourceValueAttribute(localAttr)) {
-    // `values` on an animation element is a semicolon-separated list, and this
-    // check used to read the whole attribute as one string — so a harmless
-    // leading "#a" carried an active URL through in the tail. Splitting can
-    // only widen what is considered, never narrow it, so it cannot reintroduce
-    // a bypass; a single-valued attribute yields one segment and behaves as
-    // before.
-    for (const segment of value.split(";")) {
+    // `values` on an animation element is a semicolon-separated list — each
+    // item becomes the animated attribute value in turn — and this check used
+    // to read the whole attribute as one string, so a harmless leading "#a"
+    // carried an active URL through in the tail.
+    //
+    // Only `values`. Everywhere else in this tier a semicolon is content, not a
+    // separator: `to="data:image/png;base64,…"` is one data URL and splitting
+    // it yields a truncated `data:image/png` that parses as nothing, and
+    // `to="#a;javascript:…"` is a same-document fragment whose name happens to
+    // contain a semicolon. Splitting those inverts the rule this classifier
+    // exists for and rejects values a browser never fetches.
+    const segments = localAttr === "values" ? value.split(";") : [value]
+    for (const segment of segments) {
       if (looksLikeActiveUrl(segment) && !validateReference(segment)) {
         return rejected("unsafeAttribute", localAttr)
       }
