@@ -14,9 +14,9 @@ use figma_dev_mcp_protocol::{
         LetterSpacingValue, LineHeightValue, MinimalNodeDetails, NodeForest, NodeId, NodeTypeList,
         NodeTypeName, NodesSelector, PageId, PagesSelector, PaintValue, RasterScale,
         ReactionAction, RequestId, ReturnedList, ScreenshotAsset, SearchNodesInput, Selector,
-        StrokeAlign, StrokeValue, StyleKind, StyleReference, TextStyle,
+        StrokeAlign, StrokeValue, StyleKind, StyleReference, SvgRejectionKind, TextStyle,
     },
-    error::{ErrorCode, ItemError, PluginFailure, SvgRejectionKind, ToolError},
+    error::{ErrorCode, ItemError, PluginFailure, ToolError},
     limits::{
         HEARTBEAT_SECS, IDLE_GRACE_SECS, INACTIVITY_TIMEOUT_SECS, MAX_DEPTH,
         MAX_DISPLAY_TEXT_BYTES, MAX_ENVELOPE_BYTES, MAX_IDENTIFIER_BYTES, MAX_IN_FLIGHT,
@@ -344,12 +344,15 @@ pub const SVG_REJECTION_KINDS: [SvgRejectionKind; 5] = [
     SvgRejectionKind::UnsafeProcessingInstruction,
 ];
 
-fn unsafe_svg_error(rejection: Value) -> Value {
+const VERDICT_SOURCE: &str = "<svg xmlns=\"http://www.w3.org/2000/svg\"/>";
+
+fn unsafe_svg_asset(rejection: Value) -> Value {
     json!({
-        "code": "UNSAFE_SVG",
-        "message": "The SVG was rejected by the safety policy.",
-        "retryable": false,
-        "svgRejection": rejection,
+        "format": "svg",
+        "nodeId": "1:2",
+        "source": VERDICT_SOURCE,
+        "safe": false,
+        "rejection": rejection,
     })
 }
 
@@ -362,9 +365,24 @@ fn every_svg_rejection_rule_round_trips_named_and_unnamed() {
             if let Some(name) = name {
                 rejection["name"] = json!(name);
             }
-            let encoded = unsafe_svg_error(rejection);
-            let error: ToolError = serde_json::from_value(encoded.clone()).unwrap();
-            let decoded = error.svg_rejection().expect("rule survives decoding");
+            let encoded = unsafe_svg_asset(rejection);
+            let asset: ScreenshotAsset = serde_json::from_value(encoded.clone()).unwrap();
+            let ScreenshotAsset::Svg {
+                source,
+                safe,
+                rejection,
+                ..
+            } = &asset
+            else {
+                panic!("{tag} must decode as an SVG asset");
+            };
+            assert!(!safe, "{tag} must decode as an unsafe verdict");
+            assert_eq!(
+                source.as_str(),
+                VERDICT_SOURCE,
+                "{tag} must return the source it judged"
+            );
+            let decoded = rejection.as_ref().expect("rule survives decoding");
             assert_eq!(decoded.kind(), kind);
             assert_eq!(
                 decoded.name().map(|value| value.as_str()),
@@ -372,27 +390,70 @@ fn every_svg_rejection_rule_round_trips_named_and_unnamed() {
                 "{tag} must keep its offender name exactly as sent"
             );
             assert_eq!(
-                serde_json::to_value(&error).unwrap(),
+                serde_json::to_value(&asset).unwrap(),
                 encoded,
                 "{tag} must re-encode byte for byte"
             );
         }
     }
 
-    let plain: ToolError = serde_json::from_value(json!({
-        "code": "UNSAFE_SVG",
-        "message": "The SVG was rejected by the safety policy.",
-        "retryable": false
-    }))
-    .unwrap();
-    assert!(plain.svg_rejection().is_none());
-    assert!(
-        serde_json::to_value(&plain)
-            .unwrap()
-            .get("svgRejection")
-            .is_none(),
+    let safe_asset = json!({
+        "format": "svg", "nodeId": "1:2", "source": VERDICT_SOURCE, "safe": true
+    });
+    let asset: ScreenshotAsset = serde_json::from_value(safe_asset.clone()).unwrap();
+    let ScreenshotAsset::Svg {
+        safe, rejection, ..
+    } = &asset
+    else {
+        panic!("a safe verdict must decode as an SVG asset");
+    };
+    assert!(safe);
+    assert!(rejection.is_none());
+    assert_eq!(
+        serde_json::to_value(&asset).unwrap(),
+        safe_asset,
         "an absent rule must not materialise as null"
     );
+}
+
+#[test]
+fn an_svg_verdict_is_stated_and_matches_its_rule() {
+    // `safe` is required: an absent boolean reads the same as `false`, and the
+    // caller has to be able to rely on the verdict having been stated.
+    assert!(
+        serde_json::from_value::<ScreenshotAsset>(json!({
+            "format": "svg", "nodeId": "1:2", "source": VERDICT_SOURCE
+        }))
+        .is_err(),
+        "an SVG asset must state its verdict"
+    );
+    // The verdict and its reason are one fact, so neither half may travel alone.
+    assert!(
+        serde_json::from_value::<ScreenshotAsset>(json!({
+            "format": "svg", "nodeId": "1:2", "source": VERDICT_SOURCE, "safe": false
+        }))
+        .is_err(),
+        "an unsafe verdict must name the rule that fired"
+    );
+    assert!(
+        serde_json::from_value::<ScreenshotAsset>(json!({
+            "format": "svg", "nodeId": "1:2", "source": VERDICT_SOURCE, "safe": true,
+            "rejection": { "kind": "unsafeElement", "name": "script" }
+        }))
+        .is_err(),
+        "a safe verdict cannot carry a rule"
+    );
+    // A verdict belongs to SVG alone; a raster asset was never judged.
+    for format in ["png", "jpeg"] {
+        assert!(
+            serde_json::from_value::<ScreenshotAsset>(json!({
+                "format": format, "nodeId": "1:2", "dataBase64": "AA==",
+                "width": 1, "height": 1, "safe": true
+            }))
+            .is_err(),
+            "{format} asset must not carry a safety verdict"
+        );
+    }
 }
 
 #[test]
@@ -400,70 +461,123 @@ fn svg_rejection_rules_stay_closed() {
     // An unknown rule must be refused, not ignored: a variant only one end
     // knows about would drop the session rather than one request.
     assert!(
-        serde_json::from_value::<ToolError>(unsafe_svg_error(json!({ "kind": "unsafeFont" })))
-            .is_err()
+        serde_json::from_value::<ScreenshotAsset>(unsafe_svg_asset(
+            json!({ "kind": "unsafeFont" })
+        ))
+        .is_err()
     );
     assert!(
-        serde_json::from_value::<ToolError>(unsafe_svg_error(json!({ "kind": "parsererror" })))
-            .is_err()
+        serde_json::from_value::<ScreenshotAsset>(unsafe_svg_asset(
+            json!({ "kind": "parsererror" })
+        ))
+        .is_err()
     );
-    assert!(serde_json::from_value::<ToolError>(unsafe_svg_error(json!({}))).is_err());
+    assert!(serde_json::from_value::<ScreenshotAsset>(unsafe_svg_asset(json!({}))).is_err());
     assert!(
-        serde_json::from_value::<ToolError>(unsafe_svg_error(
+        serde_json::from_value::<ScreenshotAsset>(unsafe_svg_asset(
             json!({ "kind": "unsafeElement", "value": "fill:#ff0000" })
         ))
         .is_err(),
         "the rule carries names, never values"
     );
     assert!(
-        serde_json::from_value::<ToolError>(unsafe_svg_error(
+        serde_json::from_value::<ScreenshotAsset>(unsafe_svg_asset(
             json!({ "kind": "unsafeElement", "name": "a".repeat(MAX_IDENTIFIER_BYTES + 1) })
         ))
         .is_err()
     );
     assert!(
-        serde_json::from_value::<ToolError>(unsafe_svg_error(json!({
+        serde_json::from_value::<ScreenshotAsset>(unsafe_svg_asset(json!({
             "kind": "unsafeElement", "name": ""
         })))
         .is_err()
     );
     assert!(
-        serde_json::from_value::<ToolError>(unsafe_svg_error(json!("unsafeElement"))).is_err(),
+        serde_json::from_value::<ScreenshotAsset>(unsafe_svg_asset(json!("unsafeElement")))
+            .is_err(),
         "the rule is an object, not a bare tag"
+    );
+    // `deny_unknown_fields` must still refuse an unknown field on the asset
+    // itself, not only inside the rule it now carries.
+    assert!(
+        serde_json::from_value::<ScreenshotAsset>(json!({
+            "format": "svg", "nodeId": "1:2", "source": VERDICT_SOURCE, "safe": true,
+            "verdict": "safe"
+        }))
+        .is_err(),
+        "an unknown field on the asset must be refused"
     );
 }
 
 #[test]
 fn the_plugin_mirrors_every_svg_rejection_rule() {
     // A rule present on one end and absent on the other drops the whole broker
-    // session, not one request, so the two ends are pinned to each other here.
+    // session, not one request, so the two ends are pinned to each other in
+    // BOTH directions: a plugin-only sixth kind would otherwise go uncaught.
     let plugin = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("tests crate has a workspace parent")
         .join("plugin/src/shared");
     let results = std::fs::read_to_string(plugin.join("results.ts")).unwrap();
     let validation = std::fs::read_to_string(plugin.join("result-validation.ts")).unwrap();
-    for kind in SVG_REJECTION_KINDS {
-        let quoted = format!("\"{}\"", svg_rejection_kind_tag(kind));
-        assert!(
-            results.contains(&quoted),
-            "plugin results.ts must declare SVG rejection rule {quoted}"
-        );
-        assert!(
-            validation.contains(&quoted),
-            "plugin result-validation.ts must accept SVG rejection rule {quoted}"
-        );
-    }
+
+    let mut rust: Vec<String> = SVG_REJECTION_KINDS
+        .iter()
+        .map(|kind| svg_rejection_kind_tag(*kind).to_owned())
+        .collect();
+    rust.sort();
+
+    let declared = quoted_tags(&results, "export type SvgRejectionKind =", "\n\n");
+    let accepted = quoted_tags(
+        &validation,
+        "const SVG_REJECTION_KINDS: readonly SvgRejectionKind[] = [",
+        "]",
+    );
+    assert_eq!(
+        declared, rust,
+        "plugin results.ts declares a different set of SVG rejection rules than Rust"
+    );
+    assert_eq!(
+        accepted, rust,
+        "plugin result-validation.ts accepts a different set of SVG rejection rules than Rust"
+    );
     assert!(
-        results.contains("svgRejection?:") && validation.contains("\"svgRejection\""),
-        "plugin must carry the rule on its tool error"
+        results.contains("rejection?: SvgRejection") && validation.contains("\"rejection\""),
+        "plugin must carry the rule on its SVG asset"
+    );
+    assert!(
+        !results.contains("svgRejection") && !validation.contains("svgRejection"),
+        "the rule no longer travels on the tool error"
     );
 }
 
+/// The sorted, deduplicated double-quoted strings in the plugin source between
+/// `start` and the first `end` after it. Reading the plugin's own lists is what
+/// makes the mirror bidirectional: a kind only the plugin knows shows up here.
+fn quoted_tags(source: &str, start: &str, end: &str) -> Vec<String> {
+    let begin = source
+        .find(start)
+        .unwrap_or_else(|| panic!("plugin source must contain {start}"))
+        + start.len();
+    let rest = &source[begin..];
+    let stop = rest
+        .find(end)
+        .unwrap_or_else(|| panic!("plugin source must terminate {start}"));
+    let mut tags: Vec<String> = rest[..stop]
+        .split('"')
+        .skip(1)
+        .step_by(2)
+        .map(str::to_owned)
+        .collect();
+    tags.sort();
+    tags.dedup();
+    tags
+}
+
 #[test]
-fn a_rejected_screenshot_asset_carries_its_rule_through_the_result() {
+fn an_unsafe_screenshot_asset_carries_its_rule_through_the_result() {
     let payload = json!({
-        "assets": [{ "status": "error", "error": unsafe_svg_error(json!({
+        "assets": [{ "status": "success", "value": unsafe_svg_asset(json!({
             "kind": "unsafeAttribute", "name": "href"
         }))}],
         "truncated": false,
@@ -475,6 +589,22 @@ fn a_rejected_screenshot_asset_carries_its_rule_through_the_result() {
     let result: figma_dev_mcp_protocol::domain::GetScreenshotResult =
         serde_json::from_value(payload.clone()).unwrap();
     assert_eq!(serde_json::to_value(&result).unwrap(), payload);
+}
+
+#[test]
+fn the_tool_error_no_longer_carries_an_svg_rule() {
+    // The field moved to the asset. Left on the error it would sit in the
+    // schema of four tools that have no SVG in them at all.
+    assert!(
+        serde_json::from_value::<ToolError>(json!({
+            "code": "UNSAFE_SVG",
+            "message": "The SVG was rejected by the safety policy.",
+            "retryable": false,
+            "svgRejection": { "kind": "unsafeElement", "name": "script" }
+        }))
+        .is_err(),
+        "an svgRejection on a tool error must be refused, not ignored"
+    );
 }
 
 #[test]
@@ -591,7 +721,8 @@ fn screenshot_assets_enforce_wire_byte_and_raster_dimension_limits() {
     );
     assert!(
         serde_json::from_value::<ScreenshotAsset>(json!({
-            "format": "svg", "nodeId": "1:2", "source": "x".repeat(MAX_SVG_BYTES + 1)
+            "format": "svg", "nodeId": "1:2", "source": "x".repeat(MAX_SVG_BYTES + 1),
+            "safe": true
         }))
         .is_err()
     );
@@ -1243,7 +1374,7 @@ fn every_read_result_family_rejects_an_oversized_top_level_collection() {
             json!({
                 "assets": oversized_items(json!({
                     "status": "success",
-                    "value": {"format": "svg", "nodeId": "7:1", "source": "<svg/>"}
+                    "value": {"format": "svg", "nodeId": "7:1", "source": "<svg/>", "safe": true}
                 })),
                 "truncated": false, "observation": observation
             }),

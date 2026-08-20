@@ -22,10 +22,11 @@ export interface ItemError {
   retryable: boolean
 }
 
-/** Which safety rule rejected an SVG export.
+/** Which safety rule judged an SVG export unsafe.
  *
- * `UNSAFE_SVG` on its own cannot be diagnosed from outside the plugin, so the
- * rule that fired travels with the error. Modelled as a struct with a closed
+ * A bare `safe: false` cannot be acted on from outside the plugin — an embedded
+ * font data URL and a `<script>` element are not the same risk — so the rule
+ * that fired travels with the verdict. Modelled as a struct with a closed
  * `kind` rather than a tagged union: the Rust mirror then closes under plain
  * derive, and both ends carry exactly one shape. */
 export type SvgRejectionKind =
@@ -48,7 +49,6 @@ export interface ToolError {
   message: string
   retryable: boolean
   items?: ItemError[]
-  svgRejection?: SvgRejection
 }
 
 export type ItemResult<T> =
@@ -815,7 +815,17 @@ export type ScreenshotAsset =
       width: number
       height: number
     }
-  | { format: "svg"; nodeId: string; source: string }
+  /** The source is always returned. `safe` is required, never optional: an
+   * absent boolean reads the same as `false`, and the point of the verdict is
+   * that the caller can rely on it having been stated. `rejection` is present
+   * exactly when `safe` is `false`. */
+  | {
+      format: "svg"
+      nodeId: string
+      source: string
+      safe: boolean
+      rejection?: SvgRejection
+    }
 
 export interface GetScreenshotResult {
   assets: ItemResult<ScreenshotAsset>[]

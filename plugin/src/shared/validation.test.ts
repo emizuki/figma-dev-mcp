@@ -631,6 +631,7 @@ describe("closed plugin transport validation", () => {
           format: "svg",
           nodeId: "7:1",
           source: "x".repeat(4 * 1_024 * 1_024 + 1),
+          safe: true,
         }),
       ),
     ).toThrow()
@@ -864,7 +865,12 @@ describe("closed plugin transport validation", () => {
           assets: [
             {
               status: "success",
-              value: { format: "svg", nodeId: "7:1", source: "<svg/>" },
+              value: {
+                format: "svg",
+                nodeId: "7:1",
+                source: "<svg/>",
+                safe: true,
+              },
             },
           ],
           ...common,

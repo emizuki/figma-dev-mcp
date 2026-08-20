@@ -28,21 +28,22 @@ export interface RasterEncodeSuccess {
   base64Bytes: number
 }
 
+/** The SVG safety policy runs in the UI context, so the verdict it reached has
+ * to ride back with the source or it is lost before the result is built. An
+ * unsafe verdict is not a failure: `ok` is still `true` and the source is still
+ * present. */
 export interface SvgEncodeSuccess {
   ok: true
   source: string
+  safe: boolean
+  rejection?: SvgRejection
 }
 
 export type RasterEncodeResult =
   | RasterEncodeSuccess
   | { ok: false; code: ErrorCode }
 
-/** The SVG safety policy runs in the UI context, so the rule that rejected an
- * export has to ride back with the code or it is lost before the result is
- * built. */
-export type SvgEncodeResult =
-  | SvgEncodeSuccess
-  | { ok: false; code: ErrorCode; svgRejection?: SvgRejection }
+export type SvgEncodeResult = SvgEncodeSuccess | { ok: false; code: ErrorCode }
 
 export interface ScreenshotCodec {
   encodeRaster(
@@ -78,16 +79,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object"
 }
 
-function itemError(
-  code: ErrorCode,
-  svgRejection?: SvgRejection,
-): ItemResult<ScreenshotAsset> {
+function itemError(code: ErrorCode): ItemResult<ScreenshotAsset> {
   const error: ToolError = {
     code,
     message: MESSAGES[code],
     retryable: false,
   }
-  if (svgRejection !== undefined) error.svgRejection = svgRejection
   return { status: "error", error }
 }
 
@@ -261,15 +258,19 @@ function createUiCodec(
         signal,
         timeoutMs,
       )
-      if (result.status === "error") {
-        const rejection = result.error.svgRejection
-        return rejection === undefined
-          ? { ok: false, code: result.error.code }
-          : { ok: false, code: result.error.code, svgRejection: rejection }
-      }
+      if (result.status === "error")
+        return { ok: false, code: result.error.code }
       if (result.value.format !== "svg")
         return { ok: false, code: "INTERNAL_ERROR" }
-      return { ok: true, source: result.value.source }
+      const encoded: SvgEncodeSuccess = {
+        ok: true,
+        source: result.value.source,
+        safe: result.value.safe,
+      }
+      if (result.value.rejection !== undefined) {
+        encoded.rejection = result.value.rejection
+      }
+      return encoded
     },
   }
 }
@@ -283,11 +284,15 @@ async function encodeAsset(
   if (input.format === "svg") {
     if (typeof exported !== "string") return itemError("INTERNAL_ERROR")
     const encoded = await codec.encodeSvg(exported)
-    if (!encoded.ok) return itemError(encoded.code, encoded.svgRejection)
-    return {
-      status: "success",
-      value: { format: "svg", nodeId, source: encoded.source },
+    if (!encoded.ok) return itemError(encoded.code)
+    const value: Extract<ScreenshotAsset, { format: "svg" }> = {
+      format: "svg",
+      nodeId,
+      source: encoded.source,
+      safe: encoded.safe,
     }
+    if (encoded.rejection !== undefined) value.rejection = encoded.rejection
+    return { status: "success", value }
   }
   if (!(exported instanceof Uint8Array)) return itemError("INTERNAL_ERROR")
   const encoded = await codec.encodeRaster(input.format, exported)

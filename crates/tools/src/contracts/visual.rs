@@ -1,5 +1,6 @@
 use figma_dev_mcp_protocol::domain::{
-    self, ItemResult, NodeId, ObservationWindow, RasterSide, ReturnedList, SvgSource, Truncation,
+    self, ItemResult, NodeId, ObservationWindow, RasterSide, ReturnedList, SvgRejection, SvgSource,
+    Truncation,
 };
 use figma_dev_mcp_protocol::limits::{MAX_RASTER_BASE64_BYTES, MAX_RASTER_DECODED_BYTES};
 use schemars::{JsonSchema, Schema, SchemaGenerator};
@@ -55,9 +56,15 @@ pub enum ScreenshotAsset {
         #[schemars(range(min = 0, max = 16_777_216))]
         base64_bytes: u32,
     },
+    /// The source is always returned. `safe` states the safety verdict rather
+    /// than withholding the source, and `rejection` names the rule that fired,
+    /// present exactly when `safe` is false.
     Svg {
         node_id: NodeId,
         source: SvgSource,
+        safe: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rejection: Option<SvgRejection>,
     },
 }
 
@@ -97,9 +104,16 @@ pub(crate) fn public_asset(asset: &domain::ScreenshotAsset) -> ScreenshotAsset {
             decoded_bytes: decoded_len(data_base64.as_str()),
             base64_bytes: u32::try_from(data_base64.as_str().len()).unwrap_or(u32::MAX),
         },
-        domain::ScreenshotAsset::Svg { node_id, source } => ScreenshotAsset::Svg {
+        domain::ScreenshotAsset::Svg {
+            node_id,
+            source,
+            safe,
+            rejection,
+        } => ScreenshotAsset::Svg {
             node_id: node_id.clone(),
             source: source.clone(),
+            safe: *safe,
+            rejection: rejection.clone(),
         },
     }
 }

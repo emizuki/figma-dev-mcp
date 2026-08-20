@@ -51,15 +51,28 @@ export interface InjectedDomParser {
   parseFromString(source: string, type: string): SvgDocument
 }
 
-/** `reason` is declared absent on the success arm so a caller can read it off
- * the union without narrowing first; only an `UNSAFE_SVG` failure carries one.
- * A `LIMIT_EXCEEDED` failure has no rule to report. */
+/** Safety declares a verdict; it does not withhold the source. An SVG that
+ * trips a rule still comes back with its source attached, carrying the rule
+ * that fired, and the caller decides what the verdict is worth. The consumer is
+ * an agent reading JSON, not a renderer, so withholding only destroyed
+ * information it could have used.
+ *
+ * A failure is left only where there is no source to return at all: a transfer
+ * that never decoded to a string, and a document over the byte ceiling. Neither
+ * is a safety finding, so neither carries a verdict.
+ *
+ * `safe` and `rejection` are declared absent on the failure arm, and `rejection`
+ * on the safe arm, so a caller can read either off the union without narrowing
+ * first. */
 export type SvgValidation =
-  | { ok: true; source: string; reason?: undefined }
+  | { ok: true; source: string; safe: true; rejection?: undefined }
+  | { ok: true; source: string; safe: false; rejection: SvgRejection }
   | {
       ok: false
-      code: "UNSAFE_SVG" | "LIMIT_EXCEEDED"
-      reason?: SvgRejection
+      code: "LIMIT_EXCEEDED" | "INTERNAL_ERROR"
+      source?: undefined
+      safe?: undefined
+      rejection?: undefined
     }
 
 const ELEMENT_NODE = 1
@@ -100,14 +113,21 @@ function rejected(kind: SvgRejectionKind, name?: string): SvgRejection {
   return { kind, name }
 }
 
-function unsafeSvg(reason: SvgRejection): SvgValidation {
-  return { ok: false, code: "UNSAFE_SVG", reason }
+function unsafe(source: string, rejection: SvgRejection): SvgValidation {
+  return { ok: true, source, safe: false, rejection }
 }
 
 function hasLoneSurrogate(value: string): boolean {
   for (let index = 0; index < value.length; index += 1) {
     const code = value.charCodeAt(index)
     if (code >= 0xd800 && code <= 0xdbff) {
+      // A high surrogate in the final position has no `charCodeAt` to compare
+      // against — the comparisons below are false for NaN — so it is checked
+      // for explicitly. It matters more now that safety returns the source:
+      // an unpaired surrogate that reached the wire would be escaped as
+      // `\ud800` by JSON.stringify and refused by the Rust decoder, dropping
+      // the session rather than the asset.
+      if (index + 1 >= value.length) return true
       const next = value.charCodeAt(index + 1)
       if (next < 0xdc00 || next > 0xdfff) return true
       index += 1
@@ -631,9 +651,9 @@ export function validateSvgSource(
   parser: InjectedDomParser,
 ): SvgValidation {
   const source = decodeTransfer(input)
-  // A source that never decoded produced no tree to walk, which is the same
-  // fact a parser error reports.
-  if (source === null) return unsafeSvg(rejected("parserError"))
+  // A transfer that never decoded left no string to return and no tree to
+  // judge, so there is no verdict to give. Nothing about it concerns safety.
+  if (source === null) return { ok: false, code: "INTERNAL_ERROR" }
   if (utf8ByteLength(source) > MAX_SVG_BYTES) {
     return { ok: false, code: "LIMIT_EXCEEDED" }
   }
@@ -641,12 +661,12 @@ export function validateSvgSource(
   try {
     document = parser.parseFromString(source, "image/svg+xml")
   } catch {
-    return unsafeSvg(rejected("parserError"))
+    return unsafe(source, rejected("parserError"))
   }
-  if (hasParserError(document)) return unsafeSvg(rejected("parserError"))
+  if (hasParserError(document)) return unsafe(source, rejected("parserError"))
   const piReason = sourceProcessingInstructionsUnsafe(source)
-  if (piReason !== undefined) return unsafeSvg(piReason)
+  if (piReason !== undefined) return unsafe(source, piReason)
   const reason = walkUnsafe(document)
-  if (reason !== undefined) return unsafeSvg(reason)
-  return { ok: true, source }
+  if (reason !== undefined) return unsafe(source, reason)
+  return { ok: true, source, safe: true }
 }

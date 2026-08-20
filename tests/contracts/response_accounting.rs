@@ -107,7 +107,7 @@ fn svg_source_is_counted_in_structured_text_and_image() {
     let structured = json!({
         "assets": [{
             "status": "success",
-            "value": {"format": "svg", "nodeId": "1:2", "source": source}
+            "value": {"format": "svg", "nodeId": "1:2", "source": source, "safe": true}
         }],
         "truncated": false,
         "observation": observation()
@@ -258,7 +258,7 @@ fn max_svg_source_survives_preview_base64_and_is_charged_once() {
     let result: GetScreenshotResult = serde_json::from_value(json!({
         "assets": [{
             "status": "success",
-            "value": {"format": "svg", "nodeId": "1:2", "source": source}
+            "value": {"format": "svg", "nodeId": "1:2", "source": source, "safe": true}
         }],
         "truncated": false,
         "observation": observation()

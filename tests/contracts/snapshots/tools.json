@@ -2748,24 +2748,32 @@
           "x-maxUtf8Bytes": 1024
         },
         "ErrorCode": {
-          "enum": [
-            "NO_FIGMA_CONNECTION",
-            "AMBIGUOUS_CONNECTION",
-            "CONNECTION_NOT_FOUND",
-            "CONNECTION_LOST",
-            "PROTOCOL_MISMATCH",
-            "NODE_NOT_FOUND",
-            "PAGE_NOT_FOUND",
-            "UNSUPPORTED_NODE",
-            "CAPABILITY_UNAVAILABLE",
-            "UNSAFE_SVG",
-            "INVALID_CURSOR",
-            "LIMIT_EXCEEDED",
-            "TIMEOUT",
-            "CANCELLED",
-            "INTERNAL_ERROR"
-          ],
-          "type": "string"
+          "oneOf": [
+            {
+              "enum": [
+                "NO_FIGMA_CONNECTION",
+                "AMBIGUOUS_CONNECTION",
+                "CONNECTION_NOT_FOUND",
+                "CONNECTION_LOST",
+                "PROTOCOL_MISMATCH",
+                "NODE_NOT_FOUND",
+                "PAGE_NOT_FOUND",
+                "UNSUPPORTED_NODE",
+                "CAPABILITY_UNAVAILABLE",
+                "INVALID_CURSOR",
+                "LIMIT_EXCEEDED",
+                "TIMEOUT",
+                "CANCELLED",
+                "INTERNAL_ERROR"
+              ],
+              "type": "string"
+            },
+            {
+              "const": "UNSAFE_SVG",
+              "description": "Reserved and no longer emitted: SVG safety reports a verdict on the\nasset instead of failing the item. The member stays because removing a\nmember of a closed enum is itself a wire change.",
+              "type": "string"
+            }
+          ]
         },
         "ItemError": {
           "additionalProperties": false,
@@ -2903,47 +2911,6 @@
           "maxItems": 2000,
           "type": "array"
         },
-        "SvgRejection": {
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "$ref": "#/$defs/SvgRejectionKind"
-            },
-            "name": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/SvgRejectionName"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Local name of the offending element or attribute, where the rule has one."
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "type": "object"
-        },
-        "SvgRejectionKind": {
-          "description": "Which safety rule rejected an SVG export.",
-          "enum": [
-            "parserError",
-            "unsafeElement",
-            "unsafeAttribute",
-            "unsafeCss",
-            "unsafeProcessingInstruction"
-          ],
-          "type": "string"
-        },
-        "SvgRejectionName": {
-          "description": "SVG element or attribute local name; bounded by UTF-8 encoded byte length",
-          "maxLength": 256,
-          "minLength": 1,
-          "type": "string",
-          "x-maxUtf8Bytes": 256
-        },
         "ToolError": {
           "additionalProperties": false,
           "properties": {
@@ -2965,16 +2932,6 @@
             },
             "retryable": {
               "type": "boolean"
-            },
-            "svgRejection": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/SvgRejection"
-                },
-                {
-                  "type": "null"
-                }
-              ]
             }
           },
           "required": [
@@ -4117,24 +4074,32 @@
           "x-maxUtf8Bytes": 1024
         },
         "ErrorCode": {
-          "enum": [
-            "NO_FIGMA_CONNECTION",
-            "AMBIGUOUS_CONNECTION",
-            "CONNECTION_NOT_FOUND",
-            "CONNECTION_LOST",
-            "PROTOCOL_MISMATCH",
-            "NODE_NOT_FOUND",
-            "PAGE_NOT_FOUND",
-            "UNSUPPORTED_NODE",
-            "CAPABILITY_UNAVAILABLE",
-            "UNSAFE_SVG",
-            "INVALID_CURSOR",
-            "LIMIT_EXCEEDED",
-            "TIMEOUT",
-            "CANCELLED",
-            "INTERNAL_ERROR"
-          ],
-          "type": "string"
+          "oneOf": [
+            {
+              "enum": [
+                "NO_FIGMA_CONNECTION",
+                "AMBIGUOUS_CONNECTION",
+                "CONNECTION_NOT_FOUND",
+                "CONNECTION_LOST",
+                "PROTOCOL_MISMATCH",
+                "NODE_NOT_FOUND",
+                "PAGE_NOT_FOUND",
+                "UNSUPPORTED_NODE",
+                "CAPABILITY_UNAVAILABLE",
+                "INVALID_CURSOR",
+                "LIMIT_EXCEEDED",
+                "TIMEOUT",
+                "CANCELLED",
+                "INTERNAL_ERROR"
+              ],
+              "type": "string"
+            },
+            {
+              "const": "UNSAFE_SVG",
+              "description": "Reserved and no longer emitted: SVG safety reports a verdict on the\nasset instead of failing the item. The member stays because removing a\nmember of a closed enum is itself a wire change.",
+              "type": "string"
+            }
+          ]
         },
         "IndexedCollection": {
           "enum": [
@@ -4760,47 +4725,6 @@
           "maxItems": 2000,
           "type": "array"
         },
-        "SvgRejection": {
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "$ref": "#/$defs/SvgRejectionKind"
-            },
-            "name": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/SvgRejectionName"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Local name of the offending element or attribute, where the rule has one."
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "type": "object"
-        },
-        "SvgRejectionKind": {
-          "description": "Which safety rule rejected an SVG export.",
-          "enum": [
-            "parserError",
-            "unsafeElement",
-            "unsafeAttribute",
-            "unsafeCss",
-            "unsafeProcessingInstruction"
-          ],
-          "type": "string"
-        },
-        "SvgRejectionName": {
-          "description": "SVG element or attribute local name; bounded by UTF-8 encoded byte length",
-          "maxLength": 256,
-          "minLength": 1,
-          "type": "string",
-          "x-maxUtf8Bytes": 256
-        },
         "ToolError": {
           "additionalProperties": false,
           "properties": {
@@ -4822,16 +4746,6 @@
             },
             "retryable": {
               "type": "boolean"
-            },
-            "svgRejection": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/SvgRejection"
-                },
-                {
-                  "type": "null"
-                }
-              ]
             }
           },
           "required": [
@@ -5574,24 +5488,32 @@
           ]
         },
         "ErrorCode": {
-          "enum": [
-            "NO_FIGMA_CONNECTION",
-            "AMBIGUOUS_CONNECTION",
-            "CONNECTION_NOT_FOUND",
-            "CONNECTION_LOST",
-            "PROTOCOL_MISMATCH",
-            "NODE_NOT_FOUND",
-            "PAGE_NOT_FOUND",
-            "UNSUPPORTED_NODE",
-            "CAPABILITY_UNAVAILABLE",
-            "UNSAFE_SVG",
-            "INVALID_CURSOR",
-            "LIMIT_EXCEEDED",
-            "TIMEOUT",
-            "CANCELLED",
-            "INTERNAL_ERROR"
-          ],
-          "type": "string"
+          "oneOf": [
+            {
+              "enum": [
+                "NO_FIGMA_CONNECTION",
+                "AMBIGUOUS_CONNECTION",
+                "CONNECTION_NOT_FOUND",
+                "CONNECTION_LOST",
+                "PROTOCOL_MISMATCH",
+                "NODE_NOT_FOUND",
+                "PAGE_NOT_FOUND",
+                "UNSUPPORTED_NODE",
+                "CAPABILITY_UNAVAILABLE",
+                "INVALID_CURSOR",
+                "LIMIT_EXCEEDED",
+                "TIMEOUT",
+                "CANCELLED",
+                "INTERNAL_ERROR"
+              ],
+              "type": "string"
+            },
+            {
+              "const": "UNSAFE_SVG",
+              "description": "Reserved and no longer emitted: SVG safety reports a verdict on the\nasset instead of failing the item. The member stays because removing a\nmember of a closed enum is itself a wire change.",
+              "type": "string"
+            }
+          ]
         },
         "FullNodeData": {
           "additionalProperties": false,
@@ -6593,47 +6515,6 @@
           ],
           "type": "object"
         },
-        "SvgRejection": {
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "$ref": "#/$defs/SvgRejectionKind"
-            },
-            "name": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/SvgRejectionName"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Local name of the offending element or attribute, where the rule has one."
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "type": "object"
-        },
-        "SvgRejectionKind": {
-          "description": "Which safety rule rejected an SVG export.",
-          "enum": [
-            "parserError",
-            "unsafeElement",
-            "unsafeAttribute",
-            "unsafeCss",
-            "unsafeProcessingInstruction"
-          ],
-          "type": "string"
-        },
-        "SvgRejectionName": {
-          "description": "SVG element or attribute local name; bounded by UTF-8 encoded byte length",
-          "maxLength": 256,
-          "minLength": 1,
-          "type": "string",
-          "x-maxUtf8Bytes": 256
-        },
         "TextAlignHorizontal": {
           "description": "`Left` is the Figma default for textAlignHorizontal and is never emitted; it\nstays in the enum so the schema describes the full domain (absence means\n\"default\").",
           "enum": [
@@ -6825,16 +6706,6 @@
             },
             "retryable": {
               "type": "boolean"
-            },
-            "svgRejection": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/SvgRejection"
-                },
-                {
-                  "type": "null"
-                }
-              ]
             }
           },
           "required": [
@@ -7261,24 +7132,32 @@
           "x-maxUtf8Bytes": 1024
         },
         "ErrorCode": {
-          "enum": [
-            "NO_FIGMA_CONNECTION",
-            "AMBIGUOUS_CONNECTION",
-            "CONNECTION_NOT_FOUND",
-            "CONNECTION_LOST",
-            "PROTOCOL_MISMATCH",
-            "NODE_NOT_FOUND",
-            "PAGE_NOT_FOUND",
-            "UNSUPPORTED_NODE",
-            "CAPABILITY_UNAVAILABLE",
-            "UNSAFE_SVG",
-            "INVALID_CURSOR",
-            "LIMIT_EXCEEDED",
-            "TIMEOUT",
-            "CANCELLED",
-            "INTERNAL_ERROR"
-          ],
-          "type": "string"
+          "oneOf": [
+            {
+              "enum": [
+                "NO_FIGMA_CONNECTION",
+                "AMBIGUOUS_CONNECTION",
+                "CONNECTION_NOT_FOUND",
+                "CONNECTION_LOST",
+                "PROTOCOL_MISMATCH",
+                "NODE_NOT_FOUND",
+                "PAGE_NOT_FOUND",
+                "UNSUPPORTED_NODE",
+                "CAPABILITY_UNAVAILABLE",
+                "INVALID_CURSOR",
+                "LIMIT_EXCEEDED",
+                "TIMEOUT",
+                "CANCELLED",
+                "INTERNAL_ERROR"
+              ],
+              "type": "string"
+            },
+            {
+              "const": "UNSAFE_SVG",
+              "description": "Reserved and no longer emitted: SVG safety reports a verdict on the\nasset instead of failing the item. The member stays because removing a\nmember of a closed enum is itself a wire change.",
+              "type": "string"
+            }
+          ]
         },
         "ItemError": {
           "additionalProperties": false,
@@ -7874,47 +7753,6 @@
           "maxItems": 2000,
           "type": "array"
         },
-        "SvgRejection": {
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "$ref": "#/$defs/SvgRejectionKind"
-            },
-            "name": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/SvgRejectionName"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Local name of the offending element or attribute, where the rule has one."
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "type": "object"
-        },
-        "SvgRejectionKind": {
-          "description": "Which safety rule rejected an SVG export.",
-          "enum": [
-            "parserError",
-            "unsafeElement",
-            "unsafeAttribute",
-            "unsafeCss",
-            "unsafeProcessingInstruction"
-          ],
-          "type": "string"
-        },
-        "SvgRejectionName": {
-          "description": "SVG element or attribute local name; bounded by UTF-8 encoded byte length",
-          "maxLength": 256,
-          "minLength": 1,
-          "type": "string",
-          "x-maxUtf8Bytes": 256
-        },
         "ToolError": {
           "additionalProperties": false,
           "properties": {
@@ -7936,16 +7774,6 @@
             },
             "retryable": {
               "type": "boolean"
-            },
-            "svgRejection": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/SvgRejection"
-                },
-                {
-                  "type": "null"
-                }
-              ]
             }
           },
           "required": [
@@ -8063,7 +7891,7 @@
       "openWorldHint": false,
       "readOnlyHint": true
     },
-    "description": "Render bounded nodes or the captured selection as raster or safe SVG assets. A connectionId is ephemeral and expires when its plugin socket reconnects.",
+    "description": "Render bounded nodes or the captured selection as raster or SVG assets. SVG source is always returned, with a `safe` verdict and, when unsafe, a `rejection` naming the rule that fired; safety never withholds the source. Treat an unsafe verdict as a caller decision: writing such source to disk can execute a `<script>` element if a browser later opens it. A connectionId is ephemeral and expires when its plugin socket reconnects.",
     "inputSchema": {
       "$defs": {
         "ConnectionId": {
@@ -8286,24 +8114,32 @@
           "x-maxUtf8Bytes": 1024
         },
         "ErrorCode": {
-          "enum": [
-            "NO_FIGMA_CONNECTION",
-            "AMBIGUOUS_CONNECTION",
-            "CONNECTION_NOT_FOUND",
-            "CONNECTION_LOST",
-            "PROTOCOL_MISMATCH",
-            "NODE_NOT_FOUND",
-            "PAGE_NOT_FOUND",
-            "UNSUPPORTED_NODE",
-            "CAPABILITY_UNAVAILABLE",
-            "UNSAFE_SVG",
-            "INVALID_CURSOR",
-            "LIMIT_EXCEEDED",
-            "TIMEOUT",
-            "CANCELLED",
-            "INTERNAL_ERROR"
-          ],
-          "type": "string"
+          "oneOf": [
+            {
+              "enum": [
+                "NO_FIGMA_CONNECTION",
+                "AMBIGUOUS_CONNECTION",
+                "CONNECTION_NOT_FOUND",
+                "CONNECTION_LOST",
+                "PROTOCOL_MISMATCH",
+                "NODE_NOT_FOUND",
+                "PAGE_NOT_FOUND",
+                "UNSUPPORTED_NODE",
+                "CAPABILITY_UNAVAILABLE",
+                "INVALID_CURSOR",
+                "LIMIT_EXCEEDED",
+                "TIMEOUT",
+                "CANCELLED",
+                "INTERNAL_ERROR"
+              ],
+              "type": "string"
+            },
+            {
+              "const": "UNSAFE_SVG",
+              "description": "Reserved and no longer emitted: SVG safety reports a verdict on the\nasset instead of failing the item. The member stays because removing a\nmember of a closed enum is itself a wire change.",
+              "type": "string"
+            }
+          ]
         },
         "ItemError": {
           "additionalProperties": false,
@@ -8508,6 +8344,7 @@
             },
             {
               "additionalProperties": false,
+              "description": "The source is always returned. `safe` states the safety verdict rather\nthan withholding the source, and `rejection` names the rule that fired,\npresent exactly when `safe` is false.",
               "properties": {
                 "format": {
                   "const": "svg",
@@ -8516,6 +8353,19 @@
                 "nodeId": {
                   "$ref": "#/$defs/NodeId"
                 },
+                "rejection": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/SvgRejection"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "safe": {
+                  "type": "boolean"
+                },
                 "source": {
                   "$ref": "#/$defs/SvgSource"
                 }
@@ -8523,7 +8373,8 @@
               "required": [
                 "format",
                 "nodeId",
-                "source"
+                "source",
+                "safe"
               ],
               "type": "object"
             }
@@ -8553,7 +8404,7 @@
           "type": "object"
         },
         "SvgRejectionKind": {
-          "description": "Which safety rule rejected an SVG export.",
+          "description": "Which safety rule judged an SVG export unsafe.",
           "enum": [
             "parserError",
             "unsafeElement",
@@ -8597,16 +8448,6 @@
             },
             "retryable": {
               "type": "boolean"
-            },
-            "svgRejection": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/SvgRejection"
-                },
-                {
-                  "type": "null"
-                }
-              ]
             }
           },
           "required": [
@@ -11757,24 +11598,32 @@
           "x-maxUtf8Bytes": 1024
         },
         "ErrorCode": {
-          "enum": [
-            "NO_FIGMA_CONNECTION",
-            "AMBIGUOUS_CONNECTION",
-            "CONNECTION_NOT_FOUND",
-            "CONNECTION_LOST",
-            "PROTOCOL_MISMATCH",
-            "NODE_NOT_FOUND",
-            "PAGE_NOT_FOUND",
-            "UNSUPPORTED_NODE",
-            "CAPABILITY_UNAVAILABLE",
-            "UNSAFE_SVG",
-            "INVALID_CURSOR",
-            "LIMIT_EXCEEDED",
-            "TIMEOUT",
-            "CANCELLED",
-            "INTERNAL_ERROR"
-          ],
-          "type": "string"
+          "oneOf": [
+            {
+              "enum": [
+                "NO_FIGMA_CONNECTION",
+                "AMBIGUOUS_CONNECTION",
+                "CONNECTION_NOT_FOUND",
+                "CONNECTION_LOST",
+                "PROTOCOL_MISMATCH",
+                "NODE_NOT_FOUND",
+                "PAGE_NOT_FOUND",
+                "UNSUPPORTED_NODE",
+                "CAPABILITY_UNAVAILABLE",
+                "INVALID_CURSOR",
+                "LIMIT_EXCEEDED",
+                "TIMEOUT",
+                "CANCELLED",
+                "INTERNAL_ERROR"
+              ],
+              "type": "string"
+            },
+            {
+              "const": "UNSAFE_SVG",
+              "description": "Reserved and no longer emitted: SVG safety reports a verdict on the\nasset instead of failing the item. The member stays because removing a\nmember of a closed enum is itself a wire change.",
+              "type": "string"
+            }
+          ]
         },
         "ObservationWindow": {
           "additionalProperties": false,

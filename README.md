@@ -183,7 +183,8 @@ The advertised catalog is exactly these three argumentless prompts. Each returns
 - SVG uses Figma `exportAsync({ format: "SVG_STRING" })`. The result includes `image/svg+xml` content for clients that can preview it **and** the UTF-8 **SVG source** in structured content so a developer can use the vector asset directly.
 - `scale` is invalid for SVG. Supported SVG options map to Figma's API: `svgOutlineText` defaults to `true`, `svgIdAttribute` to `false`, and `svgSimplifyStroke` to `true`.
 - Safe vector structure is preserved, including `viewBox` and internal fragment references such as `url(#gradient)`.
-- Before return, the iframe parses the SVG as XML and rejects scripts, `foreignObject`, inline event handlers, `javascript:` URLs, CSS `@import`, and non-fragment network references. Unsafe input fails with `UNSAFE_SVG` rather than being rewritten.
+- Before return, the iframe parses the SVG as XML and flags scripts, `foreignObject`, inline event handlers, `javascript:` URLs, CSS `@import`, and non-fragment network references. The source is never rewritten and never withheld: every SVG asset carries a `safe` verdict, and an unsafe one also carries a `rejection` naming the rule that fired (`parserError`, `unsafeElement`, `unsafeAttribute`, `unsafeCss`, `unsafeProcessingInstruction`) plus the offending local name where the rule has one — never an attribute value.
+- The caller decides what an unsafe verdict is worth. The reason is precise because the risks are not equal: an embedded `@font-face` data URL fetches nothing, while a `<script>` element executes if the source is written to disk and later opened in a browser. `UNSAFE_SVG` is reserved and no longer emitted.
 
 The tool does not choose or write a local path.
 

@@ -65,7 +65,7 @@ pub fn tools_catalog() -> ListToolsResult {
         ),
         definition::<GetScreenshotInput, GetScreenshotResult>(
             ToolName::GetScreenshot,
-            "Render bounded nodes or the captured selection as raster or safe SVG assets.",
+            "Render bounded nodes or the captured selection as raster or SVG assets. SVG source is always returned, with a `safe` verdict and, when unsafe, a `rejection` naming the rule that fired; safety never withholds the source. Treat an unsafe verdict as a caller decision: writing such source to disk can execute a `<script>` element if a browser later opens it.",
         ),
         definition::<GetSelectionInput, GetSelectionResult>(
             ToolName::GetSelection,

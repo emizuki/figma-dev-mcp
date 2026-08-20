@@ -37,7 +37,7 @@ const passthrough: ScreenshotCodec = {
     }
   },
   async encodeSvg(source) {
-    return { ok: true, source }
+    return { ok: true, source, safe: true }
   },
 }
 
@@ -380,16 +380,17 @@ describe("get_screenshot export selection", () => {
     })
   })
 
-  test("carries the SVG rejection rule from the codec into the asset error", async () => {
+  test("carries the SVG verdict from the codec onto the asset", async () => {
     const node = exportNode("10:1", async () => "<svg/>")
     installFigma({ nodes: new Map([["10:1", node]]) })
-    const rejecting: ScreenshotCodec = {
+    const judging: ScreenshotCodec = {
       ...passthrough,
-      async encodeSvg() {
+      async encodeSvg(source) {
         return {
-          ok: false,
-          code: "UNSAFE_SVG",
-          svgRejection: { kind: "unsafeAttribute", name: "id" },
+          ok: true,
+          source,
+          safe: false,
+          rejection: { kind: "unsafeAttribute", name: "id" },
         }
       },
     }
@@ -403,20 +404,49 @@ describe("get_screenshot export selection", () => {
         svgSimplifyStroke: true,
       },
       undefined,
-      rejecting,
+      judging,
     )
+    // The source survives an unsafe verdict; withholding it is what this
+    // replaced.
     expect(result.assets[0]).toEqual({
-      status: "error",
-      error: {
-        code: "UNSAFE_SVG",
-        message: "The SVG was rejected by the safety policy.",
-        retryable: false,
-        svgRejection: { kind: "unsafeAttribute", name: "id" },
+      status: "success",
+      value: {
+        format: "svg",
+        nodeId: "10:1",
+        source: "<svg/>",
+        safe: false,
+        rejection: { kind: "unsafeAttribute", name: "id" },
       },
     })
   })
 
-  test("keeps the SVG rejection rule across the UI validation round trip", async () => {
+  test("a safe verdict carries no rejection onto the asset", async () => {
+    const node = exportNode("10:2", async () => "<svg/>")
+    installFigma({ nodes: new Map([["10:2", node]]) })
+
+    const result = await getScreenshot(
+      {
+        format: "svg",
+        selector: { nodeId: "10:2" },
+        svgOutlineText: true,
+        svgIdAttribute: false,
+        svgSimplifyStroke: true,
+      },
+      undefined,
+      passthrough,
+    )
+    expect(result.assets[0]).toEqual({
+      status: "success",
+      value: {
+        format: "svg",
+        nodeId: "10:2",
+        source: "<svg/>",
+        safe: true,
+      },
+    })
+  })
+
+  test("keeps the SVG verdict across the UI validation round trip", async () => {
     const node = exportNode("11:1", async () => "<svg/>")
     installFigma({
       nodes: new Map([["11:1", node]]),
@@ -427,12 +457,13 @@ describe("get_screenshot export selection", () => {
             type: "screenshotValidated",
             validationId,
             asset: {
-              status: "error",
-              error: {
-                code: "UNSAFE_SVG",
-                message: "The SVG was rejected by the safety policy.",
-                retryable: false,
-                svgRejection: { kind: "unsafeCss", name: "style" },
+              status: "success",
+              value: {
+                format: "svg",
+                nodeId: "",
+                source: "<svg/>",
+                safe: false,
+                rejection: { kind: "unsafeCss", name: "style" },
               },
             },
           })
@@ -453,12 +484,13 @@ describe("get_screenshot export selection", () => {
       1_000,
     )
     expect(result.assets[0]).toEqual({
-      status: "error",
-      error: {
-        code: "UNSAFE_SVG",
-        message: "The SVG was rejected by the safety policy.",
-        retryable: false,
-        svgRejection: { kind: "unsafeCss", name: "style" },
+      status: "success",
+      value: {
+        format: "svg",
+        nodeId: "11:1",
+        source: "<svg/>",
+        safe: false,
+        rejection: { kind: "unsafeCss", name: "style" },
       },
     })
   })
@@ -570,10 +602,10 @@ describe("get_screenshot export selection", () => {
 })
 
 describe("screenshot result validation", () => {
-  const screenshotResult = (error: Record<string, unknown>): unknown => ({
+  const screenshotResult = (value: Record<string, unknown>): unknown => ({
     operation: "get_screenshot",
     result: {
-      assets: [{ status: "error", error }],
+      assets: [{ status: "success", value }],
       truncated: false,
       observation: {
         startedAt: "2026-08-19T00:00:00.000Z",
@@ -583,12 +615,13 @@ describe("screenshot result validation", () => {
   })
 
   const unsafeSvg = (
-    svgRejection: Record<string, unknown>,
+    rejection: Record<string, unknown>,
   ): Record<string, unknown> => ({
-    code: "UNSAFE_SVG",
-    message: "The SVG was rejected by the safety policy.",
-    retryable: false,
-    svgRejection,
+    format: "svg",
+    nodeId: "1:2",
+    source: "<svg/>",
+    safe: false,
+    rejection,
   })
 
   test("accepts every rejection kind, with and without a name", () => {
@@ -606,6 +639,18 @@ describe("screenshot result validation", () => {
         parseReadResult(screenshotResult(unsafeSvg({ kind, name: "id" }))),
       ).toEqual(screenshotResult(unsafeSvg({ kind, name: "id" })) as never)
     }
+  })
+
+  test("accepts a safe asset that carries no rejection", () => {
+    const safe = {
+      format: "svg",
+      nodeId: "1:2",
+      source: "<svg/>",
+      safe: true,
+    }
+    expect(parseReadResult(screenshotResult(safe))).toEqual(
+      screenshotResult(safe) as never,
+    )
   })
 
   test("refuses an unknown kind, an unknown field, and an oversized name", () => {
@@ -626,6 +671,63 @@ describe("screenshot result validation", () => {
     ).toThrow()
     expect(() =>
       parseReadResult(screenshotResult(unsafeSvg({ name: "id" }))),
+    ).toThrow()
+  })
+
+  test("refuses a verdict that is unstated or does not match its rule", () => {
+    expect(() =>
+      parseReadResult(
+        screenshotResult({ format: "svg", nodeId: "1:2", source: "<svg/>" }),
+      ),
+    ).toThrow()
+    expect(() =>
+      parseReadResult(
+        screenshotResult({
+          format: "svg",
+          nodeId: "1:2",
+          source: "<svg/>",
+          safe: false,
+        }),
+      ),
+    ).toThrow()
+    expect(() =>
+      parseReadResult(
+        screenshotResult({
+          format: "svg",
+          nodeId: "1:2",
+          source: "<svg/>",
+          safe: true,
+          rejection: { kind: "unsafeElement", name: "script" },
+        }),
+      ),
+    ).toThrow()
+  })
+
+  test("refuses an SVG rule left on a tool error", () => {
+    // The field moved to the asset; a stale sender must be refused rather than
+    // silently accepted on the error it used to ride.
+    expect(() =>
+      parseReadResult({
+        operation: "get_screenshot",
+        result: {
+          assets: [
+            {
+              status: "error",
+              error: {
+                code: "UNSAFE_SVG",
+                message: "The SVG was rejected by the safety policy.",
+                retryable: false,
+                svgRejection: { kind: "unsafeElement", name: "script" },
+              },
+            },
+          ],
+          truncated: false,
+          observation: {
+            startedAt: "2026-08-19T00:00:00.000Z",
+            completedAt: "2026-08-19T00:00:01.000Z",
+          },
+        },
+      }),
     ).toThrow()
   })
 })

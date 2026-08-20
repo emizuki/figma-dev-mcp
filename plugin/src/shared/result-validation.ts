@@ -328,7 +328,7 @@ function parseToolError(value: unknown, label: string): ToolError {
     value,
     label,
     ["code", "message", "retryable"],
-    ["items", "svgRejection"],
+    ["items"],
   )
   const code = errorCode(object.code)
   const message = string(object.message, `${label}.message`)
@@ -345,12 +345,6 @@ function parseToolError(value: unknown, label: string): ToolError {
       `${label}.items`,
       parseItemError,
       MAX_INPUT_IDS,
-    )
-  }
-  if (Object.hasOwn(object, "svgRejection")) {
-    result.svgRejection = parseSvgRejection(
-      object.svgRejection,
-      `${label}.svgRejection`,
     )
   }
   return result
@@ -2687,8 +2681,20 @@ function parseScreenshotAsset(value: unknown, label: string): ScreenshotAsset {
       }
     }
     case "svg": {
-      const asset = exact(object, label, ["format", "nodeId", "source"])
-      return {
+      const asset = exact(
+        object,
+        label,
+        ["format", "nodeId", "source", "safe"],
+        ["rejection"],
+      )
+      const safe = boolean(asset.safe, `${label}.safe`)
+      const hasRejection = Object.hasOwn(asset, "rejection")
+      // The verdict and its reason are one fact. A safe asset carrying a rule,
+      // or an unsafe one carrying none, is a shape neither end can act on.
+      if (safe === hasRejection) {
+        return fail(`${label}.rejection is present exactly when safe is false`)
+      }
+      const result: Extract<ScreenshotAsset, { format: "svg" }> = {
         format: "svg",
         nodeId: identifier(asset.nodeId, `${label}.nodeId`),
         source: boundedString(
@@ -2697,7 +2703,15 @@ function parseScreenshotAsset(value: unknown, label: string): ScreenshotAsset {
           MAX_SVG_BYTES,
           true,
         ),
+        safe,
       }
+      if (hasRejection) {
+        result.rejection = parseSvgRejection(
+          asset.rejection,
+          `${label}.rejection`,
+        )
+      }
+      return result
     }
     default:
       return fail(`${label}.format is not allowed`)

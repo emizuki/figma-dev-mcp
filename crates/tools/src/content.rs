@@ -121,7 +121,9 @@ fn screenshot_image(asset: &domain::ScreenshotAsset) -> Result<AccountedImage, T
             image_base64: data_base64.as_str().to_owned(),
             mime_type: "image/jpeg".into(),
         }),
-        domain::ScreenshotAsset::Svg { node_id, source } => Ok(AccountedImage {
+        domain::ScreenshotAsset::Svg {
+            node_id, source, ..
+        } => Ok(AccountedImage {
             id: Some(node_id.to_string()),
             structured_item,
             image_base64: encode_base64(source.as_str().as_bytes()),
