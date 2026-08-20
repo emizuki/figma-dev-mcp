@@ -592,6 +592,38 @@ fn an_unsafe_screenshot_asset_carries_its_rule_through_the_result() {
 }
 
 #[test]
+fn a_lone_surrogate_in_svg_source_is_refused_by_the_decoder() {
+    // Once SVG safety stopped withholding the source, the plugin's lone-surrogate
+    // guard became the only thing keeping a JSON-unencodable string off the wire.
+    // This pins the consequence that makes that guard load-bearing rather than
+    // merely tidy: serde_json rejects a lone surrogate while PARSING, so the whole
+    // frame fails to decode — the broker session drops, not one asset.
+    let payload = |escape: &str| {
+        format!(
+            r#"{{"assets":[{{"status":"success","value":{{"format":"svg","nodeId":"1:2","source":"<svg/>{escape}","safe":true}}}}],"truncated":false,"observation":{{"startedAt":"2026-08-19T00:00:00.000Z","completedAt":"2026-08-19T00:00:01.000Z"}}}}"#
+        )
+    };
+
+    // Control first, and it must be a surrogate PAIR written as an escape rather
+    // than a literal character, so it exercises the same escape-decoding path the
+    // lone surrogate takes. Without this the assertion below could pass because
+    // the fixture is malformed some other way, proving nothing about surrogates.
+    serde_json::from_str::<figma_dev_mcp_protocol::domain::GetScreenshotResult>(&payload(
+        r"\ud83d\ude00",
+    ))
+    .expect("a surrogate pair escape decodes");
+
+    let error = serde_json::from_str::<figma_dev_mcp_protocol::domain::GetScreenshotResult>(
+        &payload(r"\ud800"),
+    )
+    .expect_err("a lone surrogate must not decode");
+    assert!(
+        error.is_syntax(),
+        "expected a JSON syntax error from the lone surrogate, got: {error}"
+    );
+}
+
+#[test]
 fn the_tool_error_no_longer_carries_an_svg_rule() {
     // The field moved to the asset. Left on the error it would sit in the
     // schema of four tools that have no SVG in them at all.
