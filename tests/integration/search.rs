@@ -1,4 +1,4 @@
-use figma_dev_mcp_broker::{Broker, BrokerConfig, Limits};
+use figma_dev_mcp_broker::{Broker, BrokerConfig, Limits, PLUGIN_PROTOCOL_VERSION};
 use figma_dev_mcp_tools::{McpService, SearchNodesInput, tools_catalog};
 use futures_util::{SinkExt, StreamExt};
 use rmcp::ServiceExt;
@@ -36,7 +36,7 @@ async fn wait_for_sessions(broker: &Broker, count: usize) {
 fn hello(connection_id: &str) -> Message {
     Message::Text(
         json!({
-            "type": "hello", "protocolVersion": "1", "connectionId": connection_id,
+            "type": "hello", "protocolVersion": PLUGIN_PROTOCOL_VERSION, "connectionId": connection_id,
             "displayName": "Checkout flow", "fileName": "Checkout flow",
             "currentPage": {"id": "0:2", "name": "Checkout"},
             "editorType": "dev", "pluginVersion": "0.1.0", "capabilities": {}

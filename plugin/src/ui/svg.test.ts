@@ -23,6 +23,34 @@ function svgWithCss(css: string): string {
   return `<svg xmlns="http://www.w3.org/2000/svg"><style>${css}</style></svg>`
 }
 
+// XML attribute-value normalisation replaces a literal tab, line feed or
+// carriage return with a space before the value ever reaches the classifier
+// (verified against @xmldom/xmldom), which would silently turn a whitespace
+// fixture into the space fixture and make the two indistinguishable. Numeric
+// character references are exempt from that normalisation, so they are what an
+// attacker writes and what these tests write. A space is emitted literally,
+// because a space really is a space either way.
+function escapeAttributeValue(value: string): string {
+  let out = ""
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index)
+    if (code === 0x09 || code === 0x0a || code === 0x0d) {
+      out += `&#${code};`
+      continue
+    }
+    if (code === 0x26) out += "&amp;"
+    else if (code === 0x3c) out += "&lt;"
+    else if (code === 0x22) out += "&quot;"
+    else out += value.charAt(index)
+  }
+  return out
+}
+
+function svgWithAttr(name: string, value: string): string {
+  const escaped = escapeAttributeValue(value)
+  return `<svg xmlns="http://www.w3.org/2000/svg"><rect ${name}="${escaped}"/></svg>`
+}
+
 describe("SVG safety policy", () => {
   test("preserves viewBox, paths, gradients, masks, clip paths, and fragment references", async () => {
     const source = await fixture("safe.svg")
@@ -412,5 +440,88 @@ describe("SVG safety policy", () => {
       "base64",
     )
     expect(validateDataUrl(`data:font/woff2;base64,${atLimit}`)).toBe(true)
+  })
+
+  test("narrowing for whitespace and lists does not admit anything new", () => {
+    // Every one of these must stay rejected. Written and run BEFORE the change.
+    for (const source of [
+      svgWithAttr("href", "javascript:alert(1)"),
+      svgWithAttr("href", "https://example.com/x"),
+      svgWithAttr("xml:base", "https://evil.example/"),
+      svgWithAttr("to", "javascript:alert(1)"),
+      svgWithAttr("fill", "url(https://example.com/x)"),
+      `<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`,
+      svgWithCss(`@font-face{src:url(data:text/html;base64,PGh0bWw+)}`),
+      svgWithCss(`@font-face{src:url(https://example.com/f.woff2)}`),
+    ]) {
+      expect(validate(source).safe).toBe(false)
+    }
+  })
+
+  test("benign values stay clean", () => {
+    // These were a real defect once, fixed, and a careless normalisation brings
+    // them back. `id="Icon: Search"` is a layer name, not a URI scheme.
+    for (const source of [
+      svgWithAttr("id", "Icon: Search"),
+      svgWithAttr("id", "a:b"),
+      svgWithAttr("font-family", "Inter:Bold"),
+      svgWithAttr("style", "fill:red"),
+      svgWithCss(
+        `@font-face{src:url(data:font/woff2;base64,d09GMgABAAAAAAAA)}`,
+      ),
+    ]) {
+      expect(validate(source).safe).toBe(true)
+    }
+  })
+
+  test("whitespace inside a scheme does not hide it", () => {
+    // Browsers strip ASCII tab, LF and CR from anywhere in a URL before
+    // parsing, so a browser reads this as javascript: while a prefix test does
+    // not. The gap is written as a character reference by svgWithAttr, since a
+    // literal one would be normalised to a space by the XML parser first.
+    for (const gap of ["\t", "\n", "\r"]) {
+      const value = `jav${gap}ascript:alert(1)`
+      expect(validate(svgWithAttr("to", value)).safe).toBe(false)
+      // Not only javascript:. A split data: scheme is invisible to the scheme
+      // test at the head of looksLikeActiveUrl too, and a browser reads it.
+      expect(validate(svgWithAttr("to", `dat${gap}a:text/html,x`)).safe).toBe(
+        false,
+      )
+    }
+  })
+
+  test("a space is not stripped, so it is not a scheme", () => {
+    // WHATWG keeps the space character. Flagging this would be a false
+    // positive, and false positives are what make a verdict worthless.
+    expect(validate(svgWithAttr("to", "jav ascript:alert(1)")).safe).toBe(true)
+  })
+
+  // The other side of the segment split. `values` is the only semicolon list
+  // among the resource-value attributes; everywhere else a semicolon is
+  // content. Splitting these tore one value into pieces that are not values —
+  // a truncated `data:image/png` that parses as nothing, and a fragment name
+  // read as though it were a second entry — and rejected what a browser never
+  // fetches.
+  test("a semicolon in a single-valued attribute is content, not a list", () => {
+    const png =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+    for (const value of [
+      `data:image/png;base64,${png}`,
+      `data:font/woff2;base64,d09GMgABAAAAAAAA`,
+      `#a;javascript:alert(1)`,
+    ]) {
+      for (const attribute of ["to", "from", "by", "fill", "stroke"]) {
+        expect(validate(svgWithAttr(attribute, value)).safe).toBe(true)
+      }
+      // Tier 1 reads the whole value for the same reason, and always did.
+      expect(validate(svgWithAttr("href", value)).safe).toBe(true)
+    }
+  })
+
+  test("every segment of a list value is inspected", () => {
+    // `values` on an animation element is semicolon-separated. The classifier
+    // read only the head, so a harmless first segment carried the rest through.
+    const source = `<svg xmlns="http://www.w3.org/2000/svg"><animate attributeName="href" values="#a;javascript:alert(1)"/></svg>`
+    expect(validate(source).safe).toBe(false)
   })
 })

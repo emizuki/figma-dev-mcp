@@ -1,10 +1,13 @@
 use figma_dev_mcp_broker::{
     Broker, BrokerClient, BrokerConfig, BrokerError, FrontendClient, Limits,
+    PLUGIN_PROTOCOL_VERSION,
 };
 use figma_dev_mcp_protocol::{
     domain::{ConnectionId, GetMetadataInput, RequestId},
     error::ErrorCode,
-    rpc::{FrontendHandshake, FrontendToLeader, RpcRequestId, encode_frame},
+    rpc::{
+        FRONTEND_PROTOCOL_VERSION, FrontendHandshake, FrontendToLeader, RpcRequestId, encode_frame,
+    },
     wire::{BrokerCall, BrokerResult, BrokerToPlugin, Invocation, ReadOperation},
 };
 use figma_dev_mcp_tools::McpService;
@@ -34,7 +37,7 @@ pub(super) async fn connect_plugin(
     plugin
         .send(Message::Text(
             serde_json::json!({
-                "type": "hello", "protocolVersion": "1", "connectionId": connection_id,
+                "type": "hello", "protocolVersion": PLUGIN_PROTOCOL_VERSION, "connectionId": connection_id,
                 "displayName": file_name, "fileName": file_name,
                 "currentPage": {"id": "0:1", "name": "Page 1"},
                 "editorType": "dev", "pluginVersion": "0.1.0", "capabilities": {}
@@ -85,7 +88,9 @@ async fn send_metadata_response(plugin: &mut PluginSocket, request_id: &RequestI
 async fn raw_frontend(address: std::net::SocketAddr) -> TcpStream {
     let mut stream = TcpStream::connect(address).await.unwrap();
     let hello = serde_json::json!({
-        "protocolVersion": "1",
+        // The frontend RPC link carries its own version, which is not the
+        // plugin socket's and does not move with it.
+        "protocolVersion": FRONTEND_PROTOCOL_VERSION,
         "frontendId": "123e4567-e89b-42d3-a456-426614174010"
     });
     stream
@@ -226,7 +231,7 @@ async fn cancelling_a_frontend_call_cancels_the_matching_plugin_request() {
     plugin
         .send(Message::Text(
             serde_json::json!({
-                "type": "hello", "protocolVersion": "1",
+                "type": "hello", "protocolVersion": PLUGIN_PROTOCOL_VERSION,
                 "connectionId": "123e4567-e89b-42d3-a456-426614174000",
                 "displayName": "Checkout", "fileName": "Checkout",
                 "currentPage": {"id": "0:1", "name": "Page 1"},

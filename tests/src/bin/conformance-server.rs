@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use axum::Router;
 use axum::routing::get;
-use figma_dev_mcp_broker::{Broker, BrokerClient, BrokerConfig, Limits};
+use figma_dev_mcp_broker::{Broker, BrokerClient, BrokerConfig, Limits, PLUGIN_PROTOCOL_VERSION};
 use figma_dev_mcp_tools::McpService;
 use futures_util::{SinkExt, StreamExt};
 use rmcp::ErrorData as McpError;
@@ -140,7 +140,7 @@ async fn connect_scripted_plugin(address: SocketAddr) {
     plugin
         .send(Message::Text(
             json!({
-                "type": "hello", "protocolVersion": "1", "connectionId": CONNECTION,
+                "type": "hello", "protocolVersion": PLUGIN_PROTOCOL_VERSION, "connectionId": CONNECTION,
                 "displayName": "Checkout flow", "fileName": "Checkout flow",
                 "currentPage": {"id": "0:1", "name": "Page 1"},
                 "editorType": "dev", "pluginVersion": "0.1.0", "capabilities": {}

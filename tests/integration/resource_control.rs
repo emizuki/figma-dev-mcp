@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use figma_dev_mcp_broker::{Broker, BrokerConfig, Limits};
+use figma_dev_mcp_broker::{Broker, BrokerConfig, Limits, PLUGIN_PROTOCOL_VERSION};
 use figma_dev_mcp_protocol::limits::{
     INACTIVITY_TIMEOUT_SECS, MAX_IN_FLIGHT, MAX_QUEUE, TOTAL_TIMEOUT_SECS,
 };
@@ -60,7 +60,7 @@ async fn running_broker() -> (std::net::SocketAddr, Broker, tokio::task::JoinHan
 fn hello() -> Message {
     Message::Text(
         json!({
-            "type": "hello", "protocolVersion": "1", "connectionId": CONNECTION,
+            "type": "hello", "protocolVersion": PLUGIN_PROTOCOL_VERSION, "connectionId": CONNECTION,
             "displayName": "Checkout flow", "fileName": "Checkout flow",
             "currentPage": {"id": "0:2", "name": "Checkout"},
             "editorType": "dev", "pluginVersion": "0.1.0", "capabilities": {}

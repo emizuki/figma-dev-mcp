@@ -3,7 +3,7 @@
 use std::net::SocketAddr;
 use std::time::Duration;
 
-use figma_dev_mcp_broker::{Broker, BrokerConfig, Limits};
+use figma_dev_mcp_broker::{Broker, BrokerConfig, Limits, PLUGIN_PROTOCOL_VERSION};
 use figma_dev_mcp_protocol::error::ToolError;
 use figma_dev_mcp_protocol::limits::{INACTIVITY_TIMEOUT_SECS, MAX_IN_FLIGHT, MAX_QUEUE};
 use figma_dev_mcp_protocol::{PROMPT_NAMES, TOOL_NAMES};
@@ -446,7 +446,7 @@ async fn running_broker() -> (SocketAddr, Broker, tokio::task::JoinHandle<()>) {
 fn hello(connection_id: &str, file_name: &str) -> Message {
     Message::Text(
         json!({
-            "type": "hello", "protocolVersion": "1", "connectionId": connection_id,
+            "type": "hello", "protocolVersion": PLUGIN_PROTOCOL_VERSION, "connectionId": connection_id,
             "displayName": file_name, "fileName": file_name,
             "currentPage": {"id": "0:2", "name": "Checkout"},
             "editorType": "dev", "pluginVersion": "0.1.0", "capabilities": {}
