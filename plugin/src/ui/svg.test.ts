@@ -218,20 +218,104 @@ describe("SVG safety policy", () => {
         `<svg xmlns="http://www.w3.org/2000/svg"><rect fill="url(https://evil.example/x)"/></svg>`,
       ).reason,
     ).toEqual({ kind: "unsafeCss", name: "fill" })
-    // Ordering fact, not a policy change: the active-URL check runs before the
-    // CSS fallback, so a `token:token` value is reported against the attribute
-    // rule even when the attribute is `style`.
+    // unsafeCss: a style attribute is CSS, so it is judged as CSS. It is not
+    // scheme-checked, or `style="fill:red"` would read as a URI scheme.
     expect(
       validate(
         `<svg xmlns="http://www.w3.org/2000/svg"><rect style="fill:url(https://evil.example/x)"/></svg>`,
       ).reason,
-    ).toEqual({ kind: "unsafeAttribute", name: "style" })
+    ).toEqual({ kind: "unsafeCss", name: "style" })
     // unsafeProcessingInstruction: named by the pseudo-attribute that failed.
     expect(
       validate(
         `<?xml-stylesheet href="https://evil.example/x.css" type="text/css"?><svg xmlns="http://www.w3.org/2000/svg"/>`,
       ).reason,
     ).toEqual({ kind: "unsafeProcessingInstruction", name: "href" })
+  })
+
+  // A colon in a value is not a URI scheme. Figma writes layer names into `id`
+  // when `svgIdAttribute` is set, and a layer called "Icon: Search" exports as
+  // `id="Icon: Search"` — which the scheme check read as the scheme `Icon`.
+  // Every value below is benign and must survive.
+  test("a colon in a data-bearing attribute is not a scheme", () => {
+    const attributes = [
+      `id="Icon: Search"`,
+      `id="a:b"`,
+      `id="Frame 1: Copy 2"`,
+      `font-family="Inter:Bold"`,
+      `style="fill:red"`,
+      `style="fill:#ff0000;stroke-width:2"`,
+      `aria-label="Step 1: pick a plan"`,
+      `data-name="Icon: Search"`,
+      `clip-path="url(#clip)"`,
+      `fill="red"`,
+      `to="1"`,
+      `from="0"`,
+    ]
+    for (const attribute of attributes) {
+      const source = `<svg xmlns="http://www.w3.org/2000/svg"><rect ${attribute}/></svg>`
+      expect(validate(source)).toEqual({ ok: true, source })
+    }
+
+    // The whole shape Figma emits under svgIdAttribute, not just one attribute.
+    const exported = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><g id="Icon: Search"><path id="Vector: outline" d="M4 4h16v16H4z" fill="url(#gradient)"/></g><defs><linearGradient id="gradient: primary"><stop offset="0" stop-color="#fff"/></linearGradient></defs></svg>`
+    expect(validate(exported)).toEqual({ ok: true, source: exported })
+  })
+
+  // The other direction. Narrowing the scheme check to attributes that address
+  // a resource must not let a live URL through one of them.
+  test("an active URL in a resource attribute is still rejected", () => {
+    const cases: [string, string][] = [
+      [`<a href="javascript:alert(1)"/>`, "href"],
+      [`<a href="https://example.com/x"/>`, "href"],
+      [`<a href="HTTPS://EXAMPLE.COM/x"/>`, "href"],
+      [`<a href="//example.com/x"/>`, "href"],
+      [`<a href="ftp://example.com/x"/>`, "href"],
+      [`<image href="data:text/html,%3Cscript%3E"/>`, "href"],
+      [`<image src="https://example.com/x.png"/>`, "src"],
+      [`<set to="javascript:alert(1)"/>`, "to"],
+      [`<set from="https://evil.example/x"/>`, "from"],
+      [`<set by="https://evil.example/x"/>`, "by"],
+      [`<animate values="javascript:alert(1)"/>`, "values"],
+      [`<rect fill="data:image/svg+xml,%3Csvg/%3E"/>`, "fill"],
+      [`<rect stroke="https://evil.example/x"/>`, "stroke"],
+      [`<rect filter="javascript:alert(1)"/>`, "filter"],
+      [`<rect mask="https://evil.example/x"/>`, "mask"],
+      [`<path marker-end="https://evil.example/x"/>`, "marker-end"],
+      [`<rect onclick="alert(1)"/>`, "onclick"],
+    ]
+    for (const [element, name] of cases) {
+      const result = validate(
+        `<svg xmlns="http://www.w3.org/2000/svg">${element}</svg>`,
+      )
+      expect(result.ok).toBe(false)
+      expect(result.reason).toEqual({ kind: "unsafeAttribute", name })
+    }
+
+    // A namespaced href is still caught, and a fragment reference still passes.
+    const namespaced = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><use xlink:href="https://evil.example/x.svg#a"/></svg>`
+    expect(validate(namespaced).reason).toEqual({
+      kind: "unsafeAttribute",
+      name: "href",
+    })
+    const fragment = `<svg xmlns="http://www.w3.org/2000/svg"><use href="#a"/></svg>`
+    expect(validate(fragment)).toEqual({ ok: true, source: fragment })
+  })
+
+  // A url() that does not resolve is still refused wherever it appears, which
+  // is what still guards attributes that are no longer scheme-checked.
+  test("an unresolvable url() is refused in any attribute", () => {
+    for (const attribute of [
+      `id="url(https://evil.example/x)"`,
+      `d="url(https://evil.example/x)"`,
+      `aria-label="url(https://evil.example/x)"`,
+    ]) {
+      const result = validate(
+        `<svg xmlns="http://www.w3.org/2000/svg"><rect ${attribute}/></svg>`,
+      )
+      expect(result.ok).toBe(false)
+      expect(result.reason?.kind).toBe("unsafeCss")
+    }
   })
 
   test("a size rejection carries no rule, and an accepted document carries none either", () => {
@@ -246,10 +330,11 @@ describe("SVG safety policy", () => {
   })
 
   test("an unusable offender name is omitted rather than sent oversized", () => {
-    const huge = `a${"b".repeat(MAX_IDENTIFIER_BYTES)}`
+    const huge = `on${"b".repeat(MAX_IDENTIFIER_BYTES)}`
+    expect(huge.length).toBeGreaterThan(MAX_IDENTIFIER_BYTES)
     expect(
       validate(
-        `<svg xmlns="http://www.w3.org/2000/svg"><rect ${huge}="https://evil.example/x"/></svg>`,
+        `<svg xmlns="http://www.w3.org/2000/svg"><rect ${huge}="alert(1)"/></svg>`,
       ).reason,
     ).toEqual({ kind: "unsafeAttribute" })
   })

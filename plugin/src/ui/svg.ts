@@ -339,9 +339,52 @@ function isXmlnsName(name: string): boolean {
   return name.length === 5 || name.charCodeAt(5) === 0x3a
 }
 
+/** Attributes whose whole value addresses a resource. A value here is a URL or
+ * it is nothing, so it must resolve to a same-document fragment or an allowed
+ * data: payload. `localNameOf` has already dropped any prefix, so this covers
+ * `xlink:href` too. */
+function isReferenceAttribute(localAttr: string): boolean {
+  return localAttr === "href" || localAttr === "src"
+}
+
+/** Attributes that may address a resource but usually hold a plain value.
+ *
+ * The animation attributes can retarget a reference while the document is
+ * running (`<set attributeName="href" to="javascript:…"/>`), and the funciri
+ * paints take a URL alongside colours and keywords. Both are held to the
+ * reference rule only when the value already looks like an active URL, because
+ * `to="1"` and `fill="red"` are the ordinary case. */
+function isResourceValueAttribute(localAttr: string): boolean {
+  return (
+    localAttr === "to" ||
+    localAttr === "from" ||
+    localAttr === "by" ||
+    localAttr === "values" ||
+    localAttr === "fill" ||
+    localAttr === "stroke" ||
+    localAttr === "clip-path" ||
+    localAttr === "mask" ||
+    localAttr === "filter" ||
+    localAttr === "marker" ||
+    localAttr === "marker-start" ||
+    localAttr === "marker-mid" ||
+    localAttr === "marker-end"
+  )
+}
+
 /** Returns the rule that rejected the value, or `undefined` when it is safe.
- * The CSS fallback applies to every attribute, so separating `unsafeCss` from
- * `unsafeAttribute` is what tells a reader which of the two paths fired. */
+ *
+ * The scheme check is applied by attribute, never to every attribute. A colon
+ * makes a value look like a URI scheme to `hasUriScheme`, and attributes that
+ * carry data rather than references hold colons all the time: a Figma layer
+ * named `Icon: Search` exports as `id="Icon: Search"` under `svgIdAttribute`,
+ * and `font-family="Inter:Bold"` and `style="fill:red"` are equally ordinary.
+ * Scheme-checking those rejected benign documents and blamed the wrong rule.
+ *
+ * What still guards every attribute is `validateCssText`, which rejects a
+ * `url(…)` that does not resolve and an `@import` wherever either appears —
+ * including inside an `id`. Separating `unsafeCss` from `unsafeAttribute` is
+ * what tells a reader which of the two paths fired. */
 function attributeValueUnsafe(
   name: string,
   value: string,
@@ -355,11 +398,15 @@ function attributeValueUnsafe(
   ) {
     return rejected("unsafeAttribute", localAttr)
   }
-  if (localAttr === "href" || localAttr === "src") {
+  if (isReferenceAttribute(localAttr)) {
     if (validateReference(value)) return undefined
     return rejected("unsafeAttribute", localAttr)
   }
-  if (looksLikeActiveUrl(value) && !validateReference(value)) {
+  if (
+    isResourceValueAttribute(localAttr) &&
+    looksLikeActiveUrl(value) &&
+    !validateReference(value)
+  ) {
     return rejected("unsafeAttribute", localAttr)
   }
   if (validateCssText(value)) return undefined
