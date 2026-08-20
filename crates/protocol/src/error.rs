@@ -23,6 +23,11 @@ pub enum ErrorCode {
     NodeNotFound,
     PageNotFound,
     UnsupportedNode,
+    /// The node encloses no area, so there is no picture to render in any
+    /// format. Distinct from `INTERNAL_ERROR`, which means the cause is
+    /// unknown; here it is known. Only a width or height reported as zero or
+    /// less qualifies: a 1x1 or sub-pixel node still renders.
+    EmptyNodeBounds,
     CapabilityUnavailable,
     /// Reserved and no longer emitted: SVG safety reports a verdict on the
     /// asset instead of failing the item. The member stays because removing a
@@ -45,6 +50,7 @@ pub const fn canonical_message(code: ErrorCode) -> &'static str {
         ErrorCode::NodeNotFound => "The requested node was not found.",
         ErrorCode::PageNotFound => "The requested page was not found.",
         ErrorCode::UnsupportedNode => "The requested node type is not supported.",
+        ErrorCode::EmptyNodeBounds => "The requested node has no area to render.",
         ErrorCode::CapabilityUnavailable => "The required Figma capability is unavailable.",
         ErrorCode::UnsafeSvg => "The SVG was rejected by the safety policy.",
         ErrorCode::InvalidCursor => "The search cursor is invalid or stale.",

@@ -62,6 +62,7 @@ const MESSAGES: Record<ErrorCode, string> = {
   NODE_NOT_FOUND: "The requested node was not found.",
   PAGE_NOT_FOUND: "The requested page was not found.",
   UNSUPPORTED_NODE: "The requested node type is not supported.",
+  EMPTY_NODE_BOUNDS: "The requested node has no area to render.",
   CAPABILITY_UNAVAILABLE: "The required Figma capability is unavailable.",
   UNSAFE_SVG: "The SVG was rejected by the safety policy.",
   INVALID_CURSOR: "The search cursor is invalid or stale.",
@@ -115,6 +116,38 @@ function exportSettings(input: GetScreenshotInput): Record<string, unknown> {
     format: input.format === "jpeg" ? "JPG" : "PNG",
     constraint: { type: "SCALE", value: scale },
   }
+}
+
+// Bounds are node *content*, and under `documentAccess: dynamic-page` some node
+// properties are write-only and throw on read. A hostile or unloaded getter
+// costs us the measurement, not the export.
+function hostGet(node: Record<string, unknown>, key: string): unknown {
+  try {
+    return node[key]
+  } catch {
+    return undefined
+  }
+}
+
+/** The rule: a dimension the host reports as a finite number at or below zero.
+ *
+ * Deliberately narrow. Only a non-positive dimension proves the node encloses
+ * no area, and only then do we know there is no picture to make. A 1×1 node —
+ * or any sub-pixel node with positive extent — still has area and still goes to
+ * the exporter, because it can render and the host is the authority on whether
+ * it does. A dimension the host will not report at all is left alone too: an
+ * unknown size is not a known-empty one, and guessing here would invent a
+ * failure for pages and other nodes that carry no layout at all. */
+function enclosesNoArea(node: unknown): boolean {
+  if (!isRecord(node)) return false
+  return (
+    isNonPositive(hostGet(node, "width")) ||
+    isNonPositive(hostGet(node, "height"))
+  )
+}
+
+function isNonPositive(value: unknown): boolean {
+  return typeof value === "number" && Number.isFinite(value) && value <= 0
 }
 
 function nodeExporter(
@@ -353,6 +386,13 @@ export async function getScreenshot(
     const exporter = nodeExporter(node)
     if (exporter === undefined) {
       assets.push(itemError("UNSUPPORTED_NODE"))
+      continue
+    }
+    // Asked before the host exporter runs, and for every format: an empty node
+    // is empty as a PNG too, and a 1×1 transparent pixel would be the same
+    // silent lie as an empty SVG.
+    if (enclosesNoArea(node)) {
+      assets.push(itemError("EMPTY_NODE_BOUNDS"))
       continue
     }
     try {

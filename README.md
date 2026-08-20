@@ -186,6 +186,8 @@ The advertised catalog is exactly these three argumentless prompts. Each returns
 - Before return, the iframe parses the SVG as XML and flags scripts, `foreignObject`, inline event handlers, `javascript:` URLs, CSS `@import`, and non-fragment network references. The source is never rewritten and never withheld: every SVG asset carries a `safe` verdict, and an unsafe one also carries a `rejection` naming the rule that fired (`parserError`, `unsafeElement`, `unsafeAttribute`, `unsafeCss`, `unsafeProcessingInstruction`) plus the offending local name where the rule has one — never an attribute value.
 - The caller decides what an unsafe verdict is worth. The reason is precise because the risks are not equal: an embedded `@font-face` data URL fetches nothing, while a `<script>` element executes if the source is written to disk and later opened in a browser. `UNSAFE_SVG` is reserved and no longer emitted.
 
+- A node whose bounds enclose no area fails with a per-asset `EMPTY_NODE_BOUNDS`, in every format. The check runs before the export and covers only a width or height the host reports as zero or less; a 1×1 or sub-pixel node still has area and still renders. An empty SVG or a 1×1 transparent pixel would be a success carrying nothing, and `INTERNAL_ERROR` is reserved for failures whose cause we do not know.
+
 The tool does not choose or write a local path.
 
 Motion fields use seconds (`duration`, `timelineOffset`, `timelineDuration`, `timelinePosition`). They are not converted to milliseconds.

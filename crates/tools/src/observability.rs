@@ -43,6 +43,7 @@ pub fn tool_result_log_code(is_error: Option<bool>, structured_code: Option<&str
         Some("NODE_NOT_FOUND") => "NODE_NOT_FOUND",
         Some("PAGE_NOT_FOUND") => "PAGE_NOT_FOUND",
         Some("UNSUPPORTED_NODE") => "UNSUPPORTED_NODE",
+        Some("EMPTY_NODE_BOUNDS") => "EMPTY_NODE_BOUNDS",
         Some("CAPABILITY_UNAVAILABLE") => "CAPABILITY_UNAVAILABLE",
         Some("UNSAFE_SVG") => "UNSAFE_SVG",
         Some("LIMIT_EXCEEDED") => "LIMIT_EXCEEDED",

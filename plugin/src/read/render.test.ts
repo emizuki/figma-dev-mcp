@@ -380,6 +380,132 @@ describe("get_screenshot export selection", () => {
     })
   })
 
+  test("a node whose bounds enclose no area says so instead of INTERNAL_ERROR", async () => {
+    // INTERNAL_ERROR should mean "we do not know". Here we do: the node has no
+    // area, so there is no picture in it, and the host reports that only as an
+    // opaque throw.
+    let exported = false
+    const node = {
+      id: "12:1",
+      type: "FRAME",
+      width: 0,
+      height: 0,
+      exportAsync: async () => {
+        exported = true
+        throw new Error("Cannot export a node with no size")
+      },
+    }
+    installFigma({ nodes: new Map([["12:1", node]]) })
+
+    const result = await getScreenshot(
+      {
+        format: "svg",
+        selector: { nodeId: "12:1" },
+        svgOutlineText: true,
+        svgIdAttribute: false,
+        svgSimplifyStroke: true,
+      },
+      undefined,
+      passthrough,
+    )
+    expect(result.assets[0]).toMatchObject({
+      status: "error",
+      error: { code: "EMPTY_NODE_BOUNDS", retryable: false },
+    })
+    expect(exported).toBe(false)
+  })
+
+  test("reports empty bounds for raster too, rather than a blank pixel", async () => {
+    const node = {
+      id: "12:2",
+      type: "FRAME",
+      width: 40,
+      height: 0,
+      exportAsync: async () => new Uint8Array([1]),
+    }
+    installFigma({ nodes: new Map([["12:2", node]]) })
+    const result = await getScreenshot(
+      { format: "png", selector: { nodeId: "12:2" } },
+      undefined,
+      passthrough,
+    )
+    expect(result.assets[0]).toMatchObject({
+      status: "error",
+      error: { code: "EMPTY_NODE_BOUNDS", retryable: false },
+    })
+  })
+
+  test("a 1x1 node still exports: it has area, so the host decides", async () => {
+    // The boundary is at zero, not at "small". A 1x1 node rasterised fine in
+    // the field, and sub-pixel extents can render too.
+    const nodes = new Map<string, unknown>([
+      [
+        "12:3",
+        {
+          id: "12:3",
+          type: "FRAME",
+          width: 1,
+          height: 1,
+          exportAsync: async () => new Uint8Array([7]),
+        },
+      ],
+      [
+        "12:4",
+        {
+          id: "12:4",
+          type: "FRAME",
+          width: 0.25,
+          height: 0.5,
+          exportAsync: async () => new Uint8Array([8]),
+        },
+      ],
+    ])
+    installFigma({ nodes })
+    const result = await getScreenshot(
+      { format: "png", selector: { nodeIds: ["12:3", "12:4"] } },
+      undefined,
+      passthrough,
+    )
+    expect(result.assets[0]).toMatchObject({ status: "success" })
+    expect(result.assets[1]).toMatchObject({ status: "success" })
+  })
+
+  test("bounds the host will not report leave the export alone", async () => {
+    // An unknown size is not a known-empty one. A write-only getter throws
+    // under `documentAccess: dynamic-page`, and a PAGE carries no layout at
+    // all; neither is evidence that there is nothing to draw.
+    const nodes = new Map<string, unknown>([
+      [
+        "12:5",
+        {
+          id: "12:5",
+          type: "FRAME",
+          get width(): number {
+            throw new Error("width is not readable here")
+          },
+          height: 10,
+          exportAsync: async () => new Uint8Array([5]),
+        },
+      ],
+      [
+        "12:6",
+        {
+          id: "12:6",
+          type: "FRAME",
+          exportAsync: async () => new Uint8Array([6]),
+        },
+      ],
+    ])
+    installFigma({ nodes })
+    const result = await getScreenshot(
+      { format: "png", selector: { nodeIds: ["12:5", "12:6"] } },
+      undefined,
+      passthrough,
+    )
+    expect(result.assets[0]).toMatchObject({ status: "success" })
+    expect(result.assets[1]).toMatchObject({ status: "success" })
+  })
+
   test("carries the SVG verdict from the codec onto the asset", async () => {
     const node = exportNode("10:1", async () => "<svg/>")
     installFigma({ nodes: new Map([["10:1", node]]) })
@@ -698,6 +824,52 @@ describe("screenshot result validation", () => {
           source: "<svg/>",
           safe: true,
           rejection: { kind: "unsafeElement", name: "script" },
+        }),
+      ),
+    ).toThrow()
+  })
+
+  const errorResult = (error: Record<string, unknown>): unknown => ({
+    operation: "get_screenshot",
+    result: {
+      assets: [{ status: "error", error }],
+      truncated: false,
+      observation: {
+        startedAt: "2026-08-19T00:00:00.000Z",
+        completedAt: "2026-08-19T00:00:01.000Z",
+      },
+    },
+  })
+
+  test("EMPTY_NODE_BOUNDS round-trips with its canonical message", () => {
+    // The member has to exist on this end too. An unknown code is refused at
+    // the boundary, which costs the whole session rather than one asset.
+    const error = {
+      code: "EMPTY_NODE_BOUNDS",
+      message: "The requested node has no area to render.",
+      retryable: false,
+    }
+    expect(parseReadResult(errorResult(error))).toEqual(
+      errorResult(error) as never,
+    )
+  })
+
+  test("refuses a non-canonical message and a near-miss spelling", () => {
+    expect(() =>
+      parseReadResult(
+        errorResult({
+          code: "EMPTY_NODE_BOUNDS",
+          message: "The node is empty.",
+          retryable: false,
+        }),
+      ),
+    ).toThrow()
+    expect(() =>
+      parseReadResult(
+        errorResult({
+          code: "EMPTY_BOUNDS",
+          message: "The requested node has no area to render.",
+          retryable: false,
         }),
       ),
     ).toThrow()

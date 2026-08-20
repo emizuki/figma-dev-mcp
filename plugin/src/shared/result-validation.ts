@@ -270,6 +270,7 @@ const CANONICAL_MESSAGES: Record<ErrorCode, string> = {
   NODE_NOT_FOUND: "The requested node was not found.",
   PAGE_NOT_FOUND: "The requested page was not found.",
   UNSUPPORTED_NODE: "The requested node type is not supported.",
+  EMPTY_NODE_BOUNDS: "The requested node has no area to render.",
   CAPABILITY_UNAVAILABLE: "The required Figma capability is unavailable.",
   UNSAFE_SVG: "The SVG was rejected by the safety policy.",
   INVALID_CURSOR: "The search cursor is invalid or stale.",

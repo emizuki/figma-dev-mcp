@@ -2769,6 +2769,11 @@
               "type": "string"
             },
             {
+              "const": "EMPTY_NODE_BOUNDS",
+              "description": "The node encloses no area, so there is no picture to render in any\nformat. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Only a width or height reported as zero or\nless qualifies: a 1x1 or sub-pixel node still renders.",
+              "type": "string"
+            },
+            {
               "const": "UNSAFE_SVG",
               "description": "Reserved and no longer emitted: SVG safety reports a verdict on the\nasset instead of failing the item. The member stays because removing a\nmember of a closed enum is itself a wire change.",
               "type": "string"
@@ -4092,6 +4097,11 @@
                 "CANCELLED",
                 "INTERNAL_ERROR"
               ],
+              "type": "string"
+            },
+            {
+              "const": "EMPTY_NODE_BOUNDS",
+              "description": "The node encloses no area, so there is no picture to render in any\nformat. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Only a width or height reported as zero or\nless qualifies: a 1x1 or sub-pixel node still renders.",
               "type": "string"
             },
             {
@@ -5506,6 +5516,11 @@
                 "CANCELLED",
                 "INTERNAL_ERROR"
               ],
+              "type": "string"
+            },
+            {
+              "const": "EMPTY_NODE_BOUNDS",
+              "description": "The node encloses no area, so there is no picture to render in any\nformat. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Only a width or height reported as zero or\nless qualifies: a 1x1 or sub-pixel node still renders.",
               "type": "string"
             },
             {
@@ -7153,6 +7168,11 @@
               "type": "string"
             },
             {
+              "const": "EMPTY_NODE_BOUNDS",
+              "description": "The node encloses no area, so there is no picture to render in any\nformat. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Only a width or height reported as zero or\nless qualifies: a 1x1 or sub-pixel node still renders.",
+              "type": "string"
+            },
+            {
               "const": "UNSAFE_SVG",
               "description": "Reserved and no longer emitted: SVG safety reports a verdict on the\nasset instead of failing the item. The member stays because removing a\nmember of a closed enum is itself a wire change.",
               "type": "string"
@@ -7891,7 +7911,7 @@
       "openWorldHint": false,
       "readOnlyHint": true
     },
-    "description": "Render bounded nodes or the captured selection as raster or SVG assets. SVG source is always returned, with a `safe` verdict and, when unsafe, a `rejection` naming the rule that fired; safety never withholds the source. Treat an unsafe verdict as a caller decision: writing such source to disk can execute a `<script>` element if a browser later opens it. A connectionId is ephemeral and expires when its plugin socket reconnects.",
+    "description": "Render bounded nodes or the captured selection as raster or SVG assets. SVG source is always returned, with a `safe` verdict and, when unsafe, a `rejection` naming the rule that fired; safety never withholds the source. Treat an unsafe verdict as a caller decision: writing such source to disk can execute a `<script>` element if a browser later opens it. A node whose bounds enclose no area fails with `EMPTY_NODE_BOUNDS` in every format rather than returning an empty asset. A connectionId is ephemeral and expires when its plugin socket reconnects.",
     "inputSchema": {
       "$defs": {
         "ConnectionId": {
@@ -8132,6 +8152,11 @@
                 "CANCELLED",
                 "INTERNAL_ERROR"
               ],
+              "type": "string"
+            },
+            {
+              "const": "EMPTY_NODE_BOUNDS",
+              "description": "The node encloses no area, so there is no picture to render in any\nformat. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Only a width or height reported as zero or\nless qualifies: a 1x1 or sub-pixel node still renders.",
               "type": "string"
             },
             {
@@ -11616,6 +11641,11 @@
                 "CANCELLED",
                 "INTERNAL_ERROR"
               ],
+              "type": "string"
+            },
+            {
+              "const": "EMPTY_NODE_BOUNDS",
+              "description": "The node encloses no area, so there is no picture to render in any\nformat. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Only a width or height reported as zero or\nless qualifies: a 1x1 or sub-pixel node still renders.",
               "type": "string"
             },
             {

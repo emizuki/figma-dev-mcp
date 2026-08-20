@@ -277,6 +277,7 @@ fn stable_error_codes_are_exact_and_screaming_snake_case() {
         ErrorCode::NodeNotFound,
         ErrorCode::PageNotFound,
         ErrorCode::UnsupportedNode,
+        ErrorCode::EmptyNodeBounds,
         ErrorCode::CapabilityUnavailable,
         ErrorCode::UnsafeSvg,
         ErrorCode::InvalidCursor,
@@ -304,6 +305,7 @@ fn stable_error_codes_are_exact_and_screaming_snake_case() {
             "NODE_NOT_FOUND",
             "PAGE_NOT_FOUND",
             "UNSUPPORTED_NODE",
+            "EMPTY_NODE_BOUNDS",
             "CAPABILITY_UNAVAILABLE",
             "UNSAFE_SVG",
             "INVALID_CURSOR",
@@ -636,6 +638,39 @@ fn the_tool_error_no_longer_carries_an_svg_rule() {
         }))
         .is_err(),
         "an svgRejection on a tool error must be refused, not ignored"
+    );
+}
+
+#[test]
+fn the_empty_bounds_code_round_trips_and_owns_its_message() {
+    // A code one end knows and the other does not is not a failed request: the
+    // decoder refuses the frame and the whole broker session drops. This pins
+    // the wire tag the plugin has to mirror exactly.
+    let wire = r#"{"code":"EMPTY_NODE_BOUNDS","message":"The requested node has no area to render.","retryable":false}"#;
+    let error: ToolError = serde_json::from_str(wire).unwrap();
+    assert_eq!(error.code(), ErrorCode::EmptyNodeBounds);
+    assert_eq!(serde_json::to_string(&error).unwrap(), wire);
+
+    let item: ItemError = serde_json::from_str(
+        r#"{"index":0,"code":"EMPTY_NODE_BOUNDS","message":"The requested node has no area to render.","retryable":false}"#,
+    )
+    .unwrap();
+    assert_eq!(item.code(), ErrorCode::EmptyNodeBounds);
+
+    // The message is code-owned: a sender that supplies its own is refused
+    // rather than quietly relaying prose we did not write.
+    assert!(
+        serde_json::from_value::<ToolError>(json!({
+            "code": "EMPTY_NODE_BOUNDS",
+            "message": "The node is empty.",
+            "retryable": false
+        }))
+        .is_err(),
+        "a non-canonical message for EMPTY_NODE_BOUNDS must be refused"
+    );
+    assert!(
+        serde_json::from_str::<ErrorCode>("\"EMPTY_BOUNDS\"").is_err(),
+        "a near-miss spelling must not decode"
     );
 }
 
@@ -1830,6 +1865,7 @@ fn error_code_tag(code: ErrorCode) -> &'static str {
         ErrorCode::NodeNotFound => "NODE_NOT_FOUND",
         ErrorCode::PageNotFound => "PAGE_NOT_FOUND",
         ErrorCode::UnsupportedNode => "UNSUPPORTED_NODE",
+        ErrorCode::EmptyNodeBounds => "EMPTY_NODE_BOUNDS",
         ErrorCode::CapabilityUnavailable => "CAPABILITY_UNAVAILABLE",
         ErrorCode::UnsafeSvg => "UNSAFE_SVG",
         ErrorCode::InvalidCursor => "INVALID_CURSOR",
