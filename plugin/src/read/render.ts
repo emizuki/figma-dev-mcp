@@ -17,6 +17,10 @@ import { loadPageIfNeeded, type FigmaReadApi } from "./common"
 
 export const SCREENSHOT_VALIDATION_TIMEOUT_MS = 10_000
 
+/** Figma nests far shallower than this; the cap only stops a malformed parent
+ * chain from spinning. */
+const MAX_ANCESTOR_WALK = 128
+
 declare const figma: FigmaReadApi
 
 export interface RasterEncodeSuccess {
@@ -129,25 +133,50 @@ function hostGet(node: Record<string, unknown>, key: string): unknown {
   }
 }
 
-/** The rule: a dimension the host reports as a finite number at or below zero.
+/** A `visible` switch is inherited: the API counts a node as visible only when
+ * `visible === true` for itself *and every one of its parents*. So this walks
+ * the chain rather than reading one flag.
  *
- * Deliberately narrow. Only a non-positive dimension proves the node encloses
- * no area, and only then do we know there is no picture to make. A 1×1 node —
- * or any sub-pixel node with positive extent — still has area and still goes to
- * the exporter, because it can render and the host is the authority on whether
- * it does. A dimension the host will not report at all is left alone too: an
- * unknown size is not a known-empty one, and guessing here would invent a
- * failure for pages and other nodes that carry no layout at all. */
-function enclosesNoArea(node: unknown): boolean {
-  if (!isRecord(node)) return false
-  return (
-    isNonPositive(hostGet(node, "width")) ||
-    isNonPositive(hostGet(node, "height"))
-  )
+ * An unfinished walk returns false. Failing to establish visibility is not the
+ * same as establishing it, and every caller here treats false as "leave this
+ * node alone". */
+function isFullyVisible(node: unknown): boolean {
+  let current: unknown = node
+  for (let step = 0; step < MAX_ANCESTOR_WALK; step += 1) {
+    // Past the root: nothing in the chain was switched off.
+    if (!isRecord(current)) return true
+    if (hostGet(current, "visible") === false) return false
+    current = hostGet(current, "parent")
+  }
+  return false
 }
 
-function isNonPositive(value: unknown): boolean {
-  return typeof value === "number" && Number.isFinite(value) && value <= 0
+/** The rule: the host reports `absoluteRenderBounds` as exactly `null` for a
+ * node we can also see is switched on.
+ *
+ * `absoluteRenderBounds` is the property that answers the question we are
+ * actually asking — "does this node put any ink on the page?" — because it is
+ * measured after strokes, shadows and effects. Geometry cannot answer it. A
+ * `LINE` is *always* exactly zero pixels high, by API contract, yet every
+ * divider and underline in every file renders perfectly through its stroke; a
+ * straight `VECTOR` or `CONNECTOR` is the same. Judging on width and height
+ * would fire on precisely those nodes and on almost nothing else, since every
+ * other type is clamped to at least 0.01.
+ *
+ * The visibility guard is the price of using it. The same API calls a node
+ * invisible when an *ancestor* is switched off, and null-because-hidden says
+ * nothing about whether the node has anything in it, so those fall through to
+ * the exporter exactly as they do today. The guard can only make this rule fire
+ * less often, never more.
+ *
+ * `undefined` is not `null`: a property the host does not carry at all — a
+ * `PAGE`, which has no layout — or one whose getter throws under
+ * `documentAccess: dynamic-page` leaves the export alone. An unknown answer is
+ * not an empty one. */
+function rendersNothing(node: unknown): boolean {
+  if (!isRecord(node)) return false
+  if (!isFullyVisible(node)) return false
+  return hostGet(node, "absoluteRenderBounds") === null
 }
 
 function nodeExporter(
@@ -388,10 +417,10 @@ export async function getScreenshot(
       assets.push(itemError("UNSUPPORTED_NODE"))
       continue
     }
-    // Asked before the host exporter runs, and for every format: an empty node
-    // is empty as a PNG too, and a 1×1 transparent pixel would be the same
-    // silent lie as an empty SVG.
-    if (enclosesNoArea(node)) {
+    // Asked before the host exporter runs, and for every format: a node that
+    // puts no ink on the page is empty as a PNG too, and a 1×1 transparent
+    // pixel would be the same silent lie as an empty SVG.
+    if (rendersNothing(node)) {
       assets.push(itemError("EMPTY_NODE_BOUNDS"))
       continue
     }

@@ -23,10 +23,12 @@ pub enum ErrorCode {
     NodeNotFound,
     PageNotFound,
     UnsupportedNode,
-    /// The node encloses no area, so there is no picture to render in any
-    /// format. Distinct from `INTERNAL_ERROR`, which means the cause is
-    /// unknown; here it is known. Only a width or height reported as zero or
-    /// less qualifies: a 1x1 or sub-pixel node still renders.
+    /// The node puts no ink on the page, so there is no picture to return in
+    /// any format. Distinct from `INTERNAL_ERROR`, which means the cause is
+    /// unknown; here it is known. Judged on the host's own render bounds,
+    /// measured after strokes and effects, so a zero-height rule or divider
+    /// still renders and still succeeds. A node that is switched off, or whose
+    /// bounds the host will not report, is left to the exporter.
     EmptyNodeBounds,
     CapabilityUnavailable,
     /// Reserved and no longer emitted: SVG safety reports a verdict on the

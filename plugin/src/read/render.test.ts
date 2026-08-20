@@ -380,16 +380,15 @@ describe("get_screenshot export selection", () => {
     })
   })
 
-  test("a node whose bounds enclose no area says so instead of INTERNAL_ERROR", async () => {
-    // INTERNAL_ERROR should mean "we do not know". Here we do: the node has no
-    // area, so there is no picture in it, and the host reports that only as an
-    // opaque throw.
+  test("a node that puts no ink on the page says so instead of INTERNAL_ERROR", async () => {
+    // INTERNAL_ERROR should mean "we do not know". Here we do: the host reports
+    // no render bounds at all, and it reports that only as an opaque throw.
     let exported = false
     const node = {
       id: "12:1",
       type: "FRAME",
-      width: 0,
-      height: 0,
+      visible: true,
+      absoluteRenderBounds: null,
       exportAsync: async () => {
         exported = true
         throw new Error("Cannot export a node with no size")
@@ -419,8 +418,8 @@ describe("get_screenshot export selection", () => {
     const node = {
       id: "12:2",
       type: "FRAME",
-      width: 40,
-      height: 0,
+      visible: true,
+      absoluteRenderBounds: null,
       exportAsync: async () => new Uint8Array([1]),
     }
     installFigma({ nodes: new Map([["12:2", node]]) })
@@ -435,32 +434,35 @@ describe("get_screenshot export selection", () => {
     })
   })
 
-  test("a 1x1 node still exports: it has area, so the host decides", async () => {
-    // The boundary is at zero, not at "small". A 1x1 node rasterised fine in
-    // the field, and sub-pixel extents can render too.
-    const nodes = new Map<string, unknown>([
-      [
-        "12:3",
-        {
-          id: "12:3",
-          type: "FRAME",
-          width: 1,
-          height: 1,
-          exportAsync: async () => new Uint8Array([7]),
-        },
-      ],
-      [
-        "12:4",
-        {
-          id: "12:4",
-          type: "FRAME",
-          width: 0.25,
-          height: 0.5,
-          exportAsync: async () => new Uint8Array([8]),
-        },
-      ],
-    ])
-    installFigma({ nodes })
+  test("a LINE still exports: it is zero-high by contract and renders anyway", async () => {
+    // The pinned typings require a LineNode to be given a height of exactly 0,
+    // so a width/height rule would fire on every divider and underline in every
+    // file. Its stroke still puts ink on the page, and render bounds say so.
+    const line = {
+      id: "12:3",
+      type: "LINE",
+      visible: true,
+      width: 240,
+      height: 0,
+      absoluteRenderBounds: { x: 0, y: 0, width: 240, height: 1 },
+      exportAsync: async () => new Uint8Array([3]),
+    }
+    // A straight VECTOR is the same shape of case.
+    const vector = {
+      id: "12:4",
+      type: "VECTOR",
+      visible: true,
+      width: 96,
+      height: 0,
+      absoluteRenderBounds: { x: 0, y: 0, width: 96, height: 2 },
+      exportAsync: async () => new Uint8Array([4]),
+    }
+    installFigma({
+      nodes: new Map<string, unknown>([
+        ["12:3", line],
+        ["12:4", vector],
+      ]),
+    })
     const result = await getScreenshot(
       { format: "png", selector: { nodeIds: ["12:3", "12:4"] } },
       undefined,
@@ -470,33 +472,31 @@ describe("get_screenshot export selection", () => {
     expect(result.assets[1]).toMatchObject({ status: "success" })
   })
 
-  test("bounds the host will not report leave the export alone", async () => {
-    // An unknown size is not a known-empty one. A write-only getter throws
-    // under `documentAccess: dynamic-page`, and a PAGE carries no layout at
-    // all; neither is evidence that there is nothing to draw.
-    const nodes = new Map<string, unknown>([
-      [
-        "12:5",
-        {
-          id: "12:5",
-          type: "FRAME",
-          get width(): number {
-            throw new Error("width is not readable here")
-          },
-          height: 10,
-          exportAsync: async () => new Uint8Array([5]),
-        },
-      ],
-      [
-        "12:6",
-        {
-          id: "12:6",
-          type: "FRAME",
-          exportAsync: async () => new Uint8Array([6]),
-        },
-      ],
-    ])
-    installFigma({ nodes })
+  test("a switched-off node or ancestor leaves the export alone", async () => {
+    // The host reports null render bounds for anything invisible, and counts a
+    // node invisible when any *parent* is switched off. Null-because-hidden is
+    // not evidence the node is empty, so both of these keep today's behaviour.
+    const hiddenItself = {
+      id: "12:5",
+      type: "FRAME",
+      visible: false,
+      absoluteRenderBounds: null,
+      exportAsync: async () => new Uint8Array([5]),
+    }
+    const hiddenParent = {
+      id: "12:6",
+      type: "FRAME",
+      visible: true,
+      absoluteRenderBounds: null,
+      parent: { id: "12:0", type: "FRAME", visible: false },
+      exportAsync: async () => new Uint8Array([6]),
+    }
+    installFigma({
+      nodes: new Map<string, unknown>([
+        ["12:5", hiddenItself],
+        ["12:6", hiddenParent],
+      ]),
+    })
     const result = await getScreenshot(
       { format: "png", selector: { nodeIds: ["12:5", "12:6"] } },
       undefined,
@@ -504,6 +504,61 @@ describe("get_screenshot export selection", () => {
     )
     expect(result.assets[0]).toMatchObject({ status: "success" })
     expect(result.assets[1]).toMatchObject({ status: "success" })
+  })
+
+  test("render bounds the host will not report leave the export alone", async () => {
+    // An unknown answer is not an empty one. A write-only getter throws under
+    // `documentAccess: dynamic-page`, and a PAGE carries no layout at all, so
+    // the property is absent rather than null; neither is evidence.
+    const nodes = new Map<string, unknown>([
+      [
+        "12:7",
+        {
+          id: "12:7",
+          type: "FRAME",
+          visible: true,
+          get absoluteRenderBounds(): unknown {
+            throw new Error("bounds are not readable here")
+          },
+          exportAsync: async () => new Uint8Array([7]),
+        },
+      ],
+      [
+        "12:8",
+        {
+          id: "12:8",
+          type: "FRAME",
+          visible: true,
+          exportAsync: async () => new Uint8Array([8]),
+        },
+      ],
+    ])
+    installFigma({ nodes })
+    const result = await getScreenshot(
+      { format: "png", selector: { nodeIds: ["12:7", "12:8"] } },
+      undefined,
+      passthrough,
+    )
+    expect(result.assets[0]).toMatchObject({ status: "success" })
+    expect(result.assets[1]).toMatchObject({ status: "success" })
+  })
+
+  test("a cyclic parent chain leaves the export alone rather than spinning", async () => {
+    const node: Record<string, unknown> = {
+      id: "12:9",
+      type: "FRAME",
+      visible: true,
+      absoluteRenderBounds: null,
+      exportAsync: async () => new Uint8Array([9]),
+    }
+    node.parent = node
+    installFigma({ nodes: new Map<string, unknown>([["12:9", node]]) })
+    const result = await getScreenshot(
+      { format: "png", selector: { nodeId: "12:9" } },
+      undefined,
+      passthrough,
+    )
+    expect(result.assets[0]).toMatchObject({ status: "success" })
   })
 
   test("carries the SVG verdict from the codec onto the asset", async () => {

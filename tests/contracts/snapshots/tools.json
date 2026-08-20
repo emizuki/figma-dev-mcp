@@ -2770,7 +2770,7 @@
             },
             {
               "const": "EMPTY_NODE_BOUNDS",
-              "description": "The node encloses no area, so there is no picture to render in any\nformat. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Only a width or height reported as zero or\nless qualifies: a 1x1 or sub-pixel node still renders.",
+              "description": "The node puts no ink on the page, so there is no picture to return in\nany format. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Judged on the host's own render bounds,\nmeasured after strokes and effects, so a zero-height rule or divider\nstill renders and still succeeds. A node that is switched off, or whose\nbounds the host will not report, is left to the exporter.",
               "type": "string"
             },
             {
@@ -4101,7 +4101,7 @@
             },
             {
               "const": "EMPTY_NODE_BOUNDS",
-              "description": "The node encloses no area, so there is no picture to render in any\nformat. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Only a width or height reported as zero or\nless qualifies: a 1x1 or sub-pixel node still renders.",
+              "description": "The node puts no ink on the page, so there is no picture to return in\nany format. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Judged on the host's own render bounds,\nmeasured after strokes and effects, so a zero-height rule or divider\nstill renders and still succeeds. A node that is switched off, or whose\nbounds the host will not report, is left to the exporter.",
               "type": "string"
             },
             {
@@ -5520,7 +5520,7 @@
             },
             {
               "const": "EMPTY_NODE_BOUNDS",
-              "description": "The node encloses no area, so there is no picture to render in any\nformat. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Only a width or height reported as zero or\nless qualifies: a 1x1 or sub-pixel node still renders.",
+              "description": "The node puts no ink on the page, so there is no picture to return in\nany format. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Judged on the host's own render bounds,\nmeasured after strokes and effects, so a zero-height rule or divider\nstill renders and still succeeds. A node that is switched off, or whose\nbounds the host will not report, is left to the exporter.",
               "type": "string"
             },
             {
@@ -7169,7 +7169,7 @@
             },
             {
               "const": "EMPTY_NODE_BOUNDS",
-              "description": "The node encloses no area, so there is no picture to render in any\nformat. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Only a width or height reported as zero or\nless qualifies: a 1x1 or sub-pixel node still renders.",
+              "description": "The node puts no ink on the page, so there is no picture to return in\nany format. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Judged on the host's own render bounds,\nmeasured after strokes and effects, so a zero-height rule or divider\nstill renders and still succeeds. A node that is switched off, or whose\nbounds the host will not report, is left to the exporter.",
               "type": "string"
             },
             {
@@ -7911,7 +7911,7 @@
       "openWorldHint": false,
       "readOnlyHint": true
     },
-    "description": "Render bounded nodes or the captured selection as raster or SVG assets. SVG source is always returned, with a `safe` verdict and, when unsafe, a `rejection` naming the rule that fired; safety never withholds the source. Treat an unsafe verdict as a caller decision: writing such source to disk can execute a `<script>` element if a browser later opens it. A node whose bounds enclose no area fails with `EMPTY_NODE_BOUNDS` in every format rather than returning an empty asset. A connectionId is ephemeral and expires when its plugin socket reconnects.",
+    "description": "Render bounded nodes or the captured selection as raster or SVG assets. SVG source is always returned, with a `safe` verdict and, when unsafe, a `rejection` naming the rule that fired; safety never withholds the source. Treat an unsafe verdict as a caller decision: writing such source to disk can execute a `<script>` element if a browser later opens it. A node the host reports as putting no ink on the page fails with `EMPTY_NODE_BOUNDS` in every format rather than returning an empty asset. A connectionId is ephemeral and expires when its plugin socket reconnects.",
     "inputSchema": {
       "$defs": {
         "ConnectionId": {
@@ -8156,7 +8156,7 @@
             },
             {
               "const": "EMPTY_NODE_BOUNDS",
-              "description": "The node encloses no area, so there is no picture to render in any\nformat. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Only a width or height reported as zero or\nless qualifies: a 1x1 or sub-pixel node still renders.",
+              "description": "The node puts no ink on the page, so there is no picture to return in\nany format. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Judged on the host's own render bounds,\nmeasured after strokes and effects, so a zero-height rule or divider\nstill renders and still succeeds. A node that is switched off, or whose\nbounds the host will not report, is left to the exporter.",
               "type": "string"
             },
             {
@@ -11645,7 +11645,7 @@
             },
             {
               "const": "EMPTY_NODE_BOUNDS",
-              "description": "The node encloses no area, so there is no picture to render in any\nformat. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Only a width or height reported as zero or\nless qualifies: a 1x1 or sub-pixel node still renders.",
+              "description": "The node puts no ink on the page, so there is no picture to return in\nany format. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Judged on the host's own render bounds,\nmeasured after strokes and effects, so a zero-height rule or divider\nstill renders and still succeeds. A node that is switched off, or whose\nbounds the host will not report, is left to the exporter.",
               "type": "string"
             },
             {
