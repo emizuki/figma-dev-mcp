@@ -656,6 +656,75 @@ describe("get_reactions", () => {
     expect(actions).toEqual(["openLink"])
   })
 
+  test("nodes with nothing to report are not emitted, and are still counted", async () => {
+    // 3 nodes, 1 with a reaction. Before this, all 3 were emitted; on a real
+    // page that cost 356,668 bytes to report 11 reactions and exhausted the
+    // node budget, so reactions past the cap went missing.
+    const wired = frame("5:1", {
+      reactions: [
+        { trigger: { type: "ON_CLICK" }, actions: [{ type: "BACK" }] },
+      ],
+    })
+    const silent = frame("5:2")
+    const root = frame("root", { children: [wired, silent] })
+    installFigma({
+      currentPage: page("0:2", "Current", [root]),
+      nodes: new Map<string, unknown>([["root", root]]),
+    })
+
+    const result = await getReactions({ selector: { nodeId: "root" } })
+    expect(result.items).toHaveLength(1)
+    expect(result.items[0]).toMatchObject({
+      status: "success",
+      value: { nodeId: "5:1" },
+    })
+    expect(result.visitedNodes).toBe(3)
+    expect(result.truncated).toBe(false)
+  })
+
+  test("separates scanned-and-found-nothing from never-reached", async () => {
+    const root = frame("root", { children: [frame("5:1"), frame("5:2")] })
+    installFigma({
+      currentPage: page("0:2", "Current", [root]),
+      nodes: new Map<string, unknown>([["root", root]]),
+    })
+
+    const result = await getReactions({ selector: { nodeId: "root" } })
+    expect(result.items).toEqual([])
+    expect(result.visitedNodes).toBe(3)
+    expect(result.truncated).toBe(false)
+  })
+
+  test("counts the node that trips the emit ceiling", async () => {
+    const wired = (id: string) =>
+      frame(id, {
+        reactions: [
+          { trigger: { type: "ON_CLICK" }, actions: [{ type: "BACK" }] },
+        ],
+      })
+    const root = frame("root", {
+      children: [frame("5:0"), wired("5:1"), wired("5:2")],
+    })
+    installFigma({
+      currentPage: page("0:2", "Current", [root]),
+      nodes: new Map<string, unknown>([["root", root]]),
+    })
+
+    const result = await getReactions(
+      { selector: { nodeId: "root" } },
+      undefined,
+      {
+        returnedNodes: 1,
+        visitedNodes: 100,
+        encodedBytes: 8 * 1024 * 1024,
+      },
+    )
+    expect(result.items).toHaveLength(1)
+    // Four nodes were inspected before the ceiling stopped emission.
+    expect(result.visitedNodes).toBe(4)
+    expect(result.truncation).toEqual({ reason: "nodeLimit", visitedNodes: 4 })
+  })
+
   test("keeps nodes already indexed when the visit ceiling is hit", async () => {
     const first = frame("5:1", {
       reactions: [

@@ -527,6 +527,10 @@ export interface DevModeNodeData {
 
 export interface GetDevModeDataResult {
   items: ItemResult<DevModeNodeData>[]
+  /** Nodes walked, including those that reported nothing and are therefore
+   * absent from `items`. Without this a caller cannot tell "scanned and found
+   * nothing" from "never reached". */
+  visitedNodes: number
   truncated: boolean
   truncation?: Truncation
   observation: ObservationWindow
@@ -627,6 +631,10 @@ export interface NodeReactions {
 
 export interface GetReactionsResult {
   items: ItemResult<NodeReactions>[]
+  /** Nodes walked, including those that reported nothing and are therefore
+   * absent from `items`. Without this a caller cannot tell "scanned and found
+   * nothing" from "never reached". */
+  visitedNodes: number
   truncated: boolean
   truncation?: Truncation
   observation: ObservationWindow
@@ -767,6 +775,10 @@ export interface NodeMotion {
 
 export interface GetMotionResult {
   items: ItemResult<NodeMotion>[]
+  /** Nodes walked, including those that reported nothing and are therefore
+   * absent from `items`. Without this a caller cannot tell "scanned and found
+   * nothing" from "never reached". */
+  visitedNodes: number
   availableStyles?: AvailableAnimationStyle[]
   truncated: boolean
   truncation?: Truncation

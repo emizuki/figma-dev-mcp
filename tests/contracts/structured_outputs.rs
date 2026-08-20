@@ -231,6 +231,7 @@ fn success_fixture(name: &str) -> Value {
                     "inheritedFromNodeId": "2:1"
                 }
             }],
+            "visitedNodes": 1,
             "truncated": false,
             "observation": observation()
         }),
@@ -246,6 +247,7 @@ fn success_fixture(name: &str) -> Value {
                     }]
                 }
             }],
+            "visitedNodes": 1,
             "truncated": false,
             "observation": observation()
         }),
@@ -292,6 +294,7 @@ fn success_fixture(name: &str) -> Value {
                 "description": "Catalog fade",
                 "props": [{"name": "direction", "value": "string"}]
             }],
+            "visitedNodes": 1,
             "truncated": false,
             "observation": observation()
         }),

@@ -122,7 +122,6 @@ function unsupportedItem(): ItemResult<NodeMotion> {
 class ItemEmission {
   readonly items: GetMotionResult["items"] = []
   encoded = 0
-  considered = 0
   walkTruncation?: Truncation
   emitTruncation?: Truncation
 
@@ -136,14 +135,10 @@ class ItemEmission {
     if (this.walkTruncation === undefined) this.walkTruncation = truncation
   }
 
-  push(item: ItemResult<NodeMotion>): boolean {
-    this.considered += 1
+  push(item: ItemResult<NodeMotion>, visitedNodes: number): boolean {
     if (this.emitTruncation !== undefined) return false
     if (this.items.length >= this.limits.returnedNodes) {
-      this.emitTruncation = {
-        reason: "nodeLimit",
-        visitedNodes: this.considered,
-      }
+      this.emitTruncation = { reason: "nodeLimit", visitedNodes }
       return false
     }
     const encoded = this.encoded + byteLength(item)
@@ -622,6 +617,33 @@ function serializeMotion(raw: unknown): ItemResult<NodeMotion> {
   }
 }
 
+// Emit only nodes that have something to say. A record per visited node cost
+// 237,212 bytes across 563 items on one measured page and reported zero
+// animations on every one of them.
+//
+// Ruling on the timeline question: a timeline with no animation is NOT content.
+// A `MotionTimeline` is only `{id, duration}`. The measured page returned one
+// timeline per node across all 563 nodes with an identical duration, which is
+// the signature of an ambient document-level timeline surfaced on every node
+// rather than a per-node fact. A duration with no keyframe, no manual track and
+// no applied style says nothing about what this node does; whoever is
+// implementing the motion learns nothing from it. Counting it as content would
+// mean `get_motion` never shrinks at all, which is the entire defect. Nodes
+// dropped this way are still accounted for in `visitedNodes`.
+function hasContent(value: NodeMotion): boolean {
+  return (
+    value.animations.length > 0 ||
+    value.animationStyles.length > 0 ||
+    value.manualKeyframeTracks.length > 0
+  )
+}
+
+// An error item is a report, not an empty record: it says this node was reached
+// and could not be read. Those stay.
+function itemHasContent(item: ItemResult<NodeMotion>): boolean {
+  return item.status === "error" || hasContent(item.value)
+}
+
 export async function getMotion(
   input: Partial<GetMotionInput> = {},
   signal?: CancellationSignal,
@@ -644,13 +666,20 @@ export async function getMotion(
     pending.push(raw)
   })
   if (walked.truncation !== undefined) emission.mark(walked.truncation)
+  // Counts nodes inspected, not records emitted: a caller reading `items` needs
+  // to know how much of the tree was examined and found to have nothing.
+  let visitedNodes = 0
   for (let index = 0; index < pending.length; index += 1) {
     throwIfAbortedAtBatch(signal, index, CANCEL_CHECK_BATCH)
     signal?.throwIfAborted()
-    if (!emission.push(serializeMotion(pending[index]))) break
+    visitedNodes += 1
+    const item = serializeMotion(pending[index])
+    if (!itemHasContent(item)) continue
+    if (!emission.push(item, visitedNodes)) break
   }
   const result: GetMotionResult = {
     items: emission.items,
+    visitedNodes,
     truncated: emission.truncation !== undefined,
     observation: observation(startedAt),
   }

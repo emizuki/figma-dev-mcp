@@ -1920,7 +1920,7 @@ function parseDevModeResult(
   const object = exact(
     value,
     label,
-    ["items", "truncated", "observation"],
+    ["items", "visitedNodes", "truncated", "observation"],
     ["truncation"],
   )
   return withResultMetadata(
@@ -1932,6 +1932,7 @@ function parseDevModeResult(
         (item, itemLabel) => parseItemResult(item, itemLabel, parseDevModeNode),
         MAX_INPUT_IDS,
       ),
+      visitedNodes: integer(object.visitedNodes, `${label}.visitedNodes`),
     },
     label,
   )
@@ -2193,7 +2194,7 @@ function parseReactionsResult(
   const object = exact(
     value,
     label,
-    ["items", "truncated", "observation"],
+    ["items", "visitedNodes", "truncated", "observation"],
     ["truncation"],
   )
   return withResultMetadata(
@@ -2206,6 +2207,7 @@ function parseReactionsResult(
           parseItemResult(item, itemLabel, parseNodeReactions),
         MAX_INPUT_IDS,
       ),
+      visitedNodes: integer(object.visitedNodes, `${label}.visitedNodes`),
     },
     label,
   )
@@ -2598,7 +2600,7 @@ function parseMotionResult(value: unknown, label: string): GetMotionResult {
   const object = exact(
     value,
     label,
-    ["items", "truncated", "observation"],
+    ["items", "visitedNodes", "truncated", "observation"],
     ["availableStyles", "truncation"],
   )
   const result = withResultMetadata(
@@ -2610,6 +2612,7 @@ function parseMotionResult(value: unknown, label: string): GetMotionResult {
         (item, itemLabel) => parseItemResult(item, itemLabel, parseNodeMotion),
         MAX_INPUT_IDS,
       ),
+      visitedNodes: integer(object.visitedNodes, `${label}.visitedNodes`),
     },
     label,
   )

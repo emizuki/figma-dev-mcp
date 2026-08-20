@@ -3000,10 +3000,17 @@
               "type": "null"
             }
           ]
+        },
+        "visitedNodes": {
+          "description": "Nodes walked, including those that reported nothing and are therefore\nabsent from `items`. Without this a caller cannot tell \"scanned and\nfound nothing\" from \"never reached\".",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
         }
       },
       "required": [
         "items",
+        "visitedNodes",
         "truncated",
         "observation"
       ],
@@ -4820,10 +4827,17 @@
               "type": "null"
             }
           ]
+        },
+        "visitedNodes": {
+          "description": "Nodes walked, including those that reported nothing and are therefore\nabsent from `items`. Without this a caller cannot tell \"scanned and\nfound nothing\" from \"never reached\".",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
         }
       },
       "required": [
         "items",
+        "visitedNodes",
         "truncated",
         "observation"
       ],
@@ -7822,10 +7836,17 @@
               "type": "null"
             }
           ]
+        },
+        "visitedNodes": {
+          "description": "Nodes walked, including those that reported nothing and are therefore\nabsent from `items`. Without this a caller cannot tell \"scanned and\nfound nothing\" from \"never reached\".",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
         }
       },
       "required": [
         "items",
+        "visitedNodes",
         "truncated",
         "observation"
       ],

@@ -9,12 +9,12 @@ mod tools_catalog;
 use figma_dev_mcp_protocol::{
     domain::{
         AxisAlign, ComponentValue, ConnectionId, CornerRadiusValue, DesignNode,
-        GetDesignContextResult, GetMotionResult, GetNodesResult, GetReactionsResult,
-        GetSelectionResult, InstanceValue, ItemIdentifier, LayoutValue, LetterSpacingValue,
-        LineHeightValue, MinimalNodeDetails, NodeForest, NodeId, NodeTypeList, NodeTypeName,
-        NodesSelector, PageId, PagesSelector, PaintValue, RasterScale, ReactionAction, RequestId,
-        ReturnedList, ScreenshotAsset, SearchNodesInput, Selector, StrokeAlign, StrokeValue,
-        StyleKind, StyleReference, TextStyle,
+        GetDesignContextResult, GetDevModeDataResult, GetMotionResult, GetNodesResult,
+        GetReactionsResult, GetSelectionResult, InstanceValue, ItemIdentifier, LayoutValue,
+        LetterSpacingValue, LineHeightValue, MinimalNodeDetails, NodeForest, NodeId, NodeTypeList,
+        NodeTypeName, NodesSelector, PageId, PagesSelector, PaintValue, RasterScale,
+        ReactionAction, RequestId, ReturnedList, ScreenshotAsset, SearchNodesInput, Selector,
+        StrokeAlign, StrokeValue, StyleKind, StyleReference, TextStyle,
     },
     error::{ErrorCode, ItemError, PluginFailure, ToolError},
     limits::{
@@ -1837,6 +1837,7 @@ fn amended_motion_contract_uses_seconds_keyed_maps_and_distinct_style_types() {
             "description": "Catalog fade",
             "props": [{"name": "direction", "value": "string"}]
         }],
+        "visitedNodes": 1,
         "truncated": false,
         "observation": motion_observation()
     });
@@ -1945,6 +1946,7 @@ fn amended_motion_contract_uses_seconds_keyed_maps_and_distinct_style_types() {
                     }]
                 }
             }],
+            "visitedNodes": 1,
             "truncated": false,
             "observation": motion_observation()
         }))
@@ -2003,6 +2005,7 @@ fn reaction_overlay_settings_are_closed_optional_and_camel_case() {
                 }]
             }
         }],
+        "visitedNodes": 1,
         "truncated": false,
         "observation": motion_observation()
     });
@@ -2041,6 +2044,7 @@ fn reaction_overlay_settings_are_closed_optional_and_camel_case() {
                     }]
                 }
             }],
+            "visitedNodes": 1,
             "truncated": false,
             "observation": motion_observation()
         }))
@@ -2060,6 +2064,7 @@ fn reaction_overlay_settings_are_closed_optional_and_camel_case() {
                 }]
             }
         }],
+        "visitedNodes": 1,
         "truncated": false,
         "observation": motion_observation()
     });
@@ -2226,4 +2231,176 @@ fn style_reference_carries_optional_name_and_stroke_kind() {
         .is_err(),
         "style reference must stay closed"
     );
+}
+
+fn visited_nodes_observation() -> Value {
+    json!({
+        "startedAt": "2026-08-19T10:00:00.000Z",
+        "completedAt": "2026-08-19T10:00:00.001Z"
+    })
+}
+
+fn sample_dev_mode_result() -> GetDevModeDataResult {
+    serde_json::from_value(json!({
+        "items": [{
+            "status": "success",
+            "value": {
+                "nodeId": "4:1",
+                "annotations": [{"id": "4:1:annotation:0", "text": "Match padding"}],
+                "annotationCategories": [],
+                "documentation": [],
+                "devResources": []
+            }
+        }],
+        "visitedNodes": 3,
+        "truncated": false,
+        "observation": visited_nodes_observation()
+    }))
+    .expect("dev mode sample must decode")
+}
+
+fn sample_reactions_result() -> GetReactionsResult {
+    serde_json::from_value(json!({
+        "items": [{
+            "status": "success",
+            "value": {
+                "nodeId": "5:1",
+                "reactions": [{
+                    "trigger": "click",
+                    "action": {"type": "back"},
+                    "destinationAccessible": true
+                }]
+            }
+        }],
+        "visitedNodes": 3,
+        "truncated": false,
+        "observation": visited_nodes_observation()
+    }))
+    .expect("reactions sample must decode")
+}
+
+fn sample_motion_result() -> GetMotionResult {
+    serde_json::from_value(json!({
+        "items": [{
+            "status": "success",
+            "value": {
+                "nodeId": "6:1",
+                "animationStyles": [{
+                    "id": "applied-1",
+                    "styleId": "S:fade",
+                    "name": "Fade in"
+                }],
+                "animations": [],
+                "manualKeyframeTracks": [],
+                "timelines": [{"id": "tl-1", "duration": 0.4}]
+            }
+        }],
+        "visitedNodes": 3,
+        "truncated": false,
+        "observation": visited_nodes_observation()
+    }))
+    .expect("motion sample must decode")
+}
+
+#[test]
+fn get_dev_mode_data_result_round_trips_visited_nodes() {
+    let value = sample_dev_mode_result();
+    let json = serde_json::to_value(&value).expect("serialize");
+    assert_eq!(json["visitedNodes"], json!(3));
+    let decoded: GetDevModeDataResult = serde_json::from_value(json).expect("decode");
+    assert_eq!(decoded, value);
+}
+
+#[test]
+fn get_dev_mode_data_result_requires_visited_nodes() {
+    let mut json = serde_json::to_value(sample_dev_mode_result()).expect("serialize");
+    json.as_object_mut().unwrap().remove("visitedNodes");
+    assert!(
+        serde_json::from_value::<GetDevModeDataResult>(json).is_err(),
+        "visitedNodes must be required: an absent count reads as zero nodes walked"
+    );
+}
+
+#[test]
+fn get_dev_mode_data_result_still_rejects_unknown_fields() {
+    let mut json = serde_json::to_value(sample_dev_mode_result()).expect("serialize");
+    json.as_object_mut()
+        .unwrap()
+        .insert("bogus".into(), json!(1));
+    assert!(serde_json::from_value::<GetDevModeDataResult>(json).is_err());
+}
+
+#[test]
+fn get_reactions_result_round_trips_visited_nodes() {
+    let value = sample_reactions_result();
+    let json = serde_json::to_value(&value).expect("serialize");
+    assert_eq!(json["visitedNodes"], json!(3));
+    let decoded: GetReactionsResult = serde_json::from_value(json).expect("decode");
+    assert_eq!(decoded, value);
+}
+
+#[test]
+fn get_reactions_result_requires_visited_nodes() {
+    let mut json = serde_json::to_value(sample_reactions_result()).expect("serialize");
+    json.as_object_mut().unwrap().remove("visitedNodes");
+    assert!(
+        serde_json::from_value::<GetReactionsResult>(json).is_err(),
+        "visitedNodes must be required: an absent count reads as zero nodes walked"
+    );
+}
+
+#[test]
+fn get_reactions_result_still_rejects_unknown_fields() {
+    let mut json = serde_json::to_value(sample_reactions_result()).expect("serialize");
+    json.as_object_mut()
+        .unwrap()
+        .insert("bogus".into(), json!(1));
+    assert!(serde_json::from_value::<GetReactionsResult>(json).is_err());
+}
+
+#[test]
+fn get_motion_result_round_trips_visited_nodes() {
+    let value = sample_motion_result();
+    let json = serde_json::to_value(&value).expect("serialize");
+    assert_eq!(json["visitedNodes"], json!(3));
+    let decoded: GetMotionResult = serde_json::from_value(json).expect("decode");
+    assert_eq!(decoded, value);
+}
+
+#[test]
+fn get_motion_result_requires_visited_nodes() {
+    let mut json = serde_json::to_value(sample_motion_result()).expect("serialize");
+    json.as_object_mut().unwrap().remove("visitedNodes");
+    assert!(
+        serde_json::from_value::<GetMotionResult>(json).is_err(),
+        "visitedNodes must be required: an absent count reads as zero nodes walked"
+    );
+}
+
+#[test]
+fn get_motion_result_still_rejects_unknown_fields() {
+    let mut json = serde_json::to_value(sample_motion_result()).expect("serialize");
+    json.as_object_mut()
+        .unwrap()
+        .insert("bogus".into(), json!(1));
+    assert!(serde_json::from_value::<GetMotionResult>(json).is_err());
+}
+
+#[test]
+fn visited_nodes_reaches_every_per_node_output_schema() {
+    for schema in [
+        serde_json::to_value(schemars::schema_for!(GetDevModeDataResult)).unwrap(),
+        serde_json::to_value(schemars::schema_for!(GetReactionsResult)).unwrap(),
+        serde_json::to_value(schemars::schema_for!(GetMotionResult)).unwrap(),
+    ] {
+        assert!(
+            schema["properties"]["visitedNodes"].is_object(),
+            "visitedNodes must be published on the output schema"
+        );
+        let required = schema["required"].as_array().expect("required list");
+        assert!(
+            required.iter().any(|name| name == "visitedNodes"),
+            "visitedNodes must be required in the output schema"
+        );
+    }
 }

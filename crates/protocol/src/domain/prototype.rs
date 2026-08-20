@@ -71,6 +71,10 @@ pub struct DevModeNodeData {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GetDevModeDataResult {
     pub items: ReturnedList<ItemResult<DevModeNodeData>>,
+    /// Nodes walked, including those that reported nothing and are therefore
+    /// absent from `items`. Without this a caller cannot tell "scanned and
+    /// found nothing" from "never reached".
+    pub visited_nodes: usize,
     pub truncated: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub truncation: Option<Truncation>,
@@ -412,6 +416,10 @@ pub struct NodeReactions {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GetReactionsResult {
     pub items: ReturnedList<ItemResult<NodeReactions>>,
+    /// Nodes walked, including those that reported nothing and are therefore
+    /// absent from `items`. Without this a caller cannot tell "scanned and
+    /// found nothing" from "never reached".
+    pub visited_nodes: usize,
     pub truncated: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub truncation: Option<Truncation>,
@@ -693,6 +701,10 @@ pub struct NodeMotion {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GetMotionResult {
     pub items: ReturnedList<ItemResult<NodeMotion>>,
+    /// Nodes walked, including those that reported nothing and are therefore
+    /// absent from `items`. Without this a caller cannot tell "scanned and
+    /// found nothing" from "never reached".
+    pub visited_nodes: usize,
     #[serde(default, skip_serializing_if = "ReturnedList::is_empty")]
     pub available_styles: ReturnedList<AvailableAnimationStyle>,
     pub truncated: bool,
