@@ -250,8 +250,27 @@ function isFragmentReference(value: string): boolean {
   return value.length > 0 && value.charCodeAt(0) === 0x23
 }
 
+/** The WHATWG URL parser removes ASCII tab, line feed and carriage return from
+ * anywhere in a URL before parsing, so a browser sees "javascript:alert(1)"
+ * where a prefix test on the raw value sees an ordinary string. Strip exactly
+ * those three, and only for detection — nothing about the returned source
+ * changes. NOT the space character: WHATWG keeps it, so "jav ascript:" really
+ * is not a scheme, and treating it as one would invent a false positive. */
+function stripUrlWhitespace(value: string): string {
+  let out = ""
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index)
+    if (code === 0x09 || code === 0x0a || code === 0x0d) continue
+    out += value.charAt(index)
+  }
+  return out
+}
+
 function isJavascriptUrl(value: string): boolean {
-  return startsWithIgnoreCase(trimAscii(value), "javascript:")
+  return startsWithIgnoreCase(
+    stripUrlWhitespace(trimAscii(value)),
+    "javascript:",
+  )
 }
 
 function allowedDataMime(mime: string): EmbeddedImageMime | null {
@@ -325,7 +344,9 @@ function hasUriScheme(value: string): boolean {
 }
 
 function looksLikeActiveUrl(value: string): boolean {
-  const trimmed = trimAscii(value)
+  // Normalised at the head so the data: and protocol-relative "//" checks see
+  // what a browser would see, not what the raw bytes spell.
+  const trimmed = stripUrlWhitespace(trimAscii(value))
   if (trimmed.length === 0) return false
   if (isJavascriptUrl(trimmed) || startsWithIgnoreCase(trimmed, "data:")) {
     return true
@@ -435,12 +456,18 @@ function attributeValueUnsafe(
     if (validateReference(value)) return undefined
     return rejected("unsafeAttribute", localAttr)
   }
-  if (
-    isResourceValueAttribute(localAttr) &&
-    looksLikeActiveUrl(value) &&
-    !validateReference(value)
-  ) {
-    return rejected("unsafeAttribute", localAttr)
+  if (isResourceValueAttribute(localAttr)) {
+    // `values` on an animation element is a semicolon-separated list, and this
+    // check used to read the whole attribute as one string — so a harmless
+    // leading "#a" carried an active URL through in the tail. Splitting can
+    // only widen what is considered, never narrow it, so it cannot reintroduce
+    // a bypass; a single-valued attribute yields one segment and behaves as
+    // before.
+    for (const segment of value.split(";")) {
+      if (looksLikeActiveUrl(segment) && !validateReference(segment)) {
+        return rejected("unsafeAttribute", localAttr)
+      }
+    }
   }
   if (validateCssText(value)) return undefined
   return rejected("unsafeCss", localAttr)
