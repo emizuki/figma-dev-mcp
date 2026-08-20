@@ -244,16 +244,22 @@ async function serializeDevMode(
 // Empty here means "carries nothing but its own id". The four capability-backed
 // lists are the bulk of the payload, but a node can also carry a description or
 // an ownership pointer with all four lists empty, and dropping that would be a
-// second data loss in the name of fixing the first. These optional fields are
-// absent on almost every node, so keeping them costs nothing on a real page.
+// second data loss in the name of fixing the first.
+//
+// The description fields are tested for length, not for presence. The Figma
+// Plugin API gives every ComponentNode, ComponentSetNode and style node a
+// default empty-string `description`, so a presence test would re-emit an empty
+// record for every component in the file. `ownerNodeId` and
+// `inheritedFromNodeId` need no such guard: the serializer above only assigns
+// them when they are non-empty.
 function hasContent(value: DevModeNodeData): boolean {
   return (
     value.annotations.length > 0 ||
     value.annotationCategories.length > 0 ||
     value.devResources.length > 0 ||
     value.documentation.length > 0 ||
-    value.description !== undefined ||
-    value.descriptionMarkdown !== undefined ||
+    (value.description ?? "").length > 0 ||
+    (value.descriptionMarkdown ?? "").length > 0 ||
     value.ownerNodeId !== undefined ||
     value.inheritedFromNodeId !== undefined
   )
