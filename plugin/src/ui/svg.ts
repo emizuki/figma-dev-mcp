@@ -210,10 +210,27 @@ function allowedDataMime(mime: string): EmbeddedImageMime | null {
   return null
 }
 
+// Figma embeds fonts as data URLs when text is not outlined. A data: font URL
+// fetches nothing, so rejecting it was a false positive that made
+// svgOutlineText:false unusable. Only font media types are added; every other
+// scheme and media type keeps failing, which the rejection tests assert.
+function isFontDataMime(mime: string): boolean {
+  return (
+    mime === "font/woff" ||
+    mime === "font/woff2" ||
+    mime === "font/ttf" ||
+    mime === "font/otf" ||
+    mime === "application/font-woff" ||
+    mime === "application/x-font-ttf" ||
+    mime === "application/x-font-opentype"
+  )
+}
+
 function validateDataUrl(value: string): boolean {
   const parsed = parseDataUrl(value)
   if (parsed === null) return false
   if (parsed.bytes.byteLength > MAX_RASTER_DECODED_BYTES) return false
+  if (isFontDataMime(parsed.mime)) return true
   const mime = allowedDataMime(parsed.mime)
   if (mime === null) return false
   return validateEmbeddedImageData(parsed.bytes, mime)

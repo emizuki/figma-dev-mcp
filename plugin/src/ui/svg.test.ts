@@ -15,6 +15,10 @@ function validate(source: string | Uint8Array) {
   return validateSvgSource(source, parser)
 }
 
+function svgWithCss(css: string): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg"><style>${css}</style></svg>`
+}
+
 describe("SVG safety policy", () => {
   test("preserves viewBox, paths, gradients, masks, clip paths, and fragment references", async () => {
     const source = await fixture("safe.svg")
@@ -90,5 +94,55 @@ describe("SVG safety policy", () => {
     const source = `<svg xmlns="http://www.w3.org/2000/svg"><image href="data:image/png;base64,${png}"/></svg>`
     const result = validate(source)
     expect(result).toEqual({ ok: true, source })
+  })
+
+  test("widening for fonts does not admit other data URLs", () => {
+    // These must keep failing. Written before the predicate is widened.
+    for (const source of [
+      svgWithCss(`@font-face{src:url(data:text/html;base64,PGh0bWw+)}`),
+      svgWithCss(`@font-face{src:url(data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=)}`),
+      svgWithCss(
+        `@font-face{src:url(data:application/javascript;base64,YWxlcnQoMSk=)}`,
+      ),
+      svgWithCss(`@font-face{src:url(https://example.com/f.woff2)}`),
+      svgWithCss(`@font-face{src:url(javascript:alert(1))}`),
+      // Additional attacker-plausible schemes/mimes beyond the brief's floor.
+      svgWithCss(`@font-face{src:url(vbscript:msgbox(1))}`),
+      svgWithCss(`@font-face{src:url(blob:https://evil.example/uuid)}`),
+      svgWithCss(`@font-face{src:url(data:font/collection;base64,AAAA)}`),
+      svgWithCss(
+        `@font-face{src:url(data:application/font-woff2;base64,AAAA)}`,
+      ),
+      svgWithCss(`@font-face{src:url(//evil.example/f.woff2)}`),
+    ]) {
+      expect(validate(source).ok).toBe(false)
+    }
+  })
+
+  test("script and external href stay rejected", () => {
+    expect(
+      validate(
+        `<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`,
+      ).ok,
+    ).toBe(false)
+    expect(
+      validate(
+        `<svg xmlns="http://www.w3.org/2000/svg"><image href="https://x/y.png"/></svg>`,
+      ).ok,
+    ).toBe(false)
+  })
+
+  test("an embedded font data URL is accepted", () => {
+    const source = svgWithCss(
+      `@font-face{font-family:x;src:url(data:font/woff2;base64,d09GMgABAAAAAAAA)}`,
+    )
+    expect(validate(source).ok).toBe(true)
+  })
+
+  test("an embedded font data URL is accepted with mixed-case scheme and mime", () => {
+    const source = svgWithCss(
+      `@font-face{font-family:x;src:url(Data:FONT/WOFF2;base64,d09GMgABAAAAAAAA)}`,
+    )
+    expect(validate(source).ok).toBe(true)
   })
 })
