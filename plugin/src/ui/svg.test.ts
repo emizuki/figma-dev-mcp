@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { DOMParser, onErrorStopParsing } from "@xmldom/xmldom"
 
-import { MAX_SVG_BYTES } from "../shared/limits"
-import { validateSvgSource } from "./svg"
+import { MAX_RASTER_DECODED_BYTES, MAX_SVG_BYTES } from "../shared/limits"
+import { validateDataUrl, validateSvgSource } from "./svg"
 
 const parser = new DOMParser({ onError: onErrorStopParsing })
 
@@ -144,5 +144,27 @@ describe("SVG safety policy", () => {
       `@font-face{font-family:x;src:url(Data:FONT/WOFF2;base64,d09GMgABAAAAAAAA)}`,
     )
     expect(validate(source).ok).toBe(true)
+  })
+
+  // MAX_SVG_BYTES (whole-document cap, 4 MiB) is smaller than
+  // MAX_RASTER_DECODED_BYTES (per-data-url decoded cap, 12 MiB), and decoded
+  // bytes can never exceed the source bytes they were decoded from. So no
+  // data: URL that survives validateSvgSource's document-size gate can ever
+  // carry enough decoded bytes to exercise the ceiling inside validateDataUrl
+  // — a test built through validateSvgSource cannot discriminate whether that
+  // ceiling still runs before the font-mime short-circuit. This calls
+  // validateDataUrl directly so the property is actually pinned.
+  test("validateDataUrl rejects an oversized font payload even though the mime is allowed", () => {
+    const oversized = Buffer.alloc(MAX_RASTER_DECODED_BYTES + 1, 0x41).toString(
+      "base64",
+    )
+    expect(validateDataUrl(`data:font/woff2;base64,${oversized}`)).toBe(false)
+  })
+
+  test("validateDataUrl accepts a font payload at the byte ceiling", () => {
+    const atLimit = Buffer.alloc(MAX_RASTER_DECODED_BYTES, 0x41).toString(
+      "base64",
+    )
+    expect(validateDataUrl(`data:font/woff2;base64,${atLimit}`)).toBe(true)
   })
 })

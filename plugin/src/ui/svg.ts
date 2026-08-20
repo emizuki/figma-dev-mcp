@@ -226,7 +226,13 @@ function isFontDataMime(mime: string): boolean {
   )
 }
 
-function validateDataUrl(value: string): boolean {
+// Exported so the byte-ceiling-vs-font-mime ordering can be pinned directly:
+// MAX_SVG_BYTES (whole-document cap) is smaller than MAX_RASTER_DECODED_BYTES
+// (per-data-url decoded cap), so no data: URL embedded in an SVG that passes
+// validateSvgSource's document-size gate can ever carry decoded bytes large
+// enough to exercise this function's own ceiling check — a black-box test
+// through validateSvgSource cannot discriminate the check order below.
+export function validateDataUrl(value: string): boolean {
   const parsed = parseDataUrl(value)
   if (parsed === null) return false
   if (parsed.bytes.byteLength > MAX_RASTER_DECODED_BYTES) return false
