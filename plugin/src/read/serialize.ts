@@ -576,8 +576,9 @@ function styleReferences(
 // arbitrary depth inside `boundVariables` — an array under `fills`, one more
 // level under `componentProperties`. This walk is the single definition of
 // "which variables does this node reference"; the name pre-pass reuses it so the
-// two can never drift apart and silently resolve a different set.
-function variableIdsOf(node: UnknownRecord): string[] {
+// two can never drift apart and silently resolve a different set. get_variables
+// collects its scope through this same function for exactly that reason.
+export function variableIdsOf(node: UnknownRecord): string[] {
   const values = record(hostGet(node, "boundVariables"))
   const seen = new Set<string>()
   const ids: string[] = []
@@ -842,11 +843,23 @@ function summarize(node: UnknownRecord, children: readonly unknown[]) {
   return result
 }
 
+// depthLimit is a local fact — this subtree stops here — and it is already
+// recorded per node in childrenTruncation. The document-level truncation must
+// name the budget that stopped the whole walk, because that is the one the
+// caller can act on: told depthLimit, a caller reduces depth and loses more.
+// Among the global budgets, first write still wins.
 function markTruncated(
   context: SerializerContext,
   truncation: Truncation,
 ): void {
-  if (context.truncation === undefined) context.truncation = truncation
+  const current = context.truncation
+  if (current === undefined) {
+    context.truncation = truncation
+    return
+  }
+  if (current.reason === "depthLimit" && truncation.reason !== "depthLimit") {
+    context.truncation = truncation
+  }
 }
 
 export function byteLength(value: unknown): number {

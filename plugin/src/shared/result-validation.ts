@@ -90,6 +90,8 @@ import type {
   StyleReference,
   StyleIdentity,
   StyleValue,
+  SvgRejection,
+  SvgRejectionKind,
   TextAlignHorizontal,
   TextAlignVertical,
   TextAutoResize,
@@ -268,6 +270,7 @@ const CANONICAL_MESSAGES: Record<ErrorCode, string> = {
   NODE_NOT_FOUND: "The requested node was not found.",
   PAGE_NOT_FOUND: "The requested page was not found.",
   UNSUPPORTED_NODE: "The requested node type is not supported.",
+  EMPTY_NODE_BOUNDS: "The requested node renders nothing.",
   CAPABILITY_UNAVAILABLE: "The required Figma capability is unavailable.",
   UNSAFE_SVG: "The SVG was rejected by the safety policy.",
   INVALID_CURSOR: "The search cursor is invalid or stale.",
@@ -300,6 +303,24 @@ function parseItemError(value: unknown, label: string): ItemError {
   }
   const id = optionalString(object, "id", identifier)
   if (id !== undefined) result.id = id
+  return result
+}
+
+const SVG_REJECTION_KINDS: readonly SvgRejectionKind[] = [
+  "parserError",
+  "unsafeElement",
+  "unsafeAttribute",
+  "unsafeCss",
+  "unsafeProcessingInstruction",
+]
+
+function parseSvgRejection(value: unknown, label: string): SvgRejection {
+  const object = exact(value, label, ["kind"], ["name"])
+  const result: SvgRejection = {
+    kind: oneOf(object.kind, SVG_REJECTION_KINDS, `${label}.kind`),
+  }
+  const name = optionalString(object, "name", identifier)
+  if (name !== undefined) result.name = name
   return result
 }
 
@@ -1920,7 +1941,7 @@ function parseDevModeResult(
   const object = exact(
     value,
     label,
-    ["items", "truncated", "observation"],
+    ["items", "visitedNodes", "truncated", "observation"],
     ["truncation"],
   )
   return withResultMetadata(
@@ -1932,6 +1953,7 @@ function parseDevModeResult(
         (item, itemLabel) => parseItemResult(item, itemLabel, parseDevModeNode),
         MAX_INPUT_IDS,
       ),
+      visitedNodes: integer(object.visitedNodes, `${label}.visitedNodes`),
     },
     label,
   )
@@ -2193,7 +2215,7 @@ function parseReactionsResult(
   const object = exact(
     value,
     label,
-    ["items", "truncated", "observation"],
+    ["items", "visitedNodes", "truncated", "observation"],
     ["truncation"],
   )
   return withResultMetadata(
@@ -2206,6 +2228,7 @@ function parseReactionsResult(
           parseItemResult(item, itemLabel, parseNodeReactions),
         MAX_INPUT_IDS,
       ),
+      visitedNodes: integer(object.visitedNodes, `${label}.visitedNodes`),
     },
     label,
   )
@@ -2598,7 +2621,7 @@ function parseMotionResult(value: unknown, label: string): GetMotionResult {
   const object = exact(
     value,
     label,
-    ["items", "truncated", "observation"],
+    ["items", "visitedNodes", "truncated", "observation"],
     ["availableStyles", "truncation"],
   )
   const result = withResultMetadata(
@@ -2610,6 +2633,7 @@ function parseMotionResult(value: unknown, label: string): GetMotionResult {
         (item, itemLabel) => parseItemResult(item, itemLabel, parseNodeMotion),
         MAX_INPUT_IDS,
       ),
+      visitedNodes: integer(object.visitedNodes, `${label}.visitedNodes`),
     },
     label,
   )
@@ -2658,8 +2682,20 @@ function parseScreenshotAsset(value: unknown, label: string): ScreenshotAsset {
       }
     }
     case "svg": {
-      const asset = exact(object, label, ["format", "nodeId", "source"])
-      return {
+      const asset = exact(
+        object,
+        label,
+        ["format", "nodeId", "source", "safe"],
+        ["rejection"],
+      )
+      const safe = boolean(asset.safe, `${label}.safe`)
+      const hasRejection = Object.hasOwn(asset, "rejection")
+      // The verdict and its reason are one fact. A safe asset carrying a rule,
+      // or an unsafe one carrying none, is a shape neither end can act on.
+      if (safe === hasRejection) {
+        return fail(`${label}.rejection is present exactly when safe is false`)
+      }
+      const result: Extract<ScreenshotAsset, { format: "svg" }> = {
         format: "svg",
         nodeId: identifier(asset.nodeId, `${label}.nodeId`),
         source: boundedString(
@@ -2668,7 +2704,15 @@ function parseScreenshotAsset(value: unknown, label: string): ScreenshotAsset {
           MAX_SVG_BYTES,
           true,
         ),
+        safe,
       }
+      if (hasRejection) {
+        result.rejection = parseSvgRejection(
+          asset.rejection,
+          `${label}.rejection`,
+        )
+      }
+      return result
     }
     default:
       return fail(`${label}.format is not allowed`)

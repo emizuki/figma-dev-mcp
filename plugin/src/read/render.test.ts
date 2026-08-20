@@ -9,6 +9,7 @@ import {
   createProgressReporter,
   type ProgressFrame,
 } from "../main/progress"
+import { parseReadResult } from "../shared/result-validation"
 import { parseBrokerToPlugin } from "../shared/validation"
 import {
   completeScreenshotValidation,
@@ -36,7 +37,7 @@ const passthrough: ScreenshotCodec = {
     }
   },
   async encodeSvg(source) {
-    return { ok: true, source }
+    return { ok: true, source, safe: true }
   },
 }
 
@@ -379,6 +380,302 @@ describe("get_screenshot export selection", () => {
     })
   })
 
+  test("a node that puts no ink on the page says so instead of INTERNAL_ERROR", async () => {
+    // INTERNAL_ERROR should mean "we do not know". Here we do: the host reports
+    // no render bounds at all, and it reports that only as an opaque throw.
+    let exported = false
+    const node = {
+      id: "12:1",
+      type: "FRAME",
+      visible: true,
+      absoluteRenderBounds: null,
+      exportAsync: async () => {
+        exported = true
+        throw new Error("Cannot export a node with no size")
+      },
+    }
+    installFigma({ nodes: new Map([["12:1", node]]) })
+
+    const result = await getScreenshot(
+      {
+        format: "svg",
+        selector: { nodeId: "12:1" },
+        svgOutlineText: true,
+        svgIdAttribute: false,
+        svgSimplifyStroke: true,
+      },
+      undefined,
+      passthrough,
+    )
+    expect(result.assets[0]).toMatchObject({
+      status: "error",
+      error: { code: "EMPTY_NODE_BOUNDS", retryable: false },
+    })
+    expect(exported).toBe(false)
+  })
+
+  test("reports empty bounds for raster too, rather than a blank pixel", async () => {
+    const node = {
+      id: "12:2",
+      type: "FRAME",
+      visible: true,
+      absoluteRenderBounds: null,
+      exportAsync: async () => new Uint8Array([1]),
+    }
+    installFigma({ nodes: new Map([["12:2", node]]) })
+    const result = await getScreenshot(
+      { format: "png", selector: { nodeId: "12:2" } },
+      undefined,
+      passthrough,
+    )
+    expect(result.assets[0]).toMatchObject({
+      status: "error",
+      error: { code: "EMPTY_NODE_BOUNDS", retryable: false },
+    })
+  })
+
+  test("a LINE still exports: it is zero-high by contract and renders anyway", async () => {
+    // The pinned typings require a LineNode to be given a height of exactly 0,
+    // so a width/height rule would fire on every divider and underline in every
+    // file. Its stroke still puts ink on the page, and render bounds say so.
+    const line = {
+      id: "12:3",
+      type: "LINE",
+      visible: true,
+      width: 240,
+      height: 0,
+      absoluteRenderBounds: { x: 0, y: 0, width: 240, height: 1 },
+      exportAsync: async () => new Uint8Array([3]),
+    }
+    // A straight VECTOR is the same shape of case.
+    const vector = {
+      id: "12:4",
+      type: "VECTOR",
+      visible: true,
+      width: 96,
+      height: 0,
+      absoluteRenderBounds: { x: 0, y: 0, width: 96, height: 2 },
+      exportAsync: async () => new Uint8Array([4]),
+    }
+    installFigma({
+      nodes: new Map<string, unknown>([
+        ["12:3", line],
+        ["12:4", vector],
+      ]),
+    })
+    const result = await getScreenshot(
+      { format: "png", selector: { nodeIds: ["12:3", "12:4"] } },
+      undefined,
+      passthrough,
+    )
+    expect(result.assets[0]).toMatchObject({ status: "success" })
+    expect(result.assets[1]).toMatchObject({ status: "success" })
+  })
+
+  test("a switched-off node or ancestor leaves the export alone", async () => {
+    // The host reports null render bounds for anything invisible, and counts a
+    // node invisible when any *parent* is switched off. Null-because-hidden is
+    // not evidence the node is empty, so both of these keep today's behaviour.
+    const hiddenItself = {
+      id: "12:5",
+      type: "FRAME",
+      visible: false,
+      absoluteRenderBounds: null,
+      exportAsync: async () => new Uint8Array([5]),
+    }
+    const hiddenParent = {
+      id: "12:6",
+      type: "FRAME",
+      visible: true,
+      absoluteRenderBounds: null,
+      parent: { id: "12:0", type: "FRAME", visible: false },
+      exportAsync: async () => new Uint8Array([6]),
+    }
+    installFigma({
+      nodes: new Map<string, unknown>([
+        ["12:5", hiddenItself],
+        ["12:6", hiddenParent],
+      ]),
+    })
+    const result = await getScreenshot(
+      { format: "png", selector: { nodeIds: ["12:5", "12:6"] } },
+      undefined,
+      passthrough,
+    )
+    expect(result.assets[0]).toMatchObject({ status: "success" })
+    expect(result.assets[1]).toMatchObject({ status: "success" })
+  })
+
+  test("render bounds the host will not report leave the export alone", async () => {
+    // An unknown answer is not an empty one. A write-only getter throws under
+    // `documentAccess: dynamic-page`, and a PAGE carries no layout at all, so
+    // the property is absent rather than null; neither is evidence.
+    const nodes = new Map<string, unknown>([
+      [
+        "12:7",
+        {
+          id: "12:7",
+          type: "FRAME",
+          visible: true,
+          get absoluteRenderBounds(): unknown {
+            throw new Error("bounds are not readable here")
+          },
+          exportAsync: async () => new Uint8Array([7]),
+        },
+      ],
+      [
+        "12:8",
+        {
+          id: "12:8",
+          type: "FRAME",
+          visible: true,
+          exportAsync: async () => new Uint8Array([8]),
+        },
+      ],
+    ])
+    installFigma({ nodes })
+    const result = await getScreenshot(
+      { format: "png", selector: { nodeIds: ["12:7", "12:8"] } },
+      undefined,
+      passthrough,
+    )
+    expect(result.assets[0]).toMatchObject({ status: "success" })
+    expect(result.assets[1]).toMatchObject({ status: "success" })
+  })
+
+  test("a cyclic parent chain leaves the export alone rather than spinning", async () => {
+    const node: Record<string, unknown> = {
+      id: "12:9",
+      type: "FRAME",
+      visible: true,
+      absoluteRenderBounds: null,
+      exportAsync: async () => new Uint8Array([9]),
+    }
+    node.parent = node
+    installFigma({ nodes: new Map<string, unknown>([["12:9", node]]) })
+    const result = await getScreenshot(
+      { format: "png", selector: { nodeId: "12:9" } },
+      undefined,
+      passthrough,
+    )
+    expect(result.assets[0]).toMatchObject({ status: "success" })
+  })
+
+  test("carries the SVG verdict from the codec onto the asset", async () => {
+    const node = exportNode("10:1", async () => "<svg/>")
+    installFigma({ nodes: new Map([["10:1", node]]) })
+    const judging: ScreenshotCodec = {
+      ...passthrough,
+      async encodeSvg(source) {
+        return {
+          ok: true,
+          source,
+          safe: false,
+          rejection: { kind: "unsafeAttribute", name: "id" },
+        }
+      },
+    }
+
+    const result = await getScreenshot(
+      {
+        format: "svg",
+        selector: { nodeId: "10:1" },
+        svgOutlineText: true,
+        svgIdAttribute: false,
+        svgSimplifyStroke: true,
+      },
+      undefined,
+      judging,
+    )
+    // The source survives an unsafe verdict; withholding it is what this
+    // replaced.
+    expect(result.assets[0]).toEqual({
+      status: "success",
+      value: {
+        format: "svg",
+        nodeId: "10:1",
+        source: "<svg/>",
+        safe: false,
+        rejection: { kind: "unsafeAttribute", name: "id" },
+      },
+    })
+  })
+
+  test("a safe verdict carries no rejection onto the asset", async () => {
+    const node = exportNode("10:2", async () => "<svg/>")
+    installFigma({ nodes: new Map([["10:2", node]]) })
+
+    const result = await getScreenshot(
+      {
+        format: "svg",
+        selector: { nodeId: "10:2" },
+        svgOutlineText: true,
+        svgIdAttribute: false,
+        svgSimplifyStroke: true,
+      },
+      undefined,
+      passthrough,
+    )
+    expect(result.assets[0]).toEqual({
+      status: "success",
+      value: {
+        format: "svg",
+        nodeId: "10:2",
+        source: "<svg/>",
+        safe: true,
+      },
+    })
+  })
+
+  test("keeps the SVG verdict across the UI validation round trip", async () => {
+    const node = exportNode("11:1", async () => "<svg/>")
+    installFigma({
+      nodes: new Map([["11:1", node]]),
+      ui: {
+        postMessage(message: unknown) {
+          const { validationId } = message as { validationId: string }
+          completeScreenshotValidation({
+            type: "screenshotValidated",
+            validationId,
+            asset: {
+              status: "success",
+              value: {
+                format: "svg",
+                nodeId: "",
+                source: "<svg/>",
+                safe: false,
+                rejection: { kind: "unsafeCss", name: "style" },
+              },
+            },
+          })
+        },
+      },
+    })
+
+    const result = await getScreenshot(
+      {
+        format: "svg",
+        selector: { nodeId: "11:1" },
+        svgOutlineText: true,
+        svgIdAttribute: false,
+        svgSimplifyStroke: true,
+      },
+      undefined,
+      undefined,
+      1_000,
+    )
+    expect(result.assets[0]).toEqual({
+      status: "success",
+      value: {
+        format: "svg",
+        nodeId: "11:1",
+        source: "<svg/>",
+        safe: false,
+        rejection: { kind: "unsafeCss", name: "style" },
+      },
+    })
+  })
+
   test("propagates cancellation between captured nodes", async () => {
     const controller = new LocalCancellationController()
     const nodes = new Map<string, unknown>([
@@ -482,5 +779,182 @@ describe("get_screenshot export selection", () => {
         1_000,
       ),
     ).rejects.toBeInstanceOf(LocalCancellationError)
+  })
+})
+
+describe("screenshot result validation", () => {
+  const screenshotResult = (value: Record<string, unknown>): unknown => ({
+    operation: "get_screenshot",
+    result: {
+      assets: [{ status: "success", value }],
+      truncated: false,
+      observation: {
+        startedAt: "2026-08-19T00:00:00.000Z",
+        completedAt: "2026-08-19T00:00:01.000Z",
+      },
+    },
+  })
+
+  const unsafeSvg = (
+    rejection: Record<string, unknown>,
+  ): Record<string, unknown> => ({
+    format: "svg",
+    nodeId: "1:2",
+    source: "<svg/>",
+    safe: false,
+    rejection,
+  })
+
+  test("accepts every rejection kind, with and without a name", () => {
+    for (const kind of [
+      "parserError",
+      "unsafeElement",
+      "unsafeAttribute",
+      "unsafeCss",
+      "unsafeProcessingInstruction",
+    ]) {
+      expect(parseReadResult(screenshotResult(unsafeSvg({ kind })))).toEqual(
+        screenshotResult(unsafeSvg({ kind })) as never,
+      )
+      expect(
+        parseReadResult(screenshotResult(unsafeSvg({ kind, name: "id" }))),
+      ).toEqual(screenshotResult(unsafeSvg({ kind, name: "id" })) as never)
+    }
+  })
+
+  test("accepts a safe asset that carries no rejection", () => {
+    const safe = {
+      format: "svg",
+      nodeId: "1:2",
+      source: "<svg/>",
+      safe: true,
+    }
+    expect(parseReadResult(screenshotResult(safe))).toEqual(
+      screenshotResult(safe) as never,
+    )
+  })
+
+  test("refuses an unknown kind, an unknown field, and an oversized name", () => {
+    expect(() =>
+      parseReadResult(screenshotResult(unsafeSvg({ kind: "unsafeFont" }))),
+    ).toThrow()
+    expect(() =>
+      parseReadResult(
+        screenshotResult(unsafeSvg({ kind: "unsafeElement", value: "secret" })),
+      ),
+    ).toThrow()
+    expect(() =>
+      parseReadResult(
+        screenshotResult(
+          unsafeSvg({ kind: "unsafeElement", name: "a".repeat(257) }),
+        ),
+      ),
+    ).toThrow()
+    expect(() =>
+      parseReadResult(screenshotResult(unsafeSvg({ name: "id" }))),
+    ).toThrow()
+  })
+
+  test("refuses a verdict that is unstated or does not match its rule", () => {
+    expect(() =>
+      parseReadResult(
+        screenshotResult({ format: "svg", nodeId: "1:2", source: "<svg/>" }),
+      ),
+    ).toThrow()
+    expect(() =>
+      parseReadResult(
+        screenshotResult({
+          format: "svg",
+          nodeId: "1:2",
+          source: "<svg/>",
+          safe: false,
+        }),
+      ),
+    ).toThrow()
+    expect(() =>
+      parseReadResult(
+        screenshotResult({
+          format: "svg",
+          nodeId: "1:2",
+          source: "<svg/>",
+          safe: true,
+          rejection: { kind: "unsafeElement", name: "script" },
+        }),
+      ),
+    ).toThrow()
+  })
+
+  const errorResult = (error: Record<string, unknown>): unknown => ({
+    operation: "get_screenshot",
+    result: {
+      assets: [{ status: "error", error }],
+      truncated: false,
+      observation: {
+        startedAt: "2026-08-19T00:00:00.000Z",
+        completedAt: "2026-08-19T00:00:01.000Z",
+      },
+    },
+  })
+
+  test("EMPTY_NODE_BOUNDS round-trips with its canonical message", () => {
+    // The member has to exist on this end too. An unknown code is refused at
+    // the boundary, which costs the whole session rather than one asset.
+    const error = {
+      code: "EMPTY_NODE_BOUNDS",
+      message: "The requested node renders nothing.",
+      retryable: false,
+    }
+    expect(parseReadResult(errorResult(error))).toEqual(
+      errorResult(error) as never,
+    )
+  })
+
+  test("refuses a non-canonical message and a near-miss spelling", () => {
+    expect(() =>
+      parseReadResult(
+        errorResult({
+          code: "EMPTY_NODE_BOUNDS",
+          message: "The node is empty.",
+          retryable: false,
+        }),
+      ),
+    ).toThrow()
+    expect(() =>
+      parseReadResult(
+        errorResult({
+          code: "EMPTY_BOUNDS",
+          message: "The requested node renders nothing.",
+          retryable: false,
+        }),
+      ),
+    ).toThrow()
+  })
+
+  test("refuses an SVG rule left on a tool error", () => {
+    // The field moved to the asset; a stale sender must be refused rather than
+    // silently accepted on the error it used to ride.
+    expect(() =>
+      parseReadResult({
+        operation: "get_screenshot",
+        result: {
+          assets: [
+            {
+              status: "error",
+              error: {
+                code: "UNSAFE_SVG",
+                message: "The SVG was rejected by the safety policy.",
+                retryable: false,
+                svgRejection: { kind: "unsafeElement", name: "script" },
+              },
+            },
+          ],
+          truncated: false,
+          observation: {
+            startedAt: "2026-08-19T00:00:00.000Z",
+            completedAt: "2026-08-19T00:00:01.000Z",
+          },
+        },
+      }),
+    ).toThrow()
   })
 })

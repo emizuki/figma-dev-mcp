@@ -1,6 +1,6 @@
+// Deliberately no getLocalVariable*Async: reads resolve variables by the ids the
+// design actually binds, which local enumeration cannot see for a library.
 export interface FigmaVariablesApi {
-  getLocalVariableCollectionsAsync?(): Promise<unknown[]>
-  getLocalVariablesAsync?(): Promise<unknown[]>
   getVariableByIdAsync?(id: string): Promise<unknown>
   getVariableCollectionByIdAsync?(id: string): Promise<unknown>
 }
@@ -76,7 +76,10 @@ export async function loadPageIfNeeded<T>(node: T): Promise<T> {
 
 export function detectCapabilities() {
   return {
-    annotations: "annotations" in figma.currentPage,
+    // AnnotationsMixin is a scene-node mixin; PageNode does not extend it, so
+    // "annotations" in figma.currentPage was structurally always false. The
+    // annotation reader in dev-mode.ts already calls through figma.annotations.
+    annotations: "annotations" in figma,
     devResources: "getDevResourcesAsync" in figma.currentPage,
     motion: "motion" in figma,
     svgStringExport: true,

@@ -110,6 +110,7 @@ async fn dev_mode_reactions_and_motion_round_trip_through_server_broker_and_plug
                                 "inheritedFromNodeId": "2:1"
                             }
                         }],
+                        "visitedNodes": 1,
                         "truncated": false,
                         "observation": observation()
                     })
@@ -168,6 +169,7 @@ async fn dev_mode_reactions_and_motion_round_trip_through_server_broker_and_plug
                                 ]
                             }
                         }],
+                        "visitedNodes": 1,
                         "truncated": false,
                         "observation": observation()
                     })
@@ -224,6 +226,7 @@ async fn dev_mode_reactions_and_motion_round_trip_through_server_broker_and_plug
                             "description": "Catalog fade",
                             "props": [{"name": "direction", "value": "string"}]
                         }],
+                        "visitedNodes": 1,
                         "truncated": false,
                         "observation": observation()
                     })

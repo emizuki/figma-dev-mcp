@@ -9,14 +9,14 @@ mod tools_catalog;
 use figma_dev_mcp_protocol::{
     domain::{
         AxisAlign, ComponentValue, ConnectionId, CornerRadiusValue, DesignNode,
-        GetDesignContextResult, GetMotionResult, GetNodesResult, GetReactionsResult,
-        GetSelectionResult, InstanceValue, ItemIdentifier, LayoutValue, LetterSpacingValue,
-        LineHeightValue, MinimalNodeDetails, NodeForest, NodeId, NodeTypeList, NodeTypeName,
-        NodesSelector, PageId, PagesSelector, PaintValue, RasterScale, ReactionAction, RequestId,
-        ReturnedList, ScreenshotAsset, SearchNodesInput, Selector, StrokeAlign, StrokeValue,
-        StyleKind, StyleReference, TextStyle,
+        GetDesignContextResult, GetDevModeDataResult, GetMotionResult, GetNodesResult,
+        GetReactionsResult, GetSelectionResult, InstanceValue, ItemIdentifier, LayoutValue,
+        LetterSpacingValue, LineHeightValue, MinimalNodeDetails, NodeForest, NodeId, NodeTypeList,
+        NodeTypeName, NodesSelector, PageId, PagesSelector, PaintValue, RasterScale,
+        ReactionAction, RequestId, ReturnedList, ScreenshotAsset, SearchNodesInput, Selector,
+        StrokeAlign, StrokeValue, StyleKind, StyleReference, SvgRejectionKind, TextStyle,
     },
-    error::{ErrorCode, ItemError, PluginFailure, ToolError},
+    error::{ErrorCode, ItemError, PluginFailure, ToolError, canonical_message},
     limits::{
         HEARTBEAT_SECS, IDLE_GRACE_SECS, INACTIVITY_TIMEOUT_SECS, MAX_DEPTH,
         MAX_DISPLAY_TEXT_BYTES, MAX_ENVELOPE_BYTES, MAX_IDENTIFIER_BYTES, MAX_IN_FLIGHT,
@@ -266,26 +266,32 @@ fn read_result_name(result: &ReadResult) -> &'static str {
     }
 }
 
+/// The wire order of the stable error codes. Mirrored by `ERROR_CODES` in
+/// `plugin/src/shared/protocol.ts`; the mirror test below checks that this list
+/// is still the set the enum declares, so a member added to `ErrorCode` and not
+/// added here fails rather than going unnoticed.
+pub const ERROR_CODES: [ErrorCode; 16] = [
+    ErrorCode::NoFigmaConnection,
+    ErrorCode::AmbiguousConnection,
+    ErrorCode::ConnectionNotFound,
+    ErrorCode::ConnectionLost,
+    ErrorCode::ProtocolMismatch,
+    ErrorCode::NodeNotFound,
+    ErrorCode::PageNotFound,
+    ErrorCode::UnsupportedNode,
+    ErrorCode::EmptyNodeBounds,
+    ErrorCode::CapabilityUnavailable,
+    ErrorCode::UnsafeSvg,
+    ErrorCode::InvalidCursor,
+    ErrorCode::LimitExceeded,
+    ErrorCode::Timeout,
+    ErrorCode::Cancelled,
+    ErrorCode::InternalError,
+];
+
 #[test]
 fn stable_error_codes_are_exact_and_screaming_snake_case() {
-    let codes = [
-        ErrorCode::NoFigmaConnection,
-        ErrorCode::AmbiguousConnection,
-        ErrorCode::ConnectionNotFound,
-        ErrorCode::ConnectionLost,
-        ErrorCode::ProtocolMismatch,
-        ErrorCode::NodeNotFound,
-        ErrorCode::PageNotFound,
-        ErrorCode::UnsupportedNode,
-        ErrorCode::CapabilityUnavailable,
-        ErrorCode::UnsafeSvg,
-        ErrorCode::InvalidCursor,
-        ErrorCode::LimitExceeded,
-        ErrorCode::Timeout,
-        ErrorCode::Cancelled,
-        ErrorCode::InternalError,
-    ];
-    let encoded: Vec<String> = codes
+    let encoded: Vec<String> = ERROR_CODES
         .iter()
         .map(|code| {
             let expected = error_code_tag(*code);
@@ -304,6 +310,7 @@ fn stable_error_codes_are_exact_and_screaming_snake_case() {
             "NODE_NOT_FOUND",
             "PAGE_NOT_FOUND",
             "UNSUPPORTED_NODE",
+            "EMPTY_NODE_BOUNDS",
             "CAPABILITY_UNAVAILABLE",
             "UNSAFE_SVG",
             "INVALID_CURSOR",
@@ -322,6 +329,513 @@ fn stable_error_codes_are_exact_and_screaming_snake_case() {
     let encoded = serde_json::to_value(error).unwrap();
     assert!(encoded.get("source").is_none());
     assert!(encoded.get("pluginPayload").is_none());
+}
+
+/// Exhaustive by construction: a new rule fails to compile here until it is
+/// given a wire tag, which is the same tag the plugin must mirror.
+pub fn svg_rejection_kind_tag(kind: SvgRejectionKind) -> &'static str {
+    match kind {
+        SvgRejectionKind::ParserError => "parserError",
+        SvgRejectionKind::UnsafeElement => "unsafeElement",
+        SvgRejectionKind::UnsafeAttribute => "unsafeAttribute",
+        SvgRejectionKind::UnsafeCss => "unsafeCss",
+        SvgRejectionKind::UnsafeProcessingInstruction => "unsafeProcessingInstruction",
+    }
+}
+
+pub const SVG_REJECTION_KINDS: [SvgRejectionKind; 5] = [
+    SvgRejectionKind::ParserError,
+    SvgRejectionKind::UnsafeElement,
+    SvgRejectionKind::UnsafeAttribute,
+    SvgRejectionKind::UnsafeCss,
+    SvgRejectionKind::UnsafeProcessingInstruction,
+];
+
+const VERDICT_SOURCE: &str = "<svg xmlns=\"http://www.w3.org/2000/svg\"/>";
+
+fn unsafe_svg_asset(rejection: Value) -> Value {
+    json!({
+        "format": "svg",
+        "nodeId": "1:2",
+        "source": VERDICT_SOURCE,
+        "safe": false,
+        "rejection": rejection,
+    })
+}
+
+#[test]
+fn every_svg_rejection_rule_round_trips_named_and_unnamed() {
+    for kind in SVG_REJECTION_KINDS {
+        let tag = svg_rejection_kind_tag(kind);
+        for name in [None, Some("href")] {
+            let mut rejection = json!({ "kind": tag });
+            if let Some(name) = name {
+                rejection["name"] = json!(name);
+            }
+            let encoded = unsafe_svg_asset(rejection);
+            let asset: ScreenshotAsset = serde_json::from_value(encoded.clone()).unwrap();
+            let ScreenshotAsset::Svg {
+                source,
+                safe,
+                rejection,
+                ..
+            } = &asset
+            else {
+                panic!("{tag} must decode as an SVG asset");
+            };
+            assert!(!safe, "{tag} must decode as an unsafe verdict");
+            assert_eq!(
+                source.as_str(),
+                VERDICT_SOURCE,
+                "{tag} must return the source it judged"
+            );
+            let decoded = rejection.as_ref().expect("rule survives decoding");
+            assert_eq!(decoded.kind(), kind);
+            assert_eq!(
+                decoded.name().map(|value| value.as_str()),
+                name,
+                "{tag} must keep its offender name exactly as sent"
+            );
+            assert_eq!(
+                serde_json::to_value(&asset).unwrap(),
+                encoded,
+                "{tag} must re-encode byte for byte"
+            );
+        }
+    }
+
+    let safe_asset = json!({
+        "format": "svg", "nodeId": "1:2", "source": VERDICT_SOURCE, "safe": true
+    });
+    let asset: ScreenshotAsset = serde_json::from_value(safe_asset.clone()).unwrap();
+    let ScreenshotAsset::Svg {
+        safe, rejection, ..
+    } = &asset
+    else {
+        panic!("a safe verdict must decode as an SVG asset");
+    };
+    assert!(safe);
+    assert!(rejection.is_none());
+    assert_eq!(
+        serde_json::to_value(&asset).unwrap(),
+        safe_asset,
+        "an absent rule must not materialise as null"
+    );
+}
+
+#[test]
+fn an_svg_verdict_is_stated_and_matches_its_rule() {
+    // `safe` is required: an absent boolean reads the same as `false`, and the
+    // caller has to be able to rely on the verdict having been stated.
+    assert!(
+        serde_json::from_value::<ScreenshotAsset>(json!({
+            "format": "svg", "nodeId": "1:2", "source": VERDICT_SOURCE
+        }))
+        .is_err(),
+        "an SVG asset must state its verdict"
+    );
+    // The verdict and its reason are one fact, so neither half may travel alone.
+    assert!(
+        serde_json::from_value::<ScreenshotAsset>(json!({
+            "format": "svg", "nodeId": "1:2", "source": VERDICT_SOURCE, "safe": false
+        }))
+        .is_err(),
+        "an unsafe verdict must name the rule that fired"
+    );
+    assert!(
+        serde_json::from_value::<ScreenshotAsset>(json!({
+            "format": "svg", "nodeId": "1:2", "source": VERDICT_SOURCE, "safe": true,
+            "rejection": { "kind": "unsafeElement", "name": "script" }
+        }))
+        .is_err(),
+        "a safe verdict cannot carry a rule"
+    );
+    // A verdict belongs to SVG alone; a raster asset was never judged.
+    for format in ["png", "jpeg"] {
+        assert!(
+            serde_json::from_value::<ScreenshotAsset>(json!({
+                "format": format, "nodeId": "1:2", "dataBase64": "AA==",
+                "width": 1, "height": 1, "safe": true
+            }))
+            .is_err(),
+            "{format} asset must not carry a safety verdict"
+        );
+    }
+}
+
+#[test]
+fn svg_rejection_rules_stay_closed() {
+    // An unknown rule must be refused, not ignored: a variant only one end
+    // knows about would drop the session rather than one request.
+    assert!(
+        serde_json::from_value::<ScreenshotAsset>(unsafe_svg_asset(
+            json!({ "kind": "unsafeFont" })
+        ))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<ScreenshotAsset>(unsafe_svg_asset(
+            json!({ "kind": "parsererror" })
+        ))
+        .is_err()
+    );
+    assert!(serde_json::from_value::<ScreenshotAsset>(unsafe_svg_asset(json!({}))).is_err());
+    assert!(
+        serde_json::from_value::<ScreenshotAsset>(unsafe_svg_asset(
+            json!({ "kind": "unsafeElement", "value": "fill:#ff0000" })
+        ))
+        .is_err(),
+        "the rule carries names, never values"
+    );
+    assert!(
+        serde_json::from_value::<ScreenshotAsset>(unsafe_svg_asset(
+            json!({ "kind": "unsafeElement", "name": "a".repeat(MAX_IDENTIFIER_BYTES + 1) })
+        ))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<ScreenshotAsset>(unsafe_svg_asset(json!({
+            "kind": "unsafeElement", "name": ""
+        })))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<ScreenshotAsset>(unsafe_svg_asset(json!("unsafeElement")))
+            .is_err(),
+        "the rule is an object, not a bare tag"
+    );
+    // `deny_unknown_fields` must still refuse an unknown field on the asset
+    // itself, not only inside the rule it now carries.
+    assert!(
+        serde_json::from_value::<ScreenshotAsset>(json!({
+            "format": "svg", "nodeId": "1:2", "source": VERDICT_SOURCE, "safe": true,
+            "verdict": "safe"
+        }))
+        .is_err(),
+        "an unknown field on the asset must be refused"
+    );
+}
+
+#[test]
+fn the_plugin_mirrors_every_svg_rejection_rule() {
+    // A rule present on one end and absent on the other drops the whole broker
+    // session, not one request, so the two ends are pinned to each other in
+    // BOTH directions: a plugin-only sixth kind would otherwise go uncaught.
+    let plugin = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("tests crate has a workspace parent")
+        .join("plugin/src/shared");
+    let results = std::fs::read_to_string(plugin.join("results.ts")).unwrap();
+    let validation = std::fs::read_to_string(plugin.join("result-validation.ts")).unwrap();
+
+    let mut rust: Vec<String> = SVG_REJECTION_KINDS
+        .iter()
+        .map(|kind| svg_rejection_kind_tag(*kind).to_owned())
+        .collect();
+    rust.sort();
+
+    let declared = quoted_tags(&results, "export type SvgRejectionKind =", "\n\n");
+    let accepted = quoted_tags(
+        &validation,
+        "const SVG_REJECTION_KINDS: readonly SvgRejectionKind[] = [",
+        "]",
+    );
+    assert_eq!(
+        declared, rust,
+        "plugin results.ts declares a different set of SVG rejection rules than Rust"
+    );
+    assert_eq!(
+        accepted, rust,
+        "plugin result-validation.ts accepts a different set of SVG rejection rules than Rust"
+    );
+    assert!(
+        results.contains("rejection?: SvgRejection") && validation.contains("\"rejection\""),
+        "plugin must carry the rule on its SVG asset"
+    );
+    assert!(
+        !results.contains("svgRejection") && !validation.contains("svgRejection"),
+        "the rule no longer travels on the tool error"
+    );
+}
+
+/// The sorted, deduplicated double-quoted strings in the plugin source between
+/// `start` and the first `end` after it. Reading the plugin's own lists is what
+/// makes the mirror bidirectional: a kind only the plugin knows shows up here.
+fn quoted_tags(source: &str, start: &str, end: &str) -> Vec<String> {
+    let begin = source
+        .find(start)
+        .unwrap_or_else(|| panic!("plugin source must contain {start}"))
+        + start.len();
+    let rest = &source[begin..];
+    let stop = rest
+        .find(end)
+        .unwrap_or_else(|| panic!("plugin source must terminate {start}"));
+    sorted_quoted(&rest[..stop])
+}
+
+/// The sorted, deduplicated double-quoted strings in one slice of plugin source.
+fn sorted_quoted(segment: &str) -> Vec<String> {
+    let mut tags: Vec<String> = segment
+        .split('"')
+        .skip(1)
+        .step_by(2)
+        .map(str::to_owned)
+        .collect();
+    tags.sort();
+    tags.dedup();
+    tags
+}
+
+/// The two halves of the plugin's `ERROR_CODES` declaration: the tuple type
+/// that gives `ErrorCode` its members, and the value list the validator checks
+/// an incoming code against. The plugin writes the sixteen strings out twice
+/// and nothing else pins the two copies to each other.
+fn plugin_error_code_lists(source: &str) -> (Vec<String>, Vec<String>) {
+    const START: &str = "export const ERROR_CODES: readonly [";
+    const SPLIT: &str = "] = [";
+    let begin = source
+        .find(START)
+        .expect("plugin protocol.ts must declare ERROR_CODES")
+        + START.len();
+    let rest = &source[begin..];
+    let split = rest
+        .find(SPLIT)
+        .expect("the ERROR_CODES tuple type must terminate");
+    let values = &rest[split + SPLIT.len()..];
+    let end = values
+        .find("\n]")
+        .expect("the ERROR_CODES value list must terminate");
+    (sorted_quoted(&rest[..split]), sorted_quoted(&values[..end]))
+}
+
+/// The `CODE: "message"` pairs of a `Record<ErrorCode, string>` literal, sorted.
+/// Pairs rather than two sets: a message swapped between two codes leaves both
+/// sets identical and is still a dropped session.
+fn plugin_message_map(source: &str, start: &str) -> Vec<(String, String)> {
+    let begin = source
+        .find(start)
+        .unwrap_or_else(|| panic!("plugin source must contain {start}"))
+        + start.len();
+    let rest = &source[begin..];
+    let end = rest
+        .find("\n}")
+        .unwrap_or_else(|| panic!("plugin source must terminate {start}"));
+    let mut pairs: Vec<(String, String)> = rest[..end]
+        .lines()
+        .filter_map(|line| {
+            let (code, tail) = line.split_once(':')?;
+            let message = tail.split('"').nth(1)?;
+            Some((code.trim().to_owned(), message.to_owned()))
+        })
+        .collect();
+    pairs.sort();
+    pairs
+}
+
+/// Every `ErrorCode` tag, read out of the derived schema rather than a list
+/// written by hand. A member added to the enum turns up here whether or not
+/// anyone remembers the copies, which is what makes the mirror below catch a
+/// Rust-only member instead of silently comparing two stale lists.
+fn schema_error_codes() -> Vec<String> {
+    let schema = serde_json::to_value(schemars::schema_for!(ErrorCode)).unwrap();
+    let mut tags = Vec::new();
+    collect_schema_string_tags(&schema, &mut tags);
+    tags.sort();
+    tags.dedup();
+    assert!(
+        !tags.is_empty(),
+        "the ErrorCode schema must enumerate its members"
+    );
+    tags
+}
+
+/// Schemars splits a unit enum into a bare `enum` for the members with no doc
+/// comment and a separate `const` for each one that has one, so both shapes
+/// have to be gathered or documenting a member would silently hide it.
+fn collect_schema_string_tags(value: &Value, out: &mut Vec<String>) {
+    match value {
+        Value::Object(map) => {
+            for (key, child) in map {
+                match (key.as_str(), child) {
+                    ("const", Value::String(tag)) => out.push(tag.clone()),
+                    ("enum", Value::Array(items)) => {
+                        out.extend(items.iter().filter_map(Value::as_str).map(str::to_owned));
+                    }
+                    _ => collect_schema_string_tags(child, out),
+                }
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_schema_string_tags(item, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[test]
+fn the_plugin_mirrors_every_error_code_and_its_canonical_message() {
+    // A code present on one end and absent on the other is not a failed
+    // request: the decoder refuses the frame and the whole broker session
+    // drops. So the two ends are pinned in BOTH directions. The Rust side
+    // comes from the derived schema, so a Rust-only seventeenth member is
+    // caught; the plugin side comes from the plugin's own lists, so a
+    // plugin-only one is caught too.
+    let plugin = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("tests crate has a workspace parent")
+        .join("plugin/src");
+    let protocol = std::fs::read_to_string(plugin.join("shared/protocol.ts")).unwrap();
+    let validation = std::fs::read_to_string(plugin.join("shared/result-validation.ts")).unwrap();
+    let render = std::fs::read_to_string(plugin.join("read/render.ts")).unwrap();
+
+    let rust = schema_error_codes();
+    let mut listed: Vec<String> = ERROR_CODES
+        .iter()
+        .map(|code| error_code_tag(*code).to_owned())
+        .collect();
+    listed.sort();
+    assert_eq!(
+        listed, rust,
+        "ERROR_CODES in this file is not the set the enum declares"
+    );
+
+    let (declared, accepted) = plugin_error_code_lists(&protocol);
+    assert_eq!(
+        declared, rust,
+        "plugin protocol.ts declares a different set of error codes than Rust"
+    );
+    assert_eq!(
+        accepted, rust,
+        "plugin protocol.ts's ERROR_CODES value list differs from its own tuple type"
+    );
+
+    // The message is code-owned, and the Rust decoder refuses any frame whose
+    // message is not the canonical one for its code. A drifted string is
+    // therefore also a dropped session, not a cosmetic difference. Three lists
+    // hold these strings and nothing else pins them to each other.
+    let mut expected: Vec<(String, String)> = ERROR_CODES
+        .iter()
+        .map(|code| {
+            (
+                error_code_tag(*code).to_owned(),
+                canonical_message(*code).to_owned(),
+            )
+        })
+        .collect();
+    expected.sort();
+    assert_eq!(
+        plugin_message_map(
+            &validation,
+            "const CANONICAL_MESSAGES: Record<ErrorCode, string> = {"
+        ),
+        expected,
+        "plugin result-validation.ts carries different canonical messages than Rust"
+    );
+    assert_eq!(
+        plugin_message_map(&render, "const MESSAGES: Record<ErrorCode, string> = {"),
+        expected,
+        "plugin read/render.ts carries different canonical messages than Rust"
+    );
+}
+
+#[test]
+fn an_unsafe_screenshot_asset_carries_its_rule_through_the_result() {
+    let payload = json!({
+        "assets": [{ "status": "success", "value": unsafe_svg_asset(json!({
+            "kind": "unsafeAttribute", "name": "href"
+        }))}],
+        "truncated": false,
+        "observation": {
+            "startedAt": "2026-08-19T00:00:00.000Z",
+            "completedAt": "2026-08-19T00:00:01.000Z"
+        }
+    });
+    let result: figma_dev_mcp_protocol::domain::GetScreenshotResult =
+        serde_json::from_value(payload.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&result).unwrap(), payload);
+}
+
+#[test]
+fn a_lone_surrogate_in_svg_source_is_refused_by_the_decoder() {
+    // Once SVG safety stopped withholding the source, the plugin's lone-surrogate
+    // guard became the only thing keeping a JSON-unencodable string off the wire.
+    // This pins the consequence that makes that guard load-bearing rather than
+    // merely tidy: serde_json rejects a lone surrogate while PARSING, so the whole
+    // frame fails to decode — the broker session drops, not one asset.
+    let payload = |escape: &str| {
+        format!(
+            r#"{{"assets":[{{"status":"success","value":{{"format":"svg","nodeId":"1:2","source":"<svg/>{escape}","safe":true}}}}],"truncated":false,"observation":{{"startedAt":"2026-08-19T00:00:00.000Z","completedAt":"2026-08-19T00:00:01.000Z"}}}}"#
+        )
+    };
+
+    // Control first, and it must be a surrogate PAIR written as an escape rather
+    // than a literal character, so it exercises the same escape-decoding path the
+    // lone surrogate takes. Without this the assertion below could pass because
+    // the fixture is malformed some other way, proving nothing about surrogates.
+    serde_json::from_str::<figma_dev_mcp_protocol::domain::GetScreenshotResult>(&payload(
+        r"\ud83d\ude00",
+    ))
+    .expect("a surrogate pair escape decodes");
+
+    let error = serde_json::from_str::<figma_dev_mcp_protocol::domain::GetScreenshotResult>(
+        &payload(r"\ud800"),
+    )
+    .expect_err("a lone surrogate must not decode");
+    assert!(
+        error.is_syntax(),
+        "expected a JSON syntax error from the lone surrogate, got: {error}"
+    );
+}
+
+#[test]
+fn the_tool_error_no_longer_carries_an_svg_rule() {
+    // The field moved to the asset. Left on the error it would sit in the
+    // schema of four tools that have no SVG in them at all.
+    assert!(
+        serde_json::from_value::<ToolError>(json!({
+            "code": "UNSAFE_SVG",
+            "message": "The SVG was rejected by the safety policy.",
+            "retryable": false,
+            "svgRejection": { "kind": "unsafeElement", "name": "script" }
+        }))
+        .is_err(),
+        "an svgRejection on a tool error must be refused, not ignored"
+    );
+}
+
+#[test]
+fn the_empty_bounds_code_round_trips_and_owns_its_message() {
+    // A code one end knows and the other does not is not a failed request: the
+    // decoder refuses the frame and the whole broker session drops. This pins
+    // the wire tag the plugin has to mirror exactly.
+    let wire = r#"{"code":"EMPTY_NODE_BOUNDS","message":"The requested node renders nothing.","retryable":false}"#;
+    let error: ToolError = serde_json::from_str(wire).unwrap();
+    assert_eq!(error.code(), ErrorCode::EmptyNodeBounds);
+    assert_eq!(serde_json::to_string(&error).unwrap(), wire);
+
+    let item: ItemError = serde_json::from_str(
+        r#"{"index":0,"code":"EMPTY_NODE_BOUNDS","message":"The requested node renders nothing.","retryable":false}"#,
+    )
+    .unwrap();
+    assert_eq!(item.code(), ErrorCode::EmptyNodeBounds);
+
+    // The message is code-owned: a sender that supplies its own is refused
+    // rather than quietly relaying prose we did not write.
+    assert!(
+        serde_json::from_value::<ToolError>(json!({
+            "code": "EMPTY_NODE_BOUNDS",
+            "message": "The node is empty.",
+            "retryable": false
+        }))
+        .is_err(),
+        "a non-canonical message for EMPTY_NODE_BOUNDS must be refused"
+    );
+    assert!(
+        serde_json::from_str::<ErrorCode>("\"EMPTY_BOUNDS\"").is_err(),
+        "a near-miss spelling must not decode"
+    );
 }
 
 #[test]
@@ -438,7 +952,8 @@ fn screenshot_assets_enforce_wire_byte_and_raster_dimension_limits() {
     );
     assert!(
         serde_json::from_value::<ScreenshotAsset>(json!({
-            "format": "svg", "nodeId": "1:2", "source": "x".repeat(MAX_SVG_BYTES + 1)
+            "format": "svg", "nodeId": "1:2", "source": "x".repeat(MAX_SVG_BYTES + 1),
+            "safe": true
         }))
         .is_err()
     );
@@ -1090,7 +1605,7 @@ fn every_read_result_family_rejects_an_oversized_top_level_collection() {
             json!({
                 "assets": oversized_items(json!({
                     "status": "success",
-                    "value": {"format": "svg", "nodeId": "7:1", "source": "<svg/>"}
+                    "value": {"format": "svg", "nodeId": "7:1", "source": "<svg/>", "safe": true}
                 })),
                 "truncated": false, "observation": observation
             }),
@@ -1514,6 +2029,7 @@ fn error_code_tag(code: ErrorCode) -> &'static str {
         ErrorCode::NodeNotFound => "NODE_NOT_FOUND",
         ErrorCode::PageNotFound => "PAGE_NOT_FOUND",
         ErrorCode::UnsupportedNode => "UNSUPPORTED_NODE",
+        ErrorCode::EmptyNodeBounds => "EMPTY_NODE_BOUNDS",
         ErrorCode::CapabilityUnavailable => "CAPABILITY_UNAVAILABLE",
         ErrorCode::UnsafeSvg => "UNSAFE_SVG",
         ErrorCode::InvalidCursor => "INVALID_CURSOR",
@@ -1837,6 +2353,7 @@ fn amended_motion_contract_uses_seconds_keyed_maps_and_distinct_style_types() {
             "description": "Catalog fade",
             "props": [{"name": "direction", "value": "string"}]
         }],
+        "visitedNodes": 1,
         "truncated": false,
         "observation": motion_observation()
     });
@@ -1945,6 +2462,7 @@ fn amended_motion_contract_uses_seconds_keyed_maps_and_distinct_style_types() {
                     }]
                 }
             }],
+            "visitedNodes": 1,
             "truncated": false,
             "observation": motion_observation()
         }))
@@ -2003,6 +2521,7 @@ fn reaction_overlay_settings_are_closed_optional_and_camel_case() {
                 }]
             }
         }],
+        "visitedNodes": 1,
         "truncated": false,
         "observation": motion_observation()
     });
@@ -2041,6 +2560,7 @@ fn reaction_overlay_settings_are_closed_optional_and_camel_case() {
                     }]
                 }
             }],
+            "visitedNodes": 1,
             "truncated": false,
             "observation": motion_observation()
         }))
@@ -2060,6 +2580,7 @@ fn reaction_overlay_settings_are_closed_optional_and_camel_case() {
                 }]
             }
         }],
+        "visitedNodes": 1,
         "truncated": false,
         "observation": motion_observation()
     });
@@ -2226,4 +2747,176 @@ fn style_reference_carries_optional_name_and_stroke_kind() {
         .is_err(),
         "style reference must stay closed"
     );
+}
+
+fn visited_nodes_observation() -> Value {
+    json!({
+        "startedAt": "2026-08-19T10:00:00.000Z",
+        "completedAt": "2026-08-19T10:00:00.001Z"
+    })
+}
+
+fn sample_dev_mode_result() -> GetDevModeDataResult {
+    serde_json::from_value(json!({
+        "items": [{
+            "status": "success",
+            "value": {
+                "nodeId": "4:1",
+                "annotations": [{"id": "4:1:annotation:0", "text": "Match padding"}],
+                "annotationCategories": [],
+                "documentation": [],
+                "devResources": []
+            }
+        }],
+        "visitedNodes": 3,
+        "truncated": false,
+        "observation": visited_nodes_observation()
+    }))
+    .expect("dev mode sample must decode")
+}
+
+fn sample_reactions_result() -> GetReactionsResult {
+    serde_json::from_value(json!({
+        "items": [{
+            "status": "success",
+            "value": {
+                "nodeId": "5:1",
+                "reactions": [{
+                    "trigger": "click",
+                    "action": {"type": "back"},
+                    "destinationAccessible": true
+                }]
+            }
+        }],
+        "visitedNodes": 3,
+        "truncated": false,
+        "observation": visited_nodes_observation()
+    }))
+    .expect("reactions sample must decode")
+}
+
+fn sample_motion_result() -> GetMotionResult {
+    serde_json::from_value(json!({
+        "items": [{
+            "status": "success",
+            "value": {
+                "nodeId": "6:1",
+                "animationStyles": [{
+                    "id": "applied-1",
+                    "styleId": "S:fade",
+                    "name": "Fade in"
+                }],
+                "animations": [],
+                "manualKeyframeTracks": [],
+                "timelines": [{"id": "tl-1", "duration": 0.4}]
+            }
+        }],
+        "visitedNodes": 3,
+        "truncated": false,
+        "observation": visited_nodes_observation()
+    }))
+    .expect("motion sample must decode")
+}
+
+#[test]
+fn get_dev_mode_data_result_round_trips_visited_nodes() {
+    let value = sample_dev_mode_result();
+    let json = serde_json::to_value(&value).expect("serialize");
+    assert_eq!(json["visitedNodes"], json!(3));
+    let decoded: GetDevModeDataResult = serde_json::from_value(json).expect("decode");
+    assert_eq!(decoded, value);
+}
+
+#[test]
+fn get_dev_mode_data_result_requires_visited_nodes() {
+    let mut json = serde_json::to_value(sample_dev_mode_result()).expect("serialize");
+    json.as_object_mut().unwrap().remove("visitedNodes");
+    assert!(
+        serde_json::from_value::<GetDevModeDataResult>(json).is_err(),
+        "visitedNodes must be required: an absent count reads as zero nodes walked"
+    );
+}
+
+#[test]
+fn get_dev_mode_data_result_still_rejects_unknown_fields() {
+    let mut json = serde_json::to_value(sample_dev_mode_result()).expect("serialize");
+    json.as_object_mut()
+        .unwrap()
+        .insert("bogus".into(), json!(1));
+    assert!(serde_json::from_value::<GetDevModeDataResult>(json).is_err());
+}
+
+#[test]
+fn get_reactions_result_round_trips_visited_nodes() {
+    let value = sample_reactions_result();
+    let json = serde_json::to_value(&value).expect("serialize");
+    assert_eq!(json["visitedNodes"], json!(3));
+    let decoded: GetReactionsResult = serde_json::from_value(json).expect("decode");
+    assert_eq!(decoded, value);
+}
+
+#[test]
+fn get_reactions_result_requires_visited_nodes() {
+    let mut json = serde_json::to_value(sample_reactions_result()).expect("serialize");
+    json.as_object_mut().unwrap().remove("visitedNodes");
+    assert!(
+        serde_json::from_value::<GetReactionsResult>(json).is_err(),
+        "visitedNodes must be required: an absent count reads as zero nodes walked"
+    );
+}
+
+#[test]
+fn get_reactions_result_still_rejects_unknown_fields() {
+    let mut json = serde_json::to_value(sample_reactions_result()).expect("serialize");
+    json.as_object_mut()
+        .unwrap()
+        .insert("bogus".into(), json!(1));
+    assert!(serde_json::from_value::<GetReactionsResult>(json).is_err());
+}
+
+#[test]
+fn get_motion_result_round_trips_visited_nodes() {
+    let value = sample_motion_result();
+    let json = serde_json::to_value(&value).expect("serialize");
+    assert_eq!(json["visitedNodes"], json!(3));
+    let decoded: GetMotionResult = serde_json::from_value(json).expect("decode");
+    assert_eq!(decoded, value);
+}
+
+#[test]
+fn get_motion_result_requires_visited_nodes() {
+    let mut json = serde_json::to_value(sample_motion_result()).expect("serialize");
+    json.as_object_mut().unwrap().remove("visitedNodes");
+    assert!(
+        serde_json::from_value::<GetMotionResult>(json).is_err(),
+        "visitedNodes must be required: an absent count reads as zero nodes walked"
+    );
+}
+
+#[test]
+fn get_motion_result_still_rejects_unknown_fields() {
+    let mut json = serde_json::to_value(sample_motion_result()).expect("serialize");
+    json.as_object_mut()
+        .unwrap()
+        .insert("bogus".into(), json!(1));
+    assert!(serde_json::from_value::<GetMotionResult>(json).is_err());
+}
+
+#[test]
+fn visited_nodes_reaches_every_per_node_output_schema() {
+    for schema in [
+        serde_json::to_value(schemars::schema_for!(GetDevModeDataResult)).unwrap(),
+        serde_json::to_value(schemars::schema_for!(GetReactionsResult)).unwrap(),
+        serde_json::to_value(schemars::schema_for!(GetMotionResult)).unwrap(),
+    ] {
+        assert!(
+            schema["properties"]["visitedNodes"].is_object(),
+            "visitedNodes must be published on the output schema"
+        );
+        let required = schema["required"].as_array().expect("required list");
+        assert!(
+            required.iter().any(|name| name == "visitedNodes"),
+            "visitedNodes must be required in the output schema"
+        );
+    }
 }

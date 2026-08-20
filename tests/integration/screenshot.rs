@@ -145,7 +145,8 @@ async fn screenshot_round_trips_raster_bytes_and_validated_svg_source() {
                             "value": {
                                 "format": "svg",
                                 "nodeId": "9:1",
-                                "source": SAFE_SVG
+                                "source": SAFE_SVG,
+                                "safe": true
                             }
                         }],
                         "truncated": false,

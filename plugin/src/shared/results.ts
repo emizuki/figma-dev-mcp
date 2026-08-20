@@ -22,6 +22,28 @@ export interface ItemError {
   retryable: boolean
 }
 
+/** Which safety rule judged an SVG export unsafe.
+ *
+ * A bare `safe: false` cannot be acted on from outside the plugin — an embedded
+ * font data URL and a `<script>` element are not the same risk — so the rule
+ * that fired travels with the verdict. Modelled as a struct with a closed
+ * `kind` rather than a tagged union: the Rust mirror then closes under plain
+ * derive, and both ends carry exactly one shape. */
+export type SvgRejectionKind =
+  | "parserError"
+  | "unsafeElement"
+  | "unsafeAttribute"
+  | "unsafeCss"
+  | "unsafeProcessingInstruction"
+
+export interface SvgRejection {
+  kind: SvgRejectionKind
+  /** Local name of the offending element or attribute, where the rule has one
+   * and it fits the identifier bound. Never the attribute value: values carry
+   * design content. */
+  name?: string
+}
+
 export interface ToolError {
   code: ErrorCode
   message: string
@@ -527,6 +549,10 @@ export interface DevModeNodeData {
 
 export interface GetDevModeDataResult {
   items: ItemResult<DevModeNodeData>[]
+  /** Nodes walked, including those that reported nothing and are therefore
+   * absent from `items`. Without this a caller cannot tell "scanned and found
+   * nothing" from "never reached". */
+  visitedNodes: number
   truncated: boolean
   truncation?: Truncation
   observation: ObservationWindow
@@ -627,6 +653,10 @@ export interface NodeReactions {
 
 export interface GetReactionsResult {
   items: ItemResult<NodeReactions>[]
+  /** Nodes walked, including those that reported nothing and are therefore
+   * absent from `items`. Without this a caller cannot tell "scanned and found
+   * nothing" from "never reached". */
+  visitedNodes: number
   truncated: boolean
   truncation?: Truncation
   observation: ObservationWindow
@@ -767,6 +797,10 @@ export interface NodeMotion {
 
 export interface GetMotionResult {
   items: ItemResult<NodeMotion>[]
+  /** Nodes walked, including those that reported nothing and are therefore
+   * absent from `items`. Without this a caller cannot tell "scanned and found
+   * nothing" from "never reached". */
+  visitedNodes: number
   availableStyles?: AvailableAnimationStyle[]
   truncated: boolean
   truncation?: Truncation
@@ -781,7 +815,17 @@ export type ScreenshotAsset =
       width: number
       height: number
     }
-  | { format: "svg"; nodeId: string; source: string }
+  /** The source is always returned. `safe` is required, never optional: an
+   * absent boolean reads the same as `false`, and the point of the verdict is
+   * that the caller can rely on it having been stated. `rejection` is present
+   * exactly when `safe` is `false`. */
+  | {
+      format: "svg"
+      nodeId: string
+      source: string
+      safe: boolean
+      rejection?: SvgRejection
+    }
 
 export interface GetScreenshotResult {
   assets: ItemResult<ScreenshotAsset>[]

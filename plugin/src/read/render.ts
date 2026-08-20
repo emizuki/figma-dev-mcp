@@ -5,7 +5,7 @@ import type {
   ScreenshotAsset,
   ScreenshotSelector,
 } from "../shared/protocol"
-import type { ItemResult, ToolError } from "../shared/results"
+import type { ItemResult, SvgRejection, ToolError } from "../shared/results"
 import {
   type CancellationListener,
   type CancellationSignal,
@@ -16,6 +16,10 @@ import { PluginReadError } from "./navigation"
 import { loadPageIfNeeded, type FigmaReadApi } from "./common"
 
 export const SCREENSHOT_VALIDATION_TIMEOUT_MS = 10_000
+
+/** Figma nests far shallower than this; the cap only stops a malformed parent
+ * chain from spinning. */
+const MAX_ANCESTOR_WALK = 128
 
 declare const figma: FigmaReadApi
 
@@ -28,9 +32,15 @@ export interface RasterEncodeSuccess {
   base64Bytes: number
 }
 
+/** The SVG safety policy runs in the UI context, so the verdict it reached has
+ * to ride back with the source or it is lost before the result is built. An
+ * unsafe verdict is not a failure: `ok` is still `true` and the source is still
+ * present. */
 export interface SvgEncodeSuccess {
   ok: true
   source: string
+  safe: boolean
+  rejection?: SvgRejection
 }
 
 export type RasterEncodeResult =
@@ -56,6 +66,7 @@ const MESSAGES: Record<ErrorCode, string> = {
   NODE_NOT_FOUND: "The requested node was not found.",
   PAGE_NOT_FOUND: "The requested page was not found.",
   UNSUPPORTED_NODE: "The requested node type is not supported.",
+  EMPTY_NODE_BOUNDS: "The requested node renders nothing.",
   CAPABILITY_UNAVAILABLE: "The required Figma capability is unavailable.",
   UNSAFE_SVG: "The SVG was rejected by the safety policy.",
   INVALID_CURSOR: "The search cursor is invalid or stale.",
@@ -109,6 +120,63 @@ function exportSettings(input: GetScreenshotInput): Record<string, unknown> {
     format: input.format === "jpeg" ? "JPG" : "PNG",
     constraint: { type: "SCALE", value: scale },
   }
+}
+
+// Bounds are node *content*, and under `documentAccess: dynamic-page` some node
+// properties are write-only and throw on read. A hostile or unloaded getter
+// costs us the measurement, not the export.
+function hostGet(node: Record<string, unknown>, key: string): unknown {
+  try {
+    return node[key]
+  } catch {
+    return undefined
+  }
+}
+
+/** A `visible` switch is inherited: the API counts a node as visible only when
+ * `visible === true` for itself *and every one of its parents*. So this walks
+ * the chain rather than reading one flag.
+ *
+ * An unfinished walk returns false. Failing to establish visibility is not the
+ * same as establishing it, and every caller here treats false as "leave this
+ * node alone". */
+function isFullyVisible(node: unknown): boolean {
+  let current: unknown = node
+  for (let step = 0; step < MAX_ANCESTOR_WALK; step += 1) {
+    // Past the root: nothing in the chain was switched off.
+    if (!isRecord(current)) return true
+    if (hostGet(current, "visible") === false) return false
+    current = hostGet(current, "parent")
+  }
+  return false
+}
+
+/** The rule: the host reports `absoluteRenderBounds` as exactly `null` for a
+ * node we can also see is switched on.
+ *
+ * `absoluteRenderBounds` is the property that answers the question we are
+ * actually asking — "does this node put any ink on the page?" — because it is
+ * measured after strokes, shadows and effects. Geometry cannot answer it. A
+ * `LINE` is *always* exactly zero pixels high, by API contract, yet every
+ * divider and underline in every file renders perfectly through its stroke; a
+ * straight `VECTOR` or `CONNECTOR` is the same. Judging on width and height
+ * would fire on precisely those nodes and on almost nothing else, since every
+ * other type is clamped to at least 0.01.
+ *
+ * The visibility guard is the price of using it. The same API calls a node
+ * invisible when an *ancestor* is switched off, and null-because-hidden says
+ * nothing about whether the node has anything in it, so those fall through to
+ * the exporter exactly as they do today. The guard can only make this rule fire
+ * less often, never more.
+ *
+ * `undefined` is not `null`: a property the host does not carry at all — a
+ * `PAGE`, which has no layout — or one whose getter throws under
+ * `documentAccess: dynamic-page` leaves the export alone. An unknown answer is
+ * not an empty one. */
+function rendersNothing(node: unknown): boolean {
+  if (!isRecord(node)) return false
+  if (!isFullyVisible(node)) return false
+  return hostGet(node, "absoluteRenderBounds") === null
 }
 
 function nodeExporter(
@@ -256,7 +324,15 @@ function createUiCodec(
         return { ok: false, code: result.error.code }
       if (result.value.format !== "svg")
         return { ok: false, code: "INTERNAL_ERROR" }
-      return { ok: true, source: result.value.source }
+      const encoded: SvgEncodeSuccess = {
+        ok: true,
+        source: result.value.source,
+        safe: result.value.safe,
+      }
+      if (result.value.rejection !== undefined) {
+        encoded.rejection = result.value.rejection
+      }
+      return encoded
     },
   }
 }
@@ -271,10 +347,14 @@ async function encodeAsset(
     if (typeof exported !== "string") return itemError("INTERNAL_ERROR")
     const encoded = await codec.encodeSvg(exported)
     if (!encoded.ok) return itemError(encoded.code)
-    return {
-      status: "success",
-      value: { format: "svg", nodeId, source: encoded.source },
+    const value: Extract<ScreenshotAsset, { format: "svg" }> = {
+      format: "svg",
+      nodeId,
+      source: encoded.source,
+      safe: encoded.safe,
     }
+    if (encoded.rejection !== undefined) value.rejection = encoded.rejection
+    return { status: "success", value }
   }
   if (!(exported instanceof Uint8Array)) return itemError("INTERNAL_ERROR")
   const encoded = await codec.encodeRaster(input.format, exported)
@@ -335,6 +415,13 @@ export async function getScreenshot(
     const exporter = nodeExporter(node)
     if (exporter === undefined) {
       assets.push(itemError("UNSUPPORTED_NODE"))
+      continue
+    }
+    // Asked before the host exporter runs, and for every format: a node that
+    // puts no ink on the page is empty as a PNG too, and a 1×1 transparent
+    // pixel would be the same silent lie as an empty SVG.
+    if (rendersNothing(node)) {
+      assets.push(itemError("EMPTY_NODE_BOUNDS"))
       continue
     }
     try {

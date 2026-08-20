@@ -250,6 +250,7 @@ fn error_code_name(code: figma_dev_mcp_protocol::error::ErrorCode) -> &'static s
         figma_dev_mcp_protocol::error::ErrorCode::NodeNotFound => "NODE_NOT_FOUND",
         figma_dev_mcp_protocol::error::ErrorCode::PageNotFound => "PAGE_NOT_FOUND",
         figma_dev_mcp_protocol::error::ErrorCode::UnsupportedNode => "UNSUPPORTED_NODE",
+        figma_dev_mcp_protocol::error::ErrorCode::EmptyNodeBounds => "EMPTY_NODE_BOUNDS",
         figma_dev_mcp_protocol::error::ErrorCode::CapabilityUnavailable => "CAPABILITY_UNAVAILABLE",
         figma_dev_mcp_protocol::error::ErrorCode::UnsafeSvg => "UNSAFE_SVG",
         figma_dev_mcp_protocol::error::ErrorCode::InvalidCursor => "INVALID_CURSOR",

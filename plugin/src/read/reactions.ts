@@ -72,7 +72,6 @@ function walkOptions(
 class ItemEmission {
   readonly items: GetReactionsResult["items"] = []
   encoded = 0
-  considered = 0
   walkTruncation?: Truncation
   emitTruncation?: Truncation
 
@@ -86,14 +85,10 @@ class ItemEmission {
     if (this.walkTruncation === undefined) this.walkTruncation = truncation
   }
 
-  push(value: NodeReactions): boolean {
-    this.considered += 1
+  push(value: NodeReactions, visitedNodes: number): boolean {
     if (this.emitTruncation !== undefined) return false
     if (this.items.length >= this.limits.returnedNodes) {
-      this.emitTruncation = {
-        reason: "nodeLimit",
-        visitedNodes: this.considered,
-      }
+      this.emitTruncation = { reason: "nodeLimit", visitedNodes }
       return false
     }
     const encoded = this.encoded + byteLength(value)
@@ -458,6 +453,13 @@ async function serializeNode(raw: unknown): Promise<NodeReactions | undefined> {
   }
 }
 
+// Emit only nodes that have something to say. A record per visited node cost
+// 356,668 bytes to report 11 reactions on one measured page, and exhausted the
+// node budget doing it, so real reactions past the cap went missing.
+function hasContent(value: NodeReactions): boolean {
+  return value.reactions.length > 0
+}
+
 export async function getReactions(
   input: Partial<GetReactionsInput> = {},
   signal?: CancellationSignal,
@@ -475,14 +477,20 @@ export async function getReactions(
     pending.push(raw)
   })
   if (walked.truncation !== undefined) emission.mark(walked.truncation)
+  // Counts nodes inspected, not records emitted: a caller reading `items` needs
+  // to know how much of the tree was examined and found to have nothing.
+  let visitedNodes = 0
   for (let index = 0; index < pending.length; index += 1) {
     throwIfAbortedAtBatch(signal, index, CANCEL_CHECK_BATCH)
     signal?.throwIfAborted()
+    visitedNodes += 1
     const value = await serializeNode(pending[index])
-    if (value !== undefined && !emission.push(value)) break
+    if (value === undefined || !hasContent(value)) continue
+    if (!emission.push(value, visitedNodes)) break
   }
   const result: GetReactionsResult = {
     items: emission.items,
+    visitedNodes,
     truncated: emission.truncation !== undefined,
     observation: observation(startedAt),
   }

@@ -58,6 +58,77 @@ describe("bounded node serializer", () => {
     expect(result.truncation?.reason).toBe("depthLimit")
   })
 
+  test("a node-budget stop outranks an earlier depth cut", () => {
+    // A forest deep enough to cut on depth early (the first branch visited),
+    // and wide enough to exhaust the node budget afterwards. The depth cut
+    // must still appear on the node whose children were dropped; only the
+    // document-level reason changes.
+    const greatGrandchild = base({
+      id: "3:4",
+      name: "GreatGrandchild",
+      type: "RECTANGLE",
+    })
+    const grandchild = base({
+      id: "3:3",
+      name: "Grandchild",
+      children: [greatGrandchild],
+    })
+    const deepBranch = base({
+      id: "3:2",
+      name: "DeepBranch",
+      children: [grandchild],
+    })
+    const wideSiblings = Array.from({ length: 10 }, (_, index) =>
+      base({ id: `3:w${index}`, name: `Wide${index}`, type: "RECTANGLE" }),
+    )
+    const root = base({
+      id: "3:1",
+      name: "Root",
+      children: [deepBranch, ...wideSiblings],
+    })
+
+    const result = serializeNodeForest([root], {
+      detail: "minimal",
+      depth: 2,
+      dedupeComponents: false,
+      limits: {
+        returnedNodes: 10,
+        visitedNodes: 10_000,
+        encodedBytes: 10_000_000,
+      },
+    })
+
+    expect(result.truncation?.reason).toBe("nodeLimit")
+    expect(result.truncation?.visitedNodes).toBeGreaterThan(0)
+    // The local fact stays put: grandchild's own children were cut by depth.
+    const deepBranchNode = result.nodes[0]?.children[0]
+    expect(deepBranchNode?.children[0]?.childrenTruncation).toEqual({
+      reason: "depthLimit",
+      appliedDepth: 2,
+    })
+  })
+
+  test("a depth cut alone is still reported as depthLimit", () => {
+    const leaf = base({ id: "2:4", name: "Leaf", type: "RECTANGLE" })
+    const grandchild = base({ id: "2:3", name: "Grandchild", children: [leaf] })
+    const child = base({ id: "2:2", name: "Child", children: [grandchild] })
+    const root = base({ id: "2:1", name: "Root", children: [child] })
+
+    const result = serializeNodeForest([root], {
+      detail: "minimal",
+      depth: 2,
+      dedupeComponents: false,
+      limits: {
+        returnedNodes: 10_000,
+        visitedNodes: 10_000,
+        encodedBytes: 10_000_000,
+      },
+    })
+
+    expect(result.truncation?.reason).toBe("depthLimit")
+    expect(result.truncation?.appliedDepth).toBe(2)
+  })
+
   test("omits mixed style ids from styleReferences", () => {
     const node = base({
       fillStyleId: Symbol("figma.mixed"),

@@ -2,7 +2,7 @@
 
 use super::{
     ConnectionId, ItemResult, NodeId, NodeSelector, NodesSelector, ObservationWindow, RasterBase64,
-    ReturnedList, SelectionSelector, SvgSource, Truncation,
+    ReturnedList, SelectionSelector, SvgRejectionName, SvgSource, Truncation,
 };
 use crate::limits::{MAX_RASTER_PIXELS, MAX_RASTER_SIDE};
 use schemars::{JsonSchema, Schema, SchemaGenerator};
@@ -383,6 +383,46 @@ where
     Ok(())
 }
 
+// Modelled as a closed discriminant plus an optional name rather than as a
+// tagged enum. An adjacently tagged enum would have forced a required `content`
+// object on every name-carrying variant, but the plugin drops a name it cannot
+// bound, so the name is optional for every rule. A struct closes under
+// `deny_unknown_fields` exactly as adjacent tagging does, needs no hand-written
+// `Visitor`, and keeps one shape on both ends of the wire.
+/// Which safety rule judged an SVG export unsafe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum SvgRejectionKind {
+    ParserError,
+    UnsafeElement,
+    UnsafeAttribute,
+    UnsafeCss,
+    UnsafeProcessingInstruction,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SvgRejection {
+    kind: SvgRejectionKind,
+    // Never an attribute value: values carry design content.
+    /// Local name of the offending element or attribute, where the rule has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    name: Option<SvgRejectionName>,
+}
+
+// No constructor: the plugin builds the verdict and Rust only deserialises it.
+// A `new` here would be an unused second way to make a value that never
+// originates on this end.
+impl SvgRejection {
+    pub fn kind(&self) -> SvgRejectionKind {
+        self.kind
+    }
+
+    pub fn name(&self) -> Option<&SvgRejectionName> {
+        self.name.as_ref()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(
     tag = "format",
@@ -403,9 +443,16 @@ pub enum ScreenshotAsset {
         width: RasterSide,
         height: RasterSide,
     },
+    /// The source is always present. Safety declares a verdict on it rather
+    /// than withholding it, so `safe` is required — an absent boolean reads the
+    /// same as `false`, and the caller has to be able to rely on the verdict
+    /// having been stated. `rejection` is present exactly when `safe` is false.
     Svg {
         node_id: NodeId,
         source: SvgSource,
+        safe: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rejection: Option<SvgRejection>,
     },
 }
 
@@ -418,6 +465,8 @@ enum ScreenshotAssetField {
     Width,
     Height,
     Source,
+    Safe,
+    Rejection,
 }
 
 impl<'de> Deserialize<'de> for ScreenshotAsset {
@@ -448,6 +497,8 @@ impl<'de> Visitor<'de> for ScreenshotAssetVisitor {
         let mut width = None;
         let mut height = None;
         let mut source = None;
+        let mut safe = None;
+        let mut rejection = None;
         while let Some(field) = map.next_key::<ScreenshotAssetField>()? {
             match field {
                 ScreenshotAssetField::Format => set_once(
@@ -472,13 +523,23 @@ impl<'de> Visitor<'de> for ScreenshotAssetVisitor {
                 ScreenshotAssetField::Source => {
                     set_once(&mut source, map.next_value::<SvgSource>()?, "source")?
                 }
+                ScreenshotAssetField::Safe => {
+                    set_once(&mut safe, map.next_value::<bool>()?, "safe")?
+                }
+                ScreenshotAssetField::Rejection => set_once(
+                    &mut rejection,
+                    map.next_value::<SvgRejection>()?,
+                    "rejection",
+                )?,
             }
         }
         let node_id = node_id.ok_or_else(|| A::Error::missing_field("nodeId"))?;
         match format.ok_or_else(|| A::Error::missing_field("format"))? {
             ScreenshotFormatTag::Png => {
-                if source.is_some() {
-                    return Err(A::Error::custom("PNG asset cannot contain source"));
+                if source.is_some() || safe.is_some() || rejection.is_some() {
+                    return Err(A::Error::custom(
+                        "PNG asset cannot contain source or a safety verdict",
+                    ));
                 }
                 let width = width.ok_or_else(|| A::Error::missing_field("width"))?;
                 let height = height.ok_or_else(|| A::Error::missing_field("height"))?;
@@ -492,8 +553,10 @@ impl<'de> Visitor<'de> for ScreenshotAssetVisitor {
                 })
             }
             ScreenshotFormatTag::Jpeg => {
-                if source.is_some() {
-                    return Err(A::Error::custom("JPEG asset cannot contain source"));
+                if source.is_some() || safe.is_some() || rejection.is_some() {
+                    return Err(A::Error::custom(
+                        "JPEG asset cannot contain source or a safety verdict",
+                    ));
                 }
                 let width = width.ok_or_else(|| A::Error::missing_field("width"))?;
                 let height = height.ok_or_else(|| A::Error::missing_field("height"))?;
@@ -512,9 +575,20 @@ impl<'de> Visitor<'de> for ScreenshotAssetVisitor {
                         "SVG asset cannot contain raster data or dimensions",
                     ));
                 }
+                let safe = safe.ok_or_else(|| A::Error::missing_field("safe"))?;
+                // The verdict and its reason are one fact. A safe asset
+                // carrying a rule, or an unsafe one carrying none, is a shape
+                // neither end can act on.
+                if safe == rejection.is_some() {
+                    return Err(A::Error::custom(
+                        "rejection is present exactly when safe is false",
+                    ));
+                }
                 Ok(ScreenshotAsset::Svg {
                     node_id,
                     source: source.ok_or_else(|| A::Error::missing_field("source"))?,
+                    safe,
+                    rejection,
                 })
             }
         }

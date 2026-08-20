@@ -30,6 +30,14 @@ const motionNode = (
   ...extras,
 })
 
+// A node is only emitted when something actually animates on it, so fixtures
+// that exist to prove some other point still need one real applied style.
+const appliedStyle = (id: string) => ({
+  id,
+  styleId: `S:${id}`,
+  name: "Fade",
+})
+
 function floatKeyframe(
   id: string,
   position: number,
@@ -136,7 +144,7 @@ describe("get_motion", () => {
 
   test("treats mixin fields on the prototype chain as supported", async () => {
     const proto = {
-      animationStyles: [],
+      animationStyles: [appliedStyle("a-proto")],
       animations: {},
       manualKeyframeTracks: {},
       timelines: [{ id: "tl-proto", duration: 0.4 }],
@@ -168,6 +176,7 @@ describe("get_motion", () => {
 
   test("marks nodes missing any of the four read properties as UNSUPPORTED_NODE", async () => {
     const supported = motionNode("6:1", {
+      animationStyles: [appliedStyle("a-ok")],
       timelines: [{ id: "tl-ok", duration: 0.4 }],
     })
     const missingAnimations = {
@@ -196,7 +205,7 @@ describe("get_motion", () => {
         status: "success",
         value: {
           nodeId: "6:1",
-          animationStyles: [],
+          animationStyles: [{ id: "a-ok", styleId: "S:a-ok", name: "Fade" }],
           animations: [],
           manualKeyframeTracks: [],
           timelines: [{ id: "tl-ok", duration: 0.4 }],
@@ -579,10 +588,16 @@ describe("get_motion", () => {
 
   test("loads an explicit page without changing the current page", async () => {
     const requested = page("0:1", "Requested", [
-      motionNode("6:1", { timelines: [{ id: "tl-1", duration: 1 }] }),
+      motionNode("6:1", {
+        animationStyles: [appliedStyle("a-1")],
+        timelines: [{ id: "tl-1", duration: 1 }],
+      }),
     ])
     const current = page("0:2", "Current", [
-      motionNode("6:9", { timelines: [{ id: "tl-current", duration: 2 }] }),
+      motionNode("6:9", {
+        animationStyles: [appliedStyle("a-9")],
+        timelines: [{ id: "tl-current", duration: 2 }],
+      }),
     ])
     const { currentPage, loadedPages } = installFigma({
       currentPage: current,
@@ -602,14 +617,45 @@ describe("get_motion", () => {
     expect(ids).not.toContain("6:9")
   })
 
+  test("a timeline with no animation is not content, and is still counted", async () => {
+    // The measured page returned 563 nodes each carrying one timeline of an
+    // identical duration and zero animations, for 237,212 bytes. A duration
+    // with nothing keyed to it describes no motion, so those nodes are dropped
+    // and accounted for in visitedNodes instead.
+    const animated = motionNode("6:1", {
+      animationStyles: [appliedStyle("a-1")],
+      timelines: [{ id: "tl-shared", duration: 0.4 }],
+    })
+    const ambient = motionNode("6:2", {
+      timelines: [{ id: "tl-shared", duration: 0.4 }],
+    })
+    installFigma({
+      currentPage: page("0:2", "Current", [animated, ambient]),
+    })
+
+    const result = await getMotion({})
+    const ids = result.items.flatMap((item) =>
+      item.status === "success" ? [item.value.nodeId] : [],
+    )
+    expect(ids).toEqual(["6:1"])
+    // The page node reports no motion fields at all, so it is an error item.
+    expect(result.items.filter((item) => item.status === "error")).toHaveLength(
+      1,
+    )
+    expect(result.visitedNodes).toBe(3)
+    expect(result.truncated).toBe(false)
+  })
+
   test("keeps nodes already indexed when the visit ceiling is hit", async () => {
     const first = motionNode("6:1", {
+      animationStyles: [appliedStyle("a-1")],
       timelines: [{ id: "tl-1", duration: 0.4 }],
     })
     const extras = Array.from({ length: 4 }, (_, index) =>
       motionNode(`1:${index + 1}`),
     )
     const later = motionNode("6:2", {
+      animationStyles: [appliedStyle("a-2")],
       timelines: [{ id: "tl-2", duration: 0.8 }],
     })
     installFigma({

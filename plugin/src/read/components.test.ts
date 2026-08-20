@@ -545,6 +545,33 @@ describe("get_components", () => {
     })
   })
 
+  test("components referenced by in-scope instances are resolved from outside the scope", async () => {
+    // The instance is inside the selector; its main component lives on
+    // another page (or library) that the subtree walk cannot see. Today
+    // `components` comes back empty and the componentId cannot be joined.
+    const component = standaloneComponent("1:1", "Button")
+    const target = instance({
+      id: "2:2",
+      name: "Button instance",
+      main: component,
+    })
+    const { lookedUp } = installFigma({
+      currentPage: page("0:2", "Current"),
+      nodes: new Map<string, unknown>([
+        ["2:2", target],
+        ["1:1", component],
+      ]),
+    })
+
+    const result = await getComponents({ selector: { nodeId: "2:2" } })
+
+    expect(result.instances).toEqual([
+      { instanceId: "2:2", componentId: "1:1" },
+    ])
+    expect(result.components.map((item) => item.id)).toEqual(["1:1"])
+    expect(lookedUp).toContain("1:1")
+  })
+
   test("checks cancellation between child batches of 100", async () => {
     const cancellation = new LocalCancellationController()
     const children = Array.from({ length: 101 }, (_, index) =>

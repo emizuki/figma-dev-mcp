@@ -4,6 +4,7 @@ import type {
   ControllerOutboundMessage,
   ErrorCode,
 } from "../shared/protocol"
+import type { ScreenshotAsset } from "../shared/results"
 import { parseControllerOutboundMessage } from "../shared/validation"
 import { encodeValidatedRaster, type RasterFormat } from "./raster"
 import { validateSvgSource } from "./svg"
@@ -17,11 +18,9 @@ type ControllerMessage =
       asset: unknown
     }
 
-const ERROR_MESSAGES: Record<
-  "UNSAFE_SVG" | "LIMIT_EXCEEDED" | "INTERNAL_ERROR",
-  string
-> = {
-  UNSAFE_SVG: "The SVG was rejected by the safety policy.",
+// SVG safety no longer produces an error of any kind, so `UNSAFE_SVG` is not
+// reachable from here.
+const ERROR_MESSAGES: Record<"LIMIT_EXCEEDED" | "INTERNAL_ERROR", string> = {
   LIMIT_EXCEEDED: "The operation exceeded a safety limit.",
   INTERNAL_ERROR: "The operation failed.",
 }
@@ -46,13 +45,17 @@ function asBytes(value: unknown): Uint8Array | null {
   return bytes
 }
 
-function itemError(code: "UNSAFE_SVG" | "LIMIT_EXCEEDED" | "INTERNAL_ERROR"): {
+function itemError(code: "LIMIT_EXCEEDED" | "INTERNAL_ERROR"): {
   status: "error"
   error: { code: ErrorCode; message: string; retryable: false }
 } {
   return {
     status: "error",
-    error: { code, message: ERROR_MESSAGES[code], retryable: false },
+    error: {
+      code,
+      message: ERROR_MESSAGES[code],
+      retryable: false as const,
+    },
   }
 }
 
@@ -61,11 +64,17 @@ function finalizeScreenshotItem(item: Record<string, unknown>): unknown {
   if (item.format === "svg") {
     if (typeof item.source !== "string") return itemError("INTERNAL_ERROR")
     const result = validateSvgSource(item.source, new DOMParser())
+    // A verdict is carried on the asset, not converted into an error: the
+    // source is returned either way and the caller decides.
     if (!result.ok) return itemError(result.code)
-    return {
-      status: "success",
-      value: { format: "svg", nodeId, source: result.source },
+    const value: Extract<ScreenshotAsset, { format: "svg" }> = {
+      format: "svg",
+      nodeId,
+      source: result.source,
+      safe: result.safe,
     }
+    if (result.rejection !== undefined) value.rejection = result.rejection
+    return { status: "success", value }
   }
   if (item.format !== "png" && item.format !== "jpeg") {
     return itemError("INTERNAL_ERROR")

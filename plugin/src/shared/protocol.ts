@@ -175,6 +175,9 @@ export type ReadResult =
   | { operation: "get_motion"; result: GetMotionResult }
   | { operation: "get_screenshot"; result: GetScreenshotResult }
 
+/** `UNSAFE_SVG` is reserved and no longer emitted: SVG safety reports a verdict
+ * on the asset rather than failing the item. The member stays because removing
+ * a member of a closed enum is itself a wire change. */
 export const ERROR_CODES: readonly [
   "NO_FIGMA_CONNECTION",
   "AMBIGUOUS_CONNECTION",
@@ -184,6 +187,7 @@ export const ERROR_CODES: readonly [
   "NODE_NOT_FOUND",
   "PAGE_NOT_FOUND",
   "UNSUPPORTED_NODE",
+  "EMPTY_NODE_BOUNDS",
   "CAPABILITY_UNAVAILABLE",
   "UNSAFE_SVG",
   "INVALID_CURSOR",
@@ -200,6 +204,7 @@ export const ERROR_CODES: readonly [
   "NODE_NOT_FOUND",
   "PAGE_NOT_FOUND",
   "UNSUPPORTED_NODE",
+  "EMPTY_NODE_BOUNDS",
   "CAPABILITY_UNAVAILABLE",
   "UNSAFE_SVG",
   "INVALID_CURSOR",

@@ -189,7 +189,9 @@ describe("get_dev_mode_data", () => {
   })
 
   test("omits unsupported fields and keeps empty capability-backed lists", async () => {
-    const bare = frame("4:2")
+    // One annotation and nothing else: the node is emitted, so the three lists
+    // it cannot fill stay present and empty rather than being dropped.
+    const bare = frame("4:2", { annotations: [{ label: "Note" }] })
     installFigma({
       currentPage: page("0:2", "Current", [bare]),
       forbidCategories: true,
@@ -201,7 +203,7 @@ describe("get_dev_mode_data", () => {
         status: "success",
         value: {
           nodeId: "4:2",
-          annotations: [],
+          annotations: [{ id: "4:2:annotation:0", text: "Note" }],
           annotationCategories: [],
           documentation: [],
           devResources: [],
@@ -329,6 +331,50 @@ describe("get_dev_mode_data", () => {
     })
   })
 
+  test("nodes with nothing to report are not emitted, and are still counted", async () => {
+    // On one measured page this returned 563 items and 175,226 bytes of which
+    // exactly one carried anything.
+    const documented = frame("4:1", {
+      annotations: [{ label: "Ship behind a flag" }],
+    })
+    const silent = frame("4:2")
+    installFigma({
+      currentPage: page("0:2", "Current", [documented, silent]),
+    })
+
+    const result = await getDevModeData({})
+    expect(result.items).toHaveLength(1)
+    expect(result.items[0]).toMatchObject({
+      status: "success",
+      value: { nodeId: "4:1" },
+    })
+    // Page plus two frames: nothing was skipped, two had nothing to say.
+    expect(result.visitedNodes).toBe(3)
+    expect(result.truncated).toBe(false)
+  })
+
+  test("treats a default empty description as nothing to report", async () => {
+    // The Figma Plugin API gives every ComponentNode, ComponentSetNode and
+    // style node a default empty-string description. Testing the field for
+    // presence rather than length would re-emit an empty record for every
+    // component in the file, which is most real files.
+    const blank = frame("4:2", { description: "", descriptionMarkdown: "" })
+    const described = frame("4:1", {
+      description: "Primary card",
+      descriptionMarkdown: "**Primary** card",
+    })
+    installFigma({ currentPage: page("0:2", "Current", [described, blank]) })
+
+    const result = await getDevModeData({})
+    const ids = result.items.flatMap((item) =>
+      item.status === "success" ? [item.value.nodeId] : [],
+    )
+    expect(ids).toEqual(["4:1"])
+    expect(JSON.stringify(result)).not.toContain('"description":""')
+    // Page, described node, blank node: the blank one was looked at.
+    expect(result.visitedNodes).toBe(3)
+  })
+
   test("keeps nodes already indexed when the visit ceiling is hit", async () => {
     const first = frame("4:1", { description: "Keep" })
     const extras = Array.from({ length: 4 }, (_, index) =>
@@ -348,9 +394,11 @@ describe("get_dev_mode_data", () => {
     const ids = result.items.flatMap((item) =>
       item.status === "success" ? [item.value.nodeId] : [],
     )
-    expect(ids).toContain("0:2")
+    // The page itself carries no dev-mode data, so it is counted, not emitted.
+    expect(ids).not.toContain("0:2")
     expect(ids).toContain("4:1")
     expect(ids).not.toContain("4:2")
+    expect(result.visitedNodes).toBe(2)
     expect(result.truncated).toBe(true)
     expect(result.truncation).toEqual({
       reason: "nodeLimit",

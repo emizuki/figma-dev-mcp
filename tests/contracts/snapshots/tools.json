@@ -2748,24 +2748,37 @@
           "x-maxUtf8Bytes": 1024
         },
         "ErrorCode": {
-          "enum": [
-            "NO_FIGMA_CONNECTION",
-            "AMBIGUOUS_CONNECTION",
-            "CONNECTION_NOT_FOUND",
-            "CONNECTION_LOST",
-            "PROTOCOL_MISMATCH",
-            "NODE_NOT_FOUND",
-            "PAGE_NOT_FOUND",
-            "UNSUPPORTED_NODE",
-            "CAPABILITY_UNAVAILABLE",
-            "UNSAFE_SVG",
-            "INVALID_CURSOR",
-            "LIMIT_EXCEEDED",
-            "TIMEOUT",
-            "CANCELLED",
-            "INTERNAL_ERROR"
-          ],
-          "type": "string"
+          "oneOf": [
+            {
+              "enum": [
+                "NO_FIGMA_CONNECTION",
+                "AMBIGUOUS_CONNECTION",
+                "CONNECTION_NOT_FOUND",
+                "CONNECTION_LOST",
+                "PROTOCOL_MISMATCH",
+                "NODE_NOT_FOUND",
+                "PAGE_NOT_FOUND",
+                "UNSUPPORTED_NODE",
+                "CAPABILITY_UNAVAILABLE",
+                "INVALID_CURSOR",
+                "LIMIT_EXCEEDED",
+                "TIMEOUT",
+                "CANCELLED",
+                "INTERNAL_ERROR"
+              ],
+              "type": "string"
+            },
+            {
+              "const": "EMPTY_NODE_BOUNDS",
+              "description": "The node puts no ink on the page, so there is no picture to return in\nany format. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Judged on the host's own render bounds,\nmeasured after strokes and effects, so a zero-height rule or divider\nstill renders and still succeeds. A node that is switched off, or whose\nbounds the host will not report, is left to the exporter.",
+              "type": "string"
+            },
+            {
+              "const": "UNSAFE_SVG",
+              "description": "Reserved and no longer emitted: SVG safety reports a verdict on the\nasset instead of failing the item. The member stays because removing a\nmember of a closed enum is itself a wire change.",
+              "type": "string"
+            }
+          ]
         },
         "ItemError": {
           "additionalProperties": false,
@@ -3000,10 +3013,17 @@
               "type": "null"
             }
           ]
+        },
+        "visitedNodes": {
+          "description": "Nodes inspected, including those that reported nothing and are\ntherefore absent from `items`. Without this a caller cannot tell\n\"scanned and found nothing\" from \"never reached\". Inspection stops at\nthe node that trips emit truncation, so this can be fewer than the\nnodes the walk reached when `truncated` is true.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
         }
       },
       "required": [
         "items",
+        "visitedNodes",
         "truncated",
         "observation"
       ],
@@ -4059,24 +4079,37 @@
           "x-maxUtf8Bytes": 1024
         },
         "ErrorCode": {
-          "enum": [
-            "NO_FIGMA_CONNECTION",
-            "AMBIGUOUS_CONNECTION",
-            "CONNECTION_NOT_FOUND",
-            "CONNECTION_LOST",
-            "PROTOCOL_MISMATCH",
-            "NODE_NOT_FOUND",
-            "PAGE_NOT_FOUND",
-            "UNSUPPORTED_NODE",
-            "CAPABILITY_UNAVAILABLE",
-            "UNSAFE_SVG",
-            "INVALID_CURSOR",
-            "LIMIT_EXCEEDED",
-            "TIMEOUT",
-            "CANCELLED",
-            "INTERNAL_ERROR"
-          ],
-          "type": "string"
+          "oneOf": [
+            {
+              "enum": [
+                "NO_FIGMA_CONNECTION",
+                "AMBIGUOUS_CONNECTION",
+                "CONNECTION_NOT_FOUND",
+                "CONNECTION_LOST",
+                "PROTOCOL_MISMATCH",
+                "NODE_NOT_FOUND",
+                "PAGE_NOT_FOUND",
+                "UNSUPPORTED_NODE",
+                "CAPABILITY_UNAVAILABLE",
+                "INVALID_CURSOR",
+                "LIMIT_EXCEEDED",
+                "TIMEOUT",
+                "CANCELLED",
+                "INTERNAL_ERROR"
+              ],
+              "type": "string"
+            },
+            {
+              "const": "EMPTY_NODE_BOUNDS",
+              "description": "The node puts no ink on the page, so there is no picture to return in\nany format. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Judged on the host's own render bounds,\nmeasured after strokes and effects, so a zero-height rule or divider\nstill renders and still succeeds. A node that is switched off, or whose\nbounds the host will not report, is left to the exporter.",
+              "type": "string"
+            },
+            {
+              "const": "UNSAFE_SVG",
+              "description": "Reserved and no longer emitted: SVG safety reports a verdict on the\nasset instead of failing the item. The member stays because removing a\nmember of a closed enum is itself a wire change.",
+              "type": "string"
+            }
+          ]
         },
         "IndexedCollection": {
           "enum": [
@@ -4820,10 +4853,17 @@
               "type": "null"
             }
           ]
+        },
+        "visitedNodes": {
+          "description": "Nodes inspected, including those that reported nothing and are\ntherefore absent from `items`. Without this a caller cannot tell\n\"scanned and found nothing\" from \"never reached\". Inspection stops at\nthe node that trips emit truncation, so this can be fewer than the\nnodes the walk reached when `truncated` is true.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
         }
       },
       "required": [
         "items",
+        "visitedNodes",
         "truncated",
         "observation"
       ],
@@ -5458,24 +5498,37 @@
           ]
         },
         "ErrorCode": {
-          "enum": [
-            "NO_FIGMA_CONNECTION",
-            "AMBIGUOUS_CONNECTION",
-            "CONNECTION_NOT_FOUND",
-            "CONNECTION_LOST",
-            "PROTOCOL_MISMATCH",
-            "NODE_NOT_FOUND",
-            "PAGE_NOT_FOUND",
-            "UNSUPPORTED_NODE",
-            "CAPABILITY_UNAVAILABLE",
-            "UNSAFE_SVG",
-            "INVALID_CURSOR",
-            "LIMIT_EXCEEDED",
-            "TIMEOUT",
-            "CANCELLED",
-            "INTERNAL_ERROR"
-          ],
-          "type": "string"
+          "oneOf": [
+            {
+              "enum": [
+                "NO_FIGMA_CONNECTION",
+                "AMBIGUOUS_CONNECTION",
+                "CONNECTION_NOT_FOUND",
+                "CONNECTION_LOST",
+                "PROTOCOL_MISMATCH",
+                "NODE_NOT_FOUND",
+                "PAGE_NOT_FOUND",
+                "UNSUPPORTED_NODE",
+                "CAPABILITY_UNAVAILABLE",
+                "INVALID_CURSOR",
+                "LIMIT_EXCEEDED",
+                "TIMEOUT",
+                "CANCELLED",
+                "INTERNAL_ERROR"
+              ],
+              "type": "string"
+            },
+            {
+              "const": "EMPTY_NODE_BOUNDS",
+              "description": "The node puts no ink on the page, so there is no picture to return in\nany format. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Judged on the host's own render bounds,\nmeasured after strokes and effects, so a zero-height rule or divider\nstill renders and still succeeds. A node that is switched off, or whose\nbounds the host will not report, is left to the exporter.",
+              "type": "string"
+            },
+            {
+              "const": "UNSAFE_SVG",
+              "description": "Reserved and no longer emitted: SVG safety reports a verdict on the\nasset instead of failing the item. The member stays because removing a\nmember of a closed enum is itself a wire change.",
+              "type": "string"
+            }
+          ]
         },
         "FullNodeData": {
           "additionalProperties": false,
@@ -7094,24 +7147,37 @@
           "x-maxUtf8Bytes": 1024
         },
         "ErrorCode": {
-          "enum": [
-            "NO_FIGMA_CONNECTION",
-            "AMBIGUOUS_CONNECTION",
-            "CONNECTION_NOT_FOUND",
-            "CONNECTION_LOST",
-            "PROTOCOL_MISMATCH",
-            "NODE_NOT_FOUND",
-            "PAGE_NOT_FOUND",
-            "UNSUPPORTED_NODE",
-            "CAPABILITY_UNAVAILABLE",
-            "UNSAFE_SVG",
-            "INVALID_CURSOR",
-            "LIMIT_EXCEEDED",
-            "TIMEOUT",
-            "CANCELLED",
-            "INTERNAL_ERROR"
-          ],
-          "type": "string"
+          "oneOf": [
+            {
+              "enum": [
+                "NO_FIGMA_CONNECTION",
+                "AMBIGUOUS_CONNECTION",
+                "CONNECTION_NOT_FOUND",
+                "CONNECTION_LOST",
+                "PROTOCOL_MISMATCH",
+                "NODE_NOT_FOUND",
+                "PAGE_NOT_FOUND",
+                "UNSUPPORTED_NODE",
+                "CAPABILITY_UNAVAILABLE",
+                "INVALID_CURSOR",
+                "LIMIT_EXCEEDED",
+                "TIMEOUT",
+                "CANCELLED",
+                "INTERNAL_ERROR"
+              ],
+              "type": "string"
+            },
+            {
+              "const": "EMPTY_NODE_BOUNDS",
+              "description": "The node puts no ink on the page, so there is no picture to return in\nany format. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Judged on the host's own render bounds,\nmeasured after strokes and effects, so a zero-height rule or divider\nstill renders and still succeeds. A node that is switched off, or whose\nbounds the host will not report, is left to the exporter.",
+              "type": "string"
+            },
+            {
+              "const": "UNSAFE_SVG",
+              "description": "Reserved and no longer emitted: SVG safety reports a verdict on the\nasset instead of failing the item. The member stays because removing a\nmember of a closed enum is itself a wire change.",
+              "type": "string"
+            }
+          ]
         },
         "ItemError": {
           "additionalProperties": false,
@@ -7822,10 +7888,17 @@
               "type": "null"
             }
           ]
+        },
+        "visitedNodes": {
+          "description": "Nodes inspected, including those that reported nothing and are\ntherefore absent from `items`. Without this a caller cannot tell\n\"scanned and found nothing\" from \"never reached\". Inspection stops at\nthe node that trips emit truncation, so this can be fewer than the\nnodes the walk reached when `truncated` is true.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
         }
       },
       "required": [
         "items",
+        "visitedNodes",
         "truncated",
         "observation"
       ],
@@ -7838,7 +7911,7 @@
       "openWorldHint": false,
       "readOnlyHint": true
     },
-    "description": "Render bounded nodes or the captured selection as raster or safe SVG assets. A connectionId is ephemeral and expires when its plugin socket reconnects.",
+    "description": "Render bounded nodes or the captured selection as raster or SVG assets. SVG source is always returned, with a `safe` verdict and, when unsafe, a `rejection` naming the rule that fired; safety never withholds the source. The verdict lives only in structured content: the `image/svg+xml` content block is emitted for every SVG asset, safe or not, so a client that previews that block renders an unsafe SVG unlabelled. Treat an unsafe verdict as a caller decision: writing such source to disk can execute a `<script>` element if a browser later opens it. A node the host reports as putting no ink on the page fails with `EMPTY_NODE_BOUNDS` in every format rather than returning an empty asset. A connectionId is ephemeral and expires when its plugin socket reconnects.",
     "inputSchema": {
       "$defs": {
         "ConnectionId": {
@@ -8061,24 +8134,37 @@
           "x-maxUtf8Bytes": 1024
         },
         "ErrorCode": {
-          "enum": [
-            "NO_FIGMA_CONNECTION",
-            "AMBIGUOUS_CONNECTION",
-            "CONNECTION_NOT_FOUND",
-            "CONNECTION_LOST",
-            "PROTOCOL_MISMATCH",
-            "NODE_NOT_FOUND",
-            "PAGE_NOT_FOUND",
-            "UNSUPPORTED_NODE",
-            "CAPABILITY_UNAVAILABLE",
-            "UNSAFE_SVG",
-            "INVALID_CURSOR",
-            "LIMIT_EXCEEDED",
-            "TIMEOUT",
-            "CANCELLED",
-            "INTERNAL_ERROR"
-          ],
-          "type": "string"
+          "oneOf": [
+            {
+              "enum": [
+                "NO_FIGMA_CONNECTION",
+                "AMBIGUOUS_CONNECTION",
+                "CONNECTION_NOT_FOUND",
+                "CONNECTION_LOST",
+                "PROTOCOL_MISMATCH",
+                "NODE_NOT_FOUND",
+                "PAGE_NOT_FOUND",
+                "UNSUPPORTED_NODE",
+                "CAPABILITY_UNAVAILABLE",
+                "INVALID_CURSOR",
+                "LIMIT_EXCEEDED",
+                "TIMEOUT",
+                "CANCELLED",
+                "INTERNAL_ERROR"
+              ],
+              "type": "string"
+            },
+            {
+              "const": "EMPTY_NODE_BOUNDS",
+              "description": "The node puts no ink on the page, so there is no picture to return in\nany format. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Judged on the host's own render bounds,\nmeasured after strokes and effects, so a zero-height rule or divider\nstill renders and still succeeds. A node that is switched off, or whose\nbounds the host will not report, is left to the exporter.",
+              "type": "string"
+            },
+            {
+              "const": "UNSAFE_SVG",
+              "description": "Reserved and no longer emitted: SVG safety reports a verdict on the\nasset instead of failing the item. The member stays because removing a\nmember of a closed enum is itself a wire change.",
+              "type": "string"
+            }
+          ]
         },
         "ItemError": {
           "additionalProperties": false,
@@ -8283,6 +8369,7 @@
             },
             {
               "additionalProperties": false,
+              "description": "The source is always returned. `safe` states the safety verdict rather\nthan withholding the source, and `rejection` names the rule that fired,\npresent exactly when `safe` is false.",
               "properties": {
                 "format": {
                   "const": "svg",
@@ -8291,6 +8378,19 @@
                 "nodeId": {
                   "$ref": "#/$defs/NodeId"
                 },
+                "rejection": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/SvgRejection"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "safe": {
+                  "type": "boolean"
+                },
                 "source": {
                   "$ref": "#/$defs/SvgSource"
                 }
@@ -8298,11 +8398,53 @@
               "required": [
                 "format",
                 "nodeId",
-                "source"
+                "source",
+                "safe"
               ],
               "type": "object"
             }
           ]
+        },
+        "SvgRejection": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "$ref": "#/$defs/SvgRejectionKind"
+            },
+            "name": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SvgRejectionName"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Local name of the offending element or attribute, where the rule has one."
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        "SvgRejectionKind": {
+          "description": "Which safety rule judged an SVG export unsafe.",
+          "enum": [
+            "parserError",
+            "unsafeElement",
+            "unsafeAttribute",
+            "unsafeCss",
+            "unsafeProcessingInstruction"
+          ],
+          "type": "string"
+        },
+        "SvgRejectionName": {
+          "description": "SVG element or attribute local name; bounded by UTF-8 encoded byte length",
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string",
+          "x-maxUtf8Bytes": 256
         },
         "SvgSource": {
           "description": "SVG source; bounded by UTF-8 encoded byte length",
@@ -10247,7 +10389,7 @@
       "openWorldHint": false,
       "readOnlyHint": true
     },
-    "description": "Return local styles and styles referenced by a bounded scope. A connectionId is ephemeral and expires when its plugin socket reconnects.",
+    "description": "Return styles referenced by a bounded scope, and the document's local styles. `selector` constrains only the `referenced` half; the `local` half is document-wide and ignores it. The default `both` therefore mixes a document-wide list with a scoped one. A connectionId is ephemeral and expires when its plugin socket reconnects.",
     "inputSchema": {
       "$defs": {
         "ConnectionId": {
@@ -11481,24 +11623,37 @@
           "x-maxUtf8Bytes": 1024
         },
         "ErrorCode": {
-          "enum": [
-            "NO_FIGMA_CONNECTION",
-            "AMBIGUOUS_CONNECTION",
-            "CONNECTION_NOT_FOUND",
-            "CONNECTION_LOST",
-            "PROTOCOL_MISMATCH",
-            "NODE_NOT_FOUND",
-            "PAGE_NOT_FOUND",
-            "UNSUPPORTED_NODE",
-            "CAPABILITY_UNAVAILABLE",
-            "UNSAFE_SVG",
-            "INVALID_CURSOR",
-            "LIMIT_EXCEEDED",
-            "TIMEOUT",
-            "CANCELLED",
-            "INTERNAL_ERROR"
-          ],
-          "type": "string"
+          "oneOf": [
+            {
+              "enum": [
+                "NO_FIGMA_CONNECTION",
+                "AMBIGUOUS_CONNECTION",
+                "CONNECTION_NOT_FOUND",
+                "CONNECTION_LOST",
+                "PROTOCOL_MISMATCH",
+                "NODE_NOT_FOUND",
+                "PAGE_NOT_FOUND",
+                "UNSUPPORTED_NODE",
+                "CAPABILITY_UNAVAILABLE",
+                "INVALID_CURSOR",
+                "LIMIT_EXCEEDED",
+                "TIMEOUT",
+                "CANCELLED",
+                "INTERNAL_ERROR"
+              ],
+              "type": "string"
+            },
+            {
+              "const": "EMPTY_NODE_BOUNDS",
+              "description": "The node puts no ink on the page, so there is no picture to return in\nany format. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Judged on the host's own render bounds,\nmeasured after strokes and effects, so a zero-height rule or divider\nstill renders and still succeeds. A node that is switched off, or whose\nbounds the host will not report, is left to the exporter.",
+              "type": "string"
+            },
+            {
+              "const": "UNSAFE_SVG",
+              "description": "Reserved and no longer emitted: SVG safety reports a verdict on the\nasset instead of failing the item. The member stays because removing a\nmember of a closed enum is itself a wire change.",
+              "type": "string"
+            }
+          ]
         },
         "ObservationWindow": {
           "additionalProperties": false,

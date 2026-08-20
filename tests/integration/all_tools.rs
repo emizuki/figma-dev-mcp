@@ -284,6 +284,7 @@ fn fixture_result(operation: &str, input: &Value) -> Value {
                     "inheritedFromNodeId": "2:1"
                 }
             }],
+            "visitedNodes": 1,
             "truncated": false,
             "observation": observation()
         }),
@@ -299,6 +300,7 @@ fn fixture_result(operation: &str, input: &Value) -> Value {
                     }]
                 }
             }],
+            "visitedNodes": 1,
             "truncated": false,
             "observation": observation()
         }),
@@ -339,6 +341,7 @@ fn fixture_result(operation: &str, input: &Value) -> Value {
                     "timelines": [{"id": "tl-1", "duration": 0.4}]
                 }
             }],
+            "visitedNodes": 1,
             "truncated": false,
             "observation": observation()
         }),
@@ -350,7 +353,8 @@ fn fixture_result(operation: &str, input: &Value) -> Value {
                         "value": {
                             "format": "svg",
                             "nodeId": "9:1",
-                            "source": SAFE_SVG
+                            "source": SAFE_SVG,
+                            "safe": true
                         }
                     }],
                     "truncated": false,
