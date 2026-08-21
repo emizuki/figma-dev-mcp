@@ -167,13 +167,31 @@ fn modern_meta() -> Value {
 }
 
 fn assert_tool_catalog(result: &Value) {
-    let names: Vec<&str> = result["tools"]
-        .as_array()
-        .expect("tools list")
+    let tools = result["tools"].as_array().expect("tools list");
+    let names: Vec<&str> = tools
         .iter()
         .map(|tool| tool["name"].as_str().expect("tool name"))
         .collect();
     assert_eq!(names, TOOL_NAMES);
+    assert_no_top_level_combinators(tools);
+}
+
+/// The Anthropic API rejects a tool whose input schema puts `oneOf`, `anyOf`,
+/// or `allOf` at the root, and Claude Code drops such a tool from the catalog
+/// it offers the model. A schema that only reaches the wire is not enough; it
+/// has to reach the model.
+fn assert_no_top_level_combinators(tools: &[Value]) {
+    for tool in tools {
+        let name = tool["name"].as_str().expect("tool name");
+        let schema = tool["inputSchema"].as_object().expect("input schema");
+        for keyword in ["oneOf", "anyOf", "allOf"] {
+            assert!(
+                !schema.contains_key(keyword),
+                "{name} puts {keyword} at the root of its input schema, \
+                 so clients drop the tool before the model ever sees it"
+            );
+        }
+    }
 }
 
 fn assert_resource_catalog(result: &Value) {

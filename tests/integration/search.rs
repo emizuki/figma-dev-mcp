@@ -137,13 +137,29 @@ fn search_nodes_schema_exposes_flat_query_filters_limit_and_cursor() {
         json!({"scope":{"pageIds":["0:1"]},"query": "Card"}),
         json!({"scope":{"pageIds":["0:1","0:2"]},"query": "Card"}),
         json!({"scope":{"document":true},"query": "Card"}),
-        json!({"scope":{"pageId":"0:1"}}),
     ] {
         assert!(
             !validator.is_valid(&invalid),
             "schema accepted invalid search input {invalid}"
         );
     }
+}
+
+#[test]
+fn search_nodes_rejects_a_call_with_neither_query_nor_types() {
+    // The schema no longer states this as a root `anyOf`: the Anthropic API
+    // rejects a top-level combinator and Claude Code then drops the tool from
+    // the model's catalog entirely. The rule moved to the deserializer, which
+    // is the only place that still enforces it, so it is pinned here.
+    let bare = json!({"scope": {"pageId": "0:1"}});
+    assert!(
+        search_schema().is_valid(&bare),
+        "the published schema deliberately no longer carries this rule"
+    );
+    assert!(
+        serde_json::from_value::<SearchNodesInput>(bare).is_err(),
+        "a search with neither query nor types must still be rejected"
+    );
 }
 
 #[test]

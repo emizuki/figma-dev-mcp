@@ -1135,120 +1135,55 @@
       }
     },
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "oneOf": [
-      {
-        "additionalProperties": false,
-        "properties": {
-          "connectionId": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/ConnectionId"
-              },
-              {
-                "type": "null"
-              }
-            ]
+    "additionalProperties": false,
+    "properties": {
+      "connectionId": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ConnectionId"
           },
-          "format": {
-            "const": "png",
-            "type": "string"
-          },
-          "scale": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/RasterScale"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "selector": {
-            "$ref": "#/$defs/ScreenshotSelector"
+          {
+            "type": "null"
           }
-        },
-        "required": [
-          "format",
-          "selector"
-        ],
-        "type": "object"
+        ]
       },
-      {
-        "additionalProperties": false,
-        "properties": {
-          "connectionId": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/ConnectionId"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "format": {
-            "const": "jpeg",
-            "type": "string"
-          },
-          "scale": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/RasterScale"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "selector": {
-            "$ref": "#/$defs/ScreenshotSelector"
-          }
-        },
-        "required": [
-          "format",
-          "selector"
+      "format": {
+        "enum": [
+          "png",
+          "jpeg",
+          "svg"
         ],
-        "type": "object"
+        "type": "string"
       },
-      {
-        "additionalProperties": false,
-        "properties": {
-          "connectionId": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/ConnectionId"
-              },
-              {
-                "type": "null"
-              }
-            ]
+      "scale": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/RasterScale"
           },
-          "format": {
-            "const": "svg",
-            "type": "string"
-          },
-          "selector": {
-            "$ref": "#/$defs/ScreenshotSelector"
-          },
-          "svgIdAttribute": {
-            "default": false,
-            "type": "boolean"
-          },
-          "svgOutlineText": {
-            "default": true,
-            "type": "boolean"
-          },
-          "svgSimplifyStroke": {
-            "default": true,
-            "type": "boolean"
+          {
+            "type": "null"
           }
-        },
-        "required": [
-          "format",
-          "selector"
-        ],
-        "type": "object"
+        ]
+      },
+      "selector": {
+        "$ref": "#/$defs/ScreenshotSelector"
+      },
+      "svgIdAttribute": {
+        "default": false,
+        "type": "boolean"
+      },
+      "svgOutlineText": {
+        "default": true,
+        "type": "boolean"
+      },
+      "svgSimplifyStroke": {
+        "default": true,
+        "type": "boolean"
       }
+    },
+    "required": [
+      "format",
+      "selector"
     ],
     "type": "object"
   },
@@ -1728,18 +1663,6 @@
     },
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,
-    "anyOf": [
-      {
-        "required": [
-          "query"
-        ]
-      },
-      {
-        "required": [
-          "types"
-        ]
-      }
-    ],
     "properties": {
       "connectionId": {
         "anyOf": [
