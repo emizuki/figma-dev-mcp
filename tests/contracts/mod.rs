@@ -2,6 +2,7 @@
 
 mod allocation;
 mod prompts_catalog;
+mod resources_catalog;
 mod response_accounting;
 mod structured_outputs;
 mod tools_catalog;

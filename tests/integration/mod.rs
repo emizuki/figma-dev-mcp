@@ -36,5 +36,7 @@ mod screenshot;
 mod search;
 #[path = "session_registry.rs"]
 mod session_registry;
+#[path = "strategy_resources.rs"]
+mod strategy_resources;
 #[path = "ws_origin.rs"]
 mod ws_origin;

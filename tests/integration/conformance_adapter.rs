@@ -10,11 +10,13 @@
 use std::{fs, path::PathBuf};
 
 use figma_dev_mcp_broker::{Broker, BrokerConfig, Limits};
+use figma_dev_mcp_prompts::resource_uri;
 use figma_dev_mcp_protocol::{PROMPT_NAMES, TOOL_NAMES};
 use figma_dev_mcp_tools::{McpService, tools_catalog};
 use rmcp::ServiceExt;
 use rmcp::model::{
-    ClientCapabilities, GetPromptRequestParams, Implementation, ProtocolVersion, RequestMetaObject,
+    ClientCapabilities, GetPromptRequestParams, Implementation, ProtocolVersion,
+    ReadResourceRequestParams, RequestMetaObject,
 };
 
 fn workspace_root() -> PathBuf {
@@ -112,7 +114,7 @@ fn conformance_scripts_pin_the_two_lifecycle_scenarios_not_the_full_suite() {
 }
 
 #[tokio::test]
-async fn adapter_catalog_is_the_production_tools_and_prompts_surface() {
+async fn adapter_catalog_is_the_production_tools_prompts_and_resources_surface() {
     let broker = Broker::new(BrokerConfig::for_test(Limits::reduced_for_test()).unwrap());
     let (server_io, client_io) = tokio::io::duplex(64 * 1024);
     let server =
@@ -128,7 +130,7 @@ async fn adapter_catalog_is_the_production_tools_and_prompts_surface() {
         .unwrap();
     assert!(discovery.capabilities.tools.is_some());
     assert!(discovery.capabilities.prompts.is_some());
-    assert!(discovery.capabilities.resources.is_none());
+    assert!(discovery.capabilities.resources.is_some());
     assert!(discovery.capabilities.completions.is_none());
 
     let tools = client.list_tools(None).await.unwrap();
@@ -146,6 +148,27 @@ async fn adapter_catalog_is_the_production_tools_and_prompts_surface() {
     for name in PROMPT_NAMES {
         client
             .get_prompt(GetPromptRequestParams::new(name))
+            .await
+            .unwrap();
+    }
+
+    let resources = client.list_resources(None).await.unwrap();
+    let resource_uris: Vec<_> = resources
+        .resources
+        .iter()
+        .map(|resource| resource.uri.clone())
+        .collect();
+    assert_eq!(
+        resource_uris,
+        PROMPT_NAMES
+            .iter()
+            .map(|name| resource_uri(name))
+            .collect::<Vec<_>>(),
+        "the resource surface is exactly the three strategy playbooks"
+    );
+    for uri in resource_uris {
+        client
+            .read_resource(ReadResourceRequestParams::new(uri))
             .await
             .unwrap();
     }

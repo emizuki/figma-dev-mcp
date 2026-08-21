@@ -107,6 +107,14 @@ There are also three prompts, which suggest an efficient order to call the tools
 | `prototype_flow_strategy` | Tracing what happens when someone clicks through a prototype. |
 | `style_audit_strategy` | Finding raw values that should have been styles or variables. |
 
+Prompts are user-invoked: your client shows them as slash commands, and the model cannot reach one on its own. The same three bodies are therefore also served as resources, which a model can fetch itself. Same text, two ways in.
+
+| Resource | Serves |
+| --- | --- |
+| `figma://strategy/read_design_strategy` | The `read_design_strategy` body. |
+| `figma://strategy/prototype_flow_strategy` | The `prototype_flow_strategy` body. |
+| `figma://strategy/style_audit_strategy` | The `style_audit_strategy` body. |
+
 Details that will surprise you eventually, such as how SVG safety verdicts work and which fields are omitted at their Figma defaults, are in [docs/reference.md](docs/reference.md).
 
 ## Non-goals
