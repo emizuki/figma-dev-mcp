@@ -5,7 +5,7 @@ use super::common::{
 use figma_dev_mcp_protocol::domain;
 use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::borrow::Cow;
 
 protocol_schema_wrapper!(ListFilesInput, domain::ListFilesInput);
@@ -77,16 +77,15 @@ impl JsonSchema for SearchNodesInput {
         schema
             .ensure_object()
             .insert("type".to_owned(), "object".into());
-        apply_search_contract_schema(&mut schema, generator);
+        apply_search_contract_schema(generator);
         schema
     }
 }
 
-fn apply_search_contract_schema(schema: &mut Schema, generator: &mut SchemaGenerator) {
-    schema.ensure_object().insert(
-        "anyOf".to_owned(),
-        json!([{"required": ["query"]}, {"required": ["types"]}]),
-    );
+// "query or types" stays a deserializer rule rather than a root `anyOf`: the
+// Anthropic API rejects a top-level combinator, and Claude Code drops the whole
+// tool when it sees one. The requirement lives in the tool description instead.
+fn apply_search_contract_schema(generator: &mut SchemaGenerator) {
     let defs = generator.definitions_mut();
     if let Some(scope) = defs.get_mut("SearchScope").and_then(Value::as_object_mut)
         && let Some(variants) = scope.remove("anyOf")

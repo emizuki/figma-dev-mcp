@@ -5,6 +5,7 @@ use figma_dev_mcp_protocol::domain::{
 use figma_dev_mcp_protocol::limits::{MAX_RASTER_BASE64_BYTES, MAX_RASTER_DECODED_BYTES};
 use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value, json};
 use std::borrow::Cow;
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -24,10 +25,66 @@ impl JsonSchema for GetScreenshotInput {
 
     fn json_schema(generator: &mut SchemaGenerator) -> Schema {
         let mut schema = domain::GetScreenshotInput::json_schema(generator);
-        let object = schema.ensure_object();
-        object.insert("type".to_owned(), "object".into());
+        flatten_format_variants(&mut schema);
         schema
     }
+}
+
+/// The domain input is an enum tagged by `format`, so schemars renders it as a
+/// root `oneOf`. The Anthropic API rejects a top-level combinator and Claude
+/// Code drops the tool entirely, so the variants are merged into one object
+/// whose `format` is a plain string enum. This only widens what the schema
+/// advertises: `domain::GetScreenshotInput` still deserializes per format and
+/// rejects a field that belongs to a different one. The tool description
+/// carries the pairing the schema no longer states.
+fn flatten_format_variants(schema: &mut Schema) {
+    let object = schema.ensure_object();
+    let Some(Value::Array(variants)) = object.remove("oneOf") else {
+        return;
+    };
+    let mut properties = Map::new();
+    let mut formats = Vec::new();
+    let mut required: Option<Vec<Value>> = None;
+    for variant in &variants {
+        let Some(variant) = variant.as_object() else {
+            continue;
+        };
+        if let Some(fields) = variant.get("properties").and_then(Value::as_object) {
+            for (name, field) in fields {
+                if name == "format" {
+                    if let Some(format) = field.get("const") {
+                        formats.push(format.clone());
+                    }
+                    continue;
+                }
+                properties.entry(name.clone()).or_insert(field.clone());
+            }
+        }
+        // Only what every variant demands can be required once they are merged.
+        let names = variant
+            .get("required")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        required = Some(match required {
+            None => names,
+            Some(shared) => shared
+                .into_iter()
+                .filter(|name| names.contains(name))
+                .collect(),
+        });
+    }
+    properties.insert(
+        "format".to_owned(),
+        json!({ "type": "string", "enum": formats }),
+    );
+    object.insert("type".to_owned(), "object".into());
+    object.insert("additionalProperties".to_owned(), false.into());
+    object.insert("properties".to_owned(), Value::Object(properties));
+    object.insert(
+        "required".to_owned(),
+        Value::Array(required.unwrap_or_default()),
+    );
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
