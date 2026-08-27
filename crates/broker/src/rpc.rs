@@ -131,11 +131,11 @@ async fn serve_frontend(broker: Broker, stream: TcpStream) -> Result<(), BrokerE
                                                 if let (
                                                     Some(connection_id),
                                                     Some(request_id),
-                                                    BrokerClient::Local(broker),
+                                                    Some(broker),
                                                 ) = (
                                                     &open.connection_id,
                                                     &open.request_id,
-                                                    &client,
+                                                    client.local_broker(),
                                                 ) {
                                                     let _ = broker.cancel(connection_id, request_id).await;
                                                 }

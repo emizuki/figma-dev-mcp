@@ -1,3 +1,4 @@
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime};
 
 use figma_dev_mcp_protocol::{
@@ -24,24 +25,79 @@ pub struct OpenCall {
 }
 
 #[derive(Clone, Debug)]
-pub enum BrokerClient {
+pub(crate) enum Backend {
     Local(Broker),
     Remote(FrontendClient),
 }
 
-impl BrokerClient {
-    pub fn local(broker: Broker) -> Self {
+impl Backend {
+    pub(crate) fn local(broker: Broker) -> Self {
         Self::Local(broker)
     }
 
-    pub fn remote(client: FrontendClient) -> Self {
+    pub(crate) fn remote(client: FrontendClient) -> Self {
         Self::Remote(client)
+    }
+}
+
+/// A broker handle whose backend can be replaced while calls are in flight.
+///
+/// The backend changes when the process changes role — a follower whose leader
+/// died re-elects and may become the leader itself. Holding the client rather
+/// than the backend is what lets the stdio MCP service survive that transition.
+#[derive(Clone, Debug)]
+pub struct BrokerClient {
+    backend: Arc<RwLock<Backend>>,
+}
+
+impl BrokerClient {
+    pub fn local(broker: Broker) -> Self {
+        Self::new(Backend::local(broker))
+    }
+
+    pub fn remote(client: FrontendClient) -> Self {
+        Self::new(Backend::remote(client))
+    }
+
+    pub(crate) fn new(backend: Backend) -> Self {
+        Self {
+            backend: Arc::new(RwLock::new(backend)),
+        }
+    }
+
+    /// Replace the backend. In-flight calls already hold their own clone and
+    /// run to completion against the old backend; new calls see the new one.
+    pub(crate) fn install(&self, backend: Backend) {
+        *self
+            .backend
+            .write()
+            .expect("broker client backend lock poisoned") = backend;
+    }
+
+    /// Clone the current backend out. The guard is dropped before returning, so
+    /// it can never be held across an await.
+    fn backend(&self) -> Backend {
+        self.backend
+            .read()
+            .expect("broker client backend lock poisoned")
+            .clone()
+    }
+
+    /// The local `Broker`, when this process is currently the leader.
+    ///
+    /// Cancellation paths need it to send a `Cancel` frame to the plugin; a
+    /// follower cancels over RPC instead and gets `None` here.
+    pub fn local_broker(&self) -> Option<Broker> {
+        match self.backend() {
+            Backend::Local(broker) => Some(broker),
+            Backend::Remote(_) => None,
+        }
     }
 
     pub async fn open(&self, call: BrokerCall) -> Result<OpenCall, ToolError> {
-        match self {
-            Self::Local(broker) => local_open(broker, call).await,
-            Self::Remote(client) => client.open(call).await,
+        match self.backend() {
+            Backend::Local(broker) => local_open(&broker, call).await,
+            Backend::Remote(client) => client.open(call).await,
         }
     }
 
@@ -50,9 +106,9 @@ impl BrokerClient {
         call: BrokerCall,
         cancellation: &CancellationToken,
     ) -> Result<BrokerResult, ToolError> {
-        match self {
-            Self::Remote(client) => return client.call(call, cancellation).await,
-            Self::Local(_) => {}
+        let backend = self.backend();
+        if let Backend::Remote(client) = &backend {
+            return client.call(call, cancellation).await;
         }
         let mut open = self.open(call).await?;
         loop {
@@ -67,8 +123,8 @@ impl BrokerClient {
                 }
                 _ = cancellation.cancelled() => {
                     open.abort.cancel();
-                    if let (Some(connection_id), Some(request_id), Self::Local(broker)) =
-                        (&open.connection_id, &open.request_id, self)
+                    if let (Some(connection_id), Some(request_id), Backend::Local(broker)) =
+                        (&open.connection_id, &open.request_id, &backend)
                     {
                         let _ = broker.cancel(connection_id, request_id).await;
                     }

@@ -14,6 +14,8 @@ mod design_system;
 mod dev_mode;
 #[path = "election.rs"]
 mod election;
+#[path = "failover.rs"]
+mod failover;
 #[path = "idle_lifetime.rs"]
 mod idle_lifetime;
 #[path = "metadata.rs"]
