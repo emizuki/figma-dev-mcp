@@ -14,6 +14,13 @@ use crate::{
     FrontendClient, FrontendLease, client::Backend, elect,
 };
 
+/// First delay after a failed election. Doubles up to `RETRY_DELAY_CAP`.
+const RETRY_DELAY_BASE: Duration = Duration::from_millis(100);
+/// Ceiling for the election retry delay, matching where the plugin's own
+/// reconnect backoff saturates. Recovering slower than the plugin retries would
+/// leave it looping for no reason.
+const RETRY_DELAY_CAP: Duration = Duration::from_secs(5);
+
 /// The role this process currently holds.
 enum Role {
     Leader {
@@ -22,7 +29,6 @@ enum Role {
         lease: Option<FrontendLease>,
     },
     Follower {
-        #[allow(dead_code, reason = "read by Role::death, wired up in Task 4")]
         client: FrontendClient,
     },
 }
@@ -30,10 +36,14 @@ enum Role {
 impl Role {
     /// Resolves when this role's backend dies.
     ///
-    /// For a leader that is any listener task ending: the three tasks share one
-    /// shutdown token, so the first to finish means the broker is gone. For a
+    /// For a leader that is any one of the listener tasks ending. They do not
+    /// all share a single point of failure: `ws::serve` cancels the shared
+    /// shutdown token on an accept error, which cascades to the others, but
+    /// `rpc::serve` propagates its accept error and cancels nothing, so a
+    /// frontend accept failure can end only that one task while the plugin
+    /// listeners keep running. Either way, `join_next()` firing means some
+    /// listener stopped, which is sufficient to treat this role as dead. For a
     /// follower it is the RPC connection to the leader closing.
-    #[allow(dead_code, reason = "wired up by Supervisor::supervise in Task 4")]
     async fn death(&mut self) -> Death {
         match self {
             Role::Leader { listeners, .. } => match listeners.join_next().await {
@@ -51,7 +61,6 @@ impl Role {
 }
 
 /// Why a backend stopped being usable. Carried only so the log line can say.
-#[allow(dead_code, reason = "produced by Role::death, consumed in Task 4")]
 enum Death {
     LeaderGone,
     ListenerStopped(Option<BrokerError>),
@@ -73,7 +82,6 @@ impl std::fmt::Display for Death {
 
 /// Owns the process's role and keeps it alive across leader deaths.
 pub struct Supervisor {
-    #[allow(dead_code, reason = "re-elected against in Supervisor::supervise, added in Task 4")]
     config: BrokerConfig,
     client: BrokerClient,
     role: Option<Role>,
@@ -105,6 +113,60 @@ impl Supervisor {
 
     pub fn is_leader(&self) -> bool {
         matches!(self.role, Some(Role::Leader { .. }))
+    }
+
+    /// Watch the current backend and re-elect whenever it dies.
+    ///
+    /// Never returns. Run it alongside the service that uses `client()`; when
+    /// that service ends, drop this future and call `shutdown`.
+    ///
+    /// Re-election is eager rather than lazy — it fires on the death signal, not
+    /// on the next call — because the plugin needs someone listening on the
+    /// plugin port even while no tool call is happening. That is the whole point.
+    pub async fn supervise(&mut self) {
+        loop {
+            let death = match self.role.as_mut() {
+                Some(role) => role.death().await,
+                None => return,
+            };
+            tracing::warn!(cause = %death, "broker backend died, re-electing");
+
+            // Drop the old role first. An ex-leader still holding its listeners
+            // would fail to bind and then connect to itself.
+            self.role = None;
+
+            let (role, backend) = self.elect_again().await;
+            self.client.install(backend);
+            tracing::info!("installed a new broker backend");
+            self.role = Some(role);
+        }
+    }
+
+    /// Elect until it works, backing off between attempts.
+    ///
+    /// Retries forever on purpose. Whatever is wrong — a port held by something
+    /// else, a leader running an incompatible build — is usually transient, and
+    /// giving up would brick this session permanently, which is the bug being
+    /// fixed. Meanwhile calls fail with a retryable error, never worse than
+    /// before.
+    async fn elect_again(&self) -> (Role, Backend) {
+        let mut delay = RETRY_DELAY_BASE;
+        let mut attempt = 1_u32;
+        loop {
+            tracing::info!(attempt, "starting broker election");
+            match elect(self.config.clone()).await {
+                Ok(outcome) => {
+                    if let Some(entered) = enter_role(outcome).await {
+                        return entered;
+                    }
+                }
+                Err(error) => tracing::warn!(%error, attempt, "broker election failed"),
+            }
+            tracing::warn!(attempt, delay_ms = delay.as_millis() as u64, "retrying election");
+            tokio::time::sleep(delay).await;
+            delay = (delay * 2).min(RETRY_DELAY_CAP);
+            attempt = attempt.wrapping_add(1);
+        }
     }
 
     /// Release the frontend lease, drain, and stop.

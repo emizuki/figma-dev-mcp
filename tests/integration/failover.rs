@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use figma_dev_mcp_broker::{Broker, BrokerClient, BrokerConfig, Limits};
+use figma_dev_mcp_broker::{Broker, BrokerClient, BrokerConfig, Limits, Supervisor};
 
 #[tokio::test]
 async fn local_broker_resolves_through_the_swappable_cell() {
@@ -65,8 +65,6 @@ async fn frontend_client_closed_resolves_when_the_leader_goes_away() {
         .expect("closed() must resolve once the leader's RPC connection ends");
 }
 
-use figma_dev_mcp_broker::Supervisor;
-
 /// Reserve two ports, then release them, so the supervisor can bind them.
 async fn free_addresses() -> (std::net::SocketAddr, std::net::SocketAddr) {
     let plugin = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -128,4 +126,168 @@ async fn a_leading_supervisor_binds_both_ports() {
     );
 
     leader.shutdown(Duration::from_millis(0)).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_follower_promotes_itself_when_the_leader_dies() {
+    let (plugin_address, frontend_address) = free_addresses().await;
+    let config = test_config(plugin_address, frontend_address);
+
+    let leader = Supervisor::start(config.clone()).await.unwrap();
+    let mut follower = Supervisor::start(config).await.unwrap();
+    assert!(!follower.is_leader());
+
+    let supervising = tokio::spawn(async move {
+        follower.supervise().await;
+    });
+
+    // The leader dies without warning, as it does under SIGTERM. Dropping the
+    // Supervisor is the faithful simulation: its JoinSet aborts the listener
+    // tasks, which drops the TcpListeners and closes both ports.
+    //
+    // Do NOT use Supervisor::shutdown here. That is the graceful path, and it
+    // waits in wait_until_idle while any frontend lease is outstanding — the
+    // attached follower below holds one, so it would block forever. That the
+    // graceful path holds the ports open is exactly why this bug only shows up
+    // on abrupt death.
+    drop(leader);
+
+    // The survivor must reopen the plugin port on its own.
+    let reopened = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if tokio::net::TcpStream::connect(plugin_address).await.is_ok() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await;
+    assert!(
+        reopened.is_ok(),
+        "an orphaned follower must re-elect and reopen the plugin port"
+    );
+
+    supervising.abort();
+}
+
+#[tokio::test]
+async fn exactly_one_of_two_orphans_takes_the_ports() {
+    let (plugin_address, frontend_address) = free_addresses().await;
+    let config = test_config(plugin_address, frontend_address);
+
+    let leader = Supervisor::start(config.clone()).await.unwrap();
+    let mut first = Supervisor::start(config.clone()).await.unwrap();
+    let mut second = Supervisor::start(config).await.unwrap();
+
+    let first_task = tokio::spawn(async move {
+        first.supervise().await;
+    });
+    let second_task = tokio::spawn(async move {
+        second.supervise().await;
+    });
+
+    // Abrupt death again — see the note in the previous test for why this is a
+    // drop and not a shutdown.
+    drop(leader);
+
+    // Whoever wins, the port must come back exactly once and stay bound.
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if tokio::net::TcpStream::connect(plugin_address).await.is_ok() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("one orphan must take the plugin port");
+
+    // A third participant must now find a leader to follow, which is only true
+    // if exactly one orphan bound the frontend port.
+    let late = Supervisor::start(test_config(plugin_address, frontend_address))
+        .await
+        .unwrap();
+    assert!(
+        !late.is_leader(),
+        "a late starter must follow the promoted leader, not win a second election"
+    );
+
+    late.shutdown(Duration::from_millis(0)).await.unwrap();
+    first_task.abort();
+    second_task.abort();
+}
+
+#[tokio::test]
+async fn election_retries_until_a_squatted_port_is_released() {
+    let (plugin_address, frontend_address) = free_addresses().await;
+    let config = test_config(plugin_address, frontend_address);
+
+    let leader = Supervisor::start(config.clone()).await.unwrap();
+    let mut follower = Supervisor::start(config).await.unwrap();
+
+    // Something outside this project takes the plugin port the instant the
+    // leader lets go of it, so every election attempt fails at the plugin bind.
+    drop(leader);
+    let squatter = loop {
+        if let Ok(listener) = tokio::net::TcpListener::bind(plugin_address).await {
+            break listener;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    };
+
+    let supervising = tokio::spawn(async move {
+        follower.supervise().await;
+    });
+
+    // The supervisor must keep retrying rather than giving up.
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert!(
+        !supervising.is_finished(),
+        "the supervisor must keep retrying while the port is unavailable"
+    );
+
+    // Once the squatter leaves, the next attempt must succeed.
+    drop(squatter);
+    tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            if tokio::net::TcpStream::connect(frontend_address).await.is_ok() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("election must succeed once the port is free again");
+
+    supervising.abort();
+}
+
+#[tokio::test]
+async fn a_leader_whose_broker_dies_re_elects_and_rebinds() {
+    let (plugin_address, frontend_address) = free_addresses().await;
+    let mut leader = Supervisor::start(test_config(plugin_address, frontend_address))
+        .await
+        .unwrap();
+    assert!(leader.is_leader());
+
+    // Broker::shutdown cancels the shared token, which is exactly what a failing
+    // accept() does to the three listener tasks.
+    leader.client().local_broker().unwrap().shutdown().await;
+
+    let supervising = tokio::spawn(async move {
+        leader.supervise().await;
+    });
+
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if tokio::net::TcpStream::connect(plugin_address).await.is_ok() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("a leader whose broker died must re-elect and rebind the plugin port");
+
+    supervising.abort();
 }
