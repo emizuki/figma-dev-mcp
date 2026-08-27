@@ -349,6 +349,16 @@ impl FrontendClient {
             }
         }
     }
+
+    /// Resolves when the RPC connection to the leader is gone.
+    ///
+    /// `client_loop` drops the command receiver when the leader's stream ends,
+    /// which is the same event that makes every subsequent call fail with
+    /// `ConnectionLost`. Awaiting it turns leader death into a signal the
+    /// supervisor can act on instead of an error each call rediscovers.
+    pub async fn closed(&self) {
+        self.commands.closed().await;
+    }
 }
 
 async fn client_loop(
