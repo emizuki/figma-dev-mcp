@@ -24,6 +24,7 @@ pub mod pending;
 pub mod queue;
 pub mod registry;
 mod rpc;
+mod supervisor;
 mod ws;
 
 pub use client::{BrokerClient, OpenCall};
@@ -36,6 +37,7 @@ pub use pending::{
 pub use queue::{QueueError, QueueTicket, SessionQueue};
 pub use registry::{RegistryError, RouteError, Selection, Session, SessionRegistry};
 pub use rpc::FrontendClient;
+pub use supervisor::Supervisor;
 
 #[derive(Clone, Debug)]
 pub struct Broker {

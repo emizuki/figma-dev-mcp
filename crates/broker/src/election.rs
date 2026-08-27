@@ -106,6 +106,8 @@ pub enum ElectionError {
     FrontendBind(std::io::Error),
     #[error("failed to bind the plugin WebSocket listener: {0}")]
     PluginBind(std::io::Error),
+    #[error("the elected role could not be entered")]
+    RoleUnavailable,
     #[error("leader election did not settle within two seconds")]
     TimedOut,
 }

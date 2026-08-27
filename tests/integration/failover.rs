@@ -64,3 +64,68 @@ async fn frontend_client_closed_resolves_when_the_leader_goes_away() {
         .await
         .expect("closed() must resolve once the leader's RPC connection ends");
 }
+
+use figma_dev_mcp_broker::Supervisor;
+
+/// Reserve two ports, then release them, so the supervisor can bind them.
+async fn free_addresses() -> (std::net::SocketAddr, std::net::SocketAddr) {
+    let plugin = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let frontend = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addresses = (plugin.local_addr().unwrap(), frontend.local_addr().unwrap());
+    drop(plugin);
+    drop(frontend);
+    addresses
+}
+
+fn test_config(
+    plugin_address: std::net::SocketAddr,
+    frontend_address: std::net::SocketAddr,
+) -> BrokerConfig {
+    BrokerConfig {
+        plugin_address,
+        frontend_address,
+        limits: Limits::reduced_for_test(),
+    }
+}
+
+#[tokio::test]
+async fn the_first_supervisor_leads_and_the_second_follows() {
+    let (plugin_address, frontend_address) = free_addresses().await;
+    let config = test_config(plugin_address, frontend_address);
+
+    let leader = Supervisor::start(config.clone()).await.unwrap();
+    assert!(leader.is_leader(), "the first process must lead");
+    assert!(
+        leader.client().local_broker().is_some(),
+        "a leader's client must be backed by a local Broker"
+    );
+
+    let follower = Supervisor::start(config).await.unwrap();
+    assert!(!follower.is_leader(), "the second process must follow");
+    assert!(
+        follower.client().local_broker().is_none(),
+        "a follower's client must be backed by an RPC connection"
+    );
+
+    follower.shutdown(Duration::from_millis(0)).await.unwrap();
+    leader.shutdown(Duration::from_millis(0)).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_leading_supervisor_binds_both_ports() {
+    let (plugin_address, frontend_address) = free_addresses().await;
+    let leader = Supervisor::start(test_config(plugin_address, frontend_address))
+        .await
+        .unwrap();
+
+    assert!(
+        tokio::net::TcpStream::connect(plugin_address).await.is_ok(),
+        "the leader must be listening on the plugin port"
+    );
+    assert!(
+        tokio::net::TcpStream::connect(frontend_address).await.is_ok(),
+        "the leader must be listening on the frontend port"
+    );
+
+    leader.shutdown(Duration::from_millis(0)).await.unwrap();
+}
