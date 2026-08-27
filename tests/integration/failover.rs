@@ -121,7 +121,9 @@ async fn a_leading_supervisor_binds_both_ports() {
         "the leader must be listening on the plugin port"
     );
     assert!(
-        tokio::net::TcpStream::connect(frontend_address).await.is_ok(),
+        tokio::net::TcpStream::connect(frontend_address)
+            .await
+            .is_ok(),
         "the leader must be listening on the frontend port"
     );
 
@@ -153,6 +155,13 @@ async fn a_follower_promotes_itself_when_the_leader_dies() {
     drop(leader);
 
     // The survivor must reopen the plugin port on its own.
+    //
+    // Note: we deliberately do NOT assert an observable "port closed" window
+    // before this. On this single-threaded test runtime, a fast (correct)
+    // failover can close the dead listener and rebind the same port within
+    // the same scheduling burst that our own polling loop yields into, so an
+    // external connect-probe can legitimately never observe a gap — see the
+    // conclusive check below for what actually proves re-election happened.
     let reopened = tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             if tokio::net::TcpStream::connect(plugin_address).await.is_ok() {
@@ -166,6 +175,19 @@ async fn a_follower_promotes_itself_when_the_leader_dies() {
         reopened.is_ok(),
         "an orphaned follower must re-elect and reopen the plugin port"
     );
+
+    // Conclusive check: a fresh participant must find a leader to follow. If
+    // the port merely reopened without a real election (impossible, but this
+    // is the check that would catch it), a fresh Supervisor would win a second
+    // election and become leader itself.
+    let checker = Supervisor::start(test_config(plugin_address, frontend_address))
+        .await
+        .unwrap();
+    assert!(
+        !checker.is_leader(),
+        "a survivor must have actually promoted itself to leader"
+    );
+    checker.shutdown(Duration::from_millis(0)).await.unwrap();
 
     supervising.abort();
 }
@@ -250,7 +272,10 @@ async fn election_retries_until_a_squatted_port_is_released() {
     drop(squatter);
     tokio::time::timeout(Duration::from_secs(20), async {
         loop {
-            if tokio::net::TcpStream::connect(frontend_address).await.is_ok() {
+            if tokio::net::TcpStream::connect(frontend_address)
+                .await
+                .is_ok()
+            {
                 return;
             }
             tokio::time::sleep(Duration::from_millis(25)).await;
@@ -278,6 +303,12 @@ async fn a_leader_whose_broker_dies_re_elects_and_rebinds() {
         leader.supervise().await;
     });
 
+    // Note: we deliberately do NOT assert an observable "port closed" window
+    // before this. On this single-threaded test runtime, a fast (correct)
+    // failover can close the dead listener and rebind the same port within
+    // the same scheduling burst that our own polling loop yields into, so an
+    // external connect-probe can legitimately never observe a gap — see the
+    // conclusive check below for what actually proves re-election happened.
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             if tokio::net::TcpStream::connect(plugin_address).await.is_ok() {
@@ -288,6 +319,16 @@ async fn a_leader_whose_broker_dies_re_elects_and_rebinds() {
     })
     .await
     .expect("a leader whose broker died must re-elect and rebind the plugin port");
+
+    // Conclusive check: a fresh participant must find a leader to follow.
+    let checker = Supervisor::start(test_config(plugin_address, frontend_address))
+        .await
+        .unwrap();
+    assert!(
+        !checker.is_leader(),
+        "a survivor must have actually promoted itself to leader"
+    );
+    checker.shutdown(Duration::from_millis(0)).await.unwrap();
 
     supervising.abort();
 }

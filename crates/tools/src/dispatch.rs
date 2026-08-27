@@ -117,11 +117,9 @@ fn sleep_until_deadline(deadline: tokio::time::Instant) -> tokio::time::Sleep {
 
 async fn abort_open(broker: &BrokerClient, open: &OpenCall) {
     open.abort.cancel();
-    if let (Some(connection_id), Some(request_id), Some(local)) = (
-        &open.connection_id,
-        &open.request_id,
-        broker.local_broker(),
-    ) {
+    if let (Some(connection_id), Some(request_id), Some(local)) =
+        (&open.connection_id, &open.request_id, broker.local_broker())
+    {
         let _ = local.cancel(connection_id, request_id).await;
     }
 }

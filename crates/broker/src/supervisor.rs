@@ -75,7 +75,9 @@ impl std::fmt::Display for Death {
             Death::ListenerStopped(Some(error)) => {
                 write!(formatter, "a listener task failed: {error}")
             }
-            Death::ListenerPanicked(error) => write!(formatter, "a listener task panicked: {error}"),
+            Death::ListenerPanicked(error) => {
+                write!(formatter, "a listener task panicked: {error}")
+            }
         }
     }
 }
@@ -131,9 +133,28 @@ impl Supervisor {
             };
             tracing::warn!(cause = %death, "broker backend died, re-electing");
 
-            // Drop the old role first. An ex-leader still holding its listeners
-            // would fail to bind and then connect to itself.
-            self.role = None;
+            // Drop the old role's sockets before re-electing, and wait for it.
+            // `JoinSet`'s `Drop` only calls `abort()` on each task, which merely
+            // schedules cancellation; the listener future (and the TcpListener
+            // it owns) isn't actually dropped until the scheduler next polls it.
+            // `elect()`'s first move is a loopback connect to the frontend
+            // address, which can land in that still-open listener's backlog
+            // before it closes — the ex-leader would then connect to itself.
+            // `JoinSet::shutdown` aborts and drains, returning only once every
+            // listener future has actually been dropped, so the ports are
+            // guaranteed free before `elect_again` runs. A follower has no
+            // listeners to wait on; `self.role.take()` still drops its
+            // `FrontendClient` either way.
+            if let Some(Role::Leader {
+                broker,
+                mut listeners,
+                lease,
+            }) = self.role.take()
+            {
+                drop(lease);
+                drop(broker);
+                listeners.shutdown().await;
+            }
 
             let (role, backend) = self.elect_again().await;
             self.client.install(backend);
@@ -162,7 +183,11 @@ impl Supervisor {
                 }
                 Err(error) => tracing::warn!(%error, attempt, "broker election failed"),
             }
-            tracing::warn!(attempt, delay_ms = delay.as_millis() as u64, "retrying election");
+            tracing::warn!(
+                attempt,
+                delay_ms = delay.as_millis() as u64,
+                "retrying election"
+            );
             tokio::time::sleep(delay).await;
             delay = (delay * 2).min(RETRY_DELAY_CAP);
             attempt = attempt.wrapping_add(1);
@@ -229,19 +254,19 @@ async fn enter_role(outcome: ElectionOutcome) -> Option<(Role, Backend)> {
                 backend,
             ))
         }
-        ElectionOutcome::Follower(follower) => match FrontendClient::from_stream(follower.stream)
-            .await
-        {
-            Ok(client) => {
-                tracing::info!(role = "follower", "entered broker role");
-                let backend = Backend::remote(client.clone());
-                Some((Role::Follower { client }, backend))
+        ElectionOutcome::Follower(follower) => {
+            match FrontendClient::from_stream(follower.stream).await {
+                Ok(client) => {
+                    tracing::info!(role = "follower", "entered broker role");
+                    let backend = Backend::remote(client.clone());
+                    Some((Role::Follower { client }, backend))
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "frontend handshake failed");
+                    None
+                }
             }
-            Err(error) => {
-                tracing::warn!(%error, "frontend handshake failed");
-                None
-            }
-        },
+        }
     }
 }
 
