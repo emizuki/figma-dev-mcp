@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use figma_dev_mcp_broker::{Broker, BrokerClient, BrokerConfig, Limits, Supervisor};
+use figma_dev_mcp_broker::{Broker, BrokerClient, BrokerConfig, Limits, OpenCall, Supervisor};
 
 #[tokio::test]
 async fn local_broker_resolves_through_the_swappable_cell() {
@@ -544,6 +544,15 @@ async fn a_detached_client_stops_answering_through_its_dead_broker() {
     // still holding it keeps answering with stale data. This half is the proof
     // that the defect was real — without it the assertion below could pass for
     // the wrong reason.
+    //
+    // This assertion is deterministic only because this test runs on the
+    // default current-thread `#[tokio::test]` runtime: the plugin task spawned
+    // above and the `client.call` below never actually run concurrently, so
+    // the plugin's own `cleanup_socket` (which removes this session from the
+    // registry once its connection ends) cannot run ahead of the call. Under
+    // `flavor = "multi_thread"` those two could race on separate OS threads,
+    // and the file count below could come back 0 instead of the stale 1. Do
+    // not add a multi-thread flavor to this test.
     broker.shutdown().await;
     let served = client
         .call(
@@ -585,4 +594,71 @@ async fn a_detached_client_stops_answering_through_its_dead_broker() {
 
     drop(plugin);
     let _ = tokio::time::timeout(Duration::from_secs(1), plugin_server).await;
+}
+
+/// A bare `OpenCall`, built directly rather than through a broker or an RPC
+/// connection, so `Drop`'s two branches can be exercised without either.
+/// Every field on `OpenCall` is `pub` for exactly this reason.
+fn bare_open_call(
+    abort: tokio_util::sync::CancellationToken,
+    watcher: tokio::task::JoinHandle<()>,
+) -> OpenCall {
+    let (_sender, result) = tokio::sync::oneshot::channel();
+    let (_progress_tx, progress) = tokio::sync::mpsc::channel(1);
+    OpenCall {
+        result,
+        progress,
+        total_deadline: tokio::time::Instant::now(),
+        inactivity_timeout: Duration::from_secs(0),
+        connection_id: None,
+        request_id: None,
+        abort,
+        owner: None,
+        watcher: Some(watcher),
+    }
+}
+
+// `OpenCall::drop` aborts its watcher only when the abort token was never
+// cancelled. Before this test, only the opposite branch had coverage — via
+// `cancelling_a_frontend_call_cancels_the_matching_plugin_request` in
+// `multi_client.rs`, which drives the cancelled case through a real remote
+// call. Both halves matter: the first is what actually prevents the leak (an
+// abandoned watcher sleeping until a dead call's own deadline), and the
+// second is what stops a leak fix from swallowing a real cancellation before
+// it can send its `Cancel` frame.
+#[tokio::test]
+async fn dropping_an_open_call_aborts_its_watcher_unless_already_cancelled() {
+    use tokio_util::sync::CancellationToken;
+
+    // Not cancelled: the leak-preventing branch. Nothing but this `OpenCall`
+    // holds the abort token or the join handle, so if `Drop` did not abort the
+    // watcher here, nothing ever would — it would sleep out its full 30
+    // seconds for no reason.
+    let handle = tokio::spawn(async { tokio::time::sleep(Duration::from_secs(30)).await });
+    let abort_handle = handle.abort_handle();
+    let open = bare_open_call(CancellationToken::new(), handle);
+    drop(open);
+    tokio::task::yield_now().await;
+    assert!(
+        abort_handle.is_finished(),
+        "dropping an OpenCall whose abort token was never cancelled must abort its watcher"
+    );
+
+    // Cancelled: on the remote path the watcher is the only thing that sends
+    // the plugin its `Cancel` frame, so `Drop` must leave it running. This
+    // assertion is not vacuous: if the `!self.abort.is_cancelled()` guard were
+    // ever dropped from `Drop`, this watcher would be aborted the same way the
+    // one above was, and `is_finished()` would flip to `true` here too.
+    let handle = tokio::spawn(async { tokio::time::sleep(Duration::from_secs(30)).await });
+    let abort_handle = handle.abort_handle();
+    let abort = CancellationToken::new();
+    abort.cancel();
+    let open = bare_open_call(abort, handle);
+    drop(open);
+    tokio::task::yield_now().await;
+    assert!(
+        !abort_handle.is_finished(),
+        "dropping an OpenCall whose abort token was already cancelled must not abort its watcher"
+    );
+    abort_handle.abort();
 }
