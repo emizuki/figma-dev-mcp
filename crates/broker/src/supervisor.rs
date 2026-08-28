@@ -98,25 +98,33 @@ pub struct Supervisor {
     config: BrokerConfig,
     client: BrokerClient,
     role: Option<Role>,
-    /// When the current role was entered, so `elect_again` can refuse to cycle
+    /// When the current role was entered, so `elect_next` can refuse to cycle
     /// faster than `MIN_ELECTION_INTERVAL`. `None` before the first election,
     /// where there is no previous role to rate-limit against.
     elected_at: Option<Instant>,
 }
 
 impl Supervisor {
-    /// Run the first election and enter the role it produces.
+    /// Elect eagerly and enter the role it produces before returning.
     ///
-    /// This happens before the MCP service starts, exactly as it did before the
-    /// supervisor existed, so there is no window where the service is up with no
-    /// backend behind it.
+    /// This is **not** what the binary uses. Production builds a `Supervisor`
+    /// with `new`, which starts unattached, and runs `supervise()` to perform
+    /// the first election as just another iteration of the same loop that
+    /// handles every later one. That is deliberate: this branch's whole reason
+    /// for existing is that an eager, blocking first election — this one — used
+    /// to sit in front of the MCP service, so a first election that never
+    /// succeeded hung the process before it could even answer `initialize`.
+    /// `new` plus `supervise()` removed that window by not having a separate
+    /// startup path at all.
     ///
-    /// It goes through the same retrying election as every later one, so there
-    /// is one election policy rather than two. The first election is not
-    /// specially fatal: an existing leader that has just gone idle sets
-    /// `closing`, after which it refuses the frontend handshake and closes the
-    /// connection, and a session starting inside that window used to exit
-    /// outright rather than wait a beat and win the ports itself.
+    /// `start` still exists because some tests need a `Supervisor` that has
+    /// already elected before they can proceed, and blocking here is simpler
+    /// than driving `supervise()` to its first iteration by hand. It goes
+    /// through the same retrying `elect_until_entered` as `supervise()` does,
+    /// so it is not a second election *policy* — but it is a second entry
+    /// point, and reaching for it from `runtime.rs` would silently reintroduce
+    /// the hang this branch fixed. Do not use it there.
+    #[doc(hidden)]
     pub async fn start(config: BrokerConfig) -> Self {
         tracing::info!("running the first broker election");
         let (role, backend) = elect_until_entered(&config).await;
@@ -170,7 +178,7 @@ impl Supervisor {
                 // IS the first election — that is the whole point. There is no
                 // separate startup election path to drift out of step with
                 // this one.
-                let (role, backend) = self.elect_again().await;
+                let (role, backend) = self.elect_next().await;
                 let role_name = if matches!(role, Role::Leader { .. }) {
                     "leader"
                 } else {
@@ -203,7 +211,7 @@ impl Supervisor {
             // before it closes — the ex-leader would then connect to itself.
             // `JoinSet::shutdown` aborts and drains, returning only once every
             // listener future has actually been dropped, so the ports are
-            // guaranteed free before `elect_again` runs. A follower has no
+            // guaranteed free before `elect_next` runs. A follower has no
             // listeners to wait on; `self.role.take()` still drops its
             // `FrontendClient` either way.
             if let Some(Role::Leader {
@@ -240,7 +248,7 @@ impl Supervisor {
     /// This is also the very first election when `elected_at` is `None` — there
     /// is no previous role to rate-limit against, so the floor is skipped and
     /// election runs immediately.
-    async fn elect_again(&mut self) -> (Role, Backend) {
+    async fn elect_next(&mut self) -> (Role, Backend) {
         if let Some(elected_at) = self.elected_at {
             let alive_for = elected_at.elapsed();
             if let Some(floor) = MIN_ELECTION_INTERVAL.checked_sub(alive_for) {
