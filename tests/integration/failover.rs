@@ -883,3 +883,88 @@ async fn a_role_that_dies_on_arrival_recycles_slower_and_slower() {
          accepts in {SPIN_WINDOW:?}, which is the un-escalated 100ms floor rate"
     );
 }
+
+#[tokio::test]
+async fn a_swapped_backend_does_not_steal_a_calls_cancellation() {
+    use super::multi_client::{connect_plugin, metadata_call};
+    use futures_util::StreamExt;
+    use tokio_tungstenite::tungstenite::Message;
+    use tokio_util::sync::CancellationToken;
+
+    let connection_id = "123e4567-e89b-42d3-a456-426614174092";
+    let opener = Broker::new(BrokerConfig::for_test(Limits::reduced_for_test()).unwrap());
+    let plugin_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let plugin_address = plugin_listener.local_addr().unwrap();
+    let plugin_server = tokio::spawn(opener.clone().serve(plugin_listener));
+    let mut plugin = connect_plugin(plugin_address, connection_id, "Swap routing").await;
+    while opener.live_file_count().await != 1 {
+        tokio::task::yield_now().await;
+    }
+
+    let client = BrokerClient::local(opener.clone());
+    let token = CancellationToken::new();
+    let calling = tokio::spawn({
+        let client = client.clone();
+        let token = token.clone();
+        async move {
+            client
+                .call(metadata_call(Some(connection_id)), &token)
+                .await
+        }
+    });
+
+    // Wait until the plugin actually holds the request, so the call has an owner
+    // recorded and a request id the Cancel can name.
+    let request_id = loop {
+        let Message::Text(text) = plugin.next().await.unwrap().unwrap() else {
+            continue;
+        };
+        if let figma_dev_mcp_protocol::wire::BrokerToPlugin::Request(frame) =
+            serde_json::from_str(&text).unwrap()
+        {
+            break frame.request_id;
+        }
+    };
+
+    // The step no existing test performs: swap the client's backend while the
+    // call is in flight, exactly as a re-election does. `BrokerClient::call`'s
+    // cancellation arm must still cancel through `open.owner` — the Broker
+    // recorded at open time — and not through whatever the cell now holds.
+    let stranger = Broker::new(BrokerConfig::for_test(Limits::reduced_for_test()).unwrap());
+    client.install_local(stranger.clone());
+
+    token.cancel();
+
+    let cancelled = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let Message::Text(text) = plugin.next().await.unwrap().unwrap() else {
+                continue;
+            };
+            if let figma_dev_mcp_protocol::wire::BrokerToPlugin::Cancel(frame) =
+                serde_json::from_str(&text).unwrap()
+            {
+                return frame;
+            }
+        }
+    })
+    .await
+    .expect(
+        "the Cancel must reach the plugin of the Broker that opened the call, not the \
+         Broker the client was swapped to",
+    );
+    assert_eq!(cancelled.request_id, request_id);
+
+    let error = calling
+        .await
+        .unwrap()
+        .expect_err("a cancelled call must not return a result");
+    assert_eq!(
+        error.code(),
+        figma_dev_mcp_protocol::error::ErrorCode::Cancelled
+    );
+
+    drop(plugin);
+    opener.shutdown().await;
+    stranger.shutdown().await;
+    let _ = tokio::time::timeout(Duration::from_secs(1), plugin_server).await;
+}

@@ -118,6 +118,26 @@ impl BrokerClient {
             .expect("broker client backend lock poisoned") = Some(backend);
     }
 
+    /// Swap in a local backend, for tests that need to prove a call cancels
+    /// through the `Broker` it was opened against rather than whichever one is
+    /// current.
+    ///
+    /// `install`'s public face, deliberately narrowed: it takes a `Broker` rather
+    /// than a `Backend`, so the backend enum stays private to this crate. Only
+    /// tests should call it — the supervisor installs through `install_role`,
+    /// which keeps `self.role` and this cell in step. A stray call from anywhere
+    /// else desynchronises them, which is the defect that mutator pair exists to
+    /// prevent.
+    ///
+    /// This is the third `#[doc(hidden)]` test-only entry point in this crate,
+    /// after `detach` and `Supervisor::start`. If a fourth is ever wanted, the
+    /// right answer is probably a `test-support` feature rather than a fourth
+    /// door.
+    #[doc(hidden)]
+    pub fn install_local(&self, broker: Broker) {
+        self.install(Backend::local(broker));
+    }
+
     /// Drop the current backend, returning to the unattached state.
     ///
     /// `install`'s counterpart. The supervisor calls this the moment a role
