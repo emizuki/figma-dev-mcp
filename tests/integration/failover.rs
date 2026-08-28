@@ -469,3 +469,43 @@ async fn an_unattached_client_fails_calls_retryably() {
     );
     assert!(error.retryable());
 }
+
+#[tokio::test]
+async fn a_supervisor_built_unattached_elects_inside_supervise() {
+    let (plugin_address, frontend_address) = free_addresses().await;
+    let mut supervisor = Supervisor::new(test_config(plugin_address, frontend_address));
+
+    let client = supervisor.client();
+    assert!(
+        client.local_broker().is_none(),
+        "new() must not elect — the client starts unattached"
+    );
+    assert!(
+        tokio::net::TcpStream::connect(plugin_address)
+            .await
+            .is_err(),
+        "new() must not bind the plugin port"
+    );
+
+    let supervising = tokio::spawn(async move {
+        supervisor.supervise().await;
+    });
+
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if client.local_broker().is_some() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("supervise() must run the first election when it has no role");
+
+    assert!(
+        tokio::net::TcpStream::connect(plugin_address).await.is_ok(),
+        "the elected leader must bind the plugin port"
+    );
+
+    supervising.abort();
+}

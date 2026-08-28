@@ -99,8 +99,9 @@ pub struct Supervisor {
     client: BrokerClient,
     role: Option<Role>,
     /// When the current role was entered, so `elect_again` can refuse to cycle
-    /// faster than `MIN_ELECTION_INTERVAL`.
-    elected_at: Instant,
+    /// faster than `MIN_ELECTION_INTERVAL`. `None` before the first election,
+    /// where there is no previous role to rate-limit against.
+    elected_at: Option<Instant>,
 }
 
 impl Supervisor {
@@ -123,7 +124,23 @@ impl Supervisor {
             config,
             client: BrokerClient::new(backend),
             role: Some(role),
-            elected_at: Instant::now(),
+            elected_at: Some(Instant::now()),
+        }
+    }
+
+    /// A supervisor that has not elected anything yet.
+    ///
+    /// Its `client()` is unattached, so the MCP service can be built and served
+    /// immediately; `supervise()` runs the first election as its first
+    /// iteration. The binary uses this rather than `start` so that nothing —
+    /// not even a first election that never succeeds — can stop the process
+    /// from answering its client.
+    pub fn new(config: BrokerConfig) -> Self {
+        Self {
+            config,
+            client: BrokerClient::unattached(),
+            role: None,
+            elected_at: None,
         }
     }
 
@@ -137,7 +154,8 @@ impl Supervisor {
         matches!(self.role, Some(Role::Leader { .. }))
     }
 
-    /// Watch the current backend and re-elect whenever it dies.
+    /// Elect a role if there is none, then watch the current backend and
+    /// re-elect whenever it dies.
     ///
     /// Never returns. Run it alongside the service that uses `client()`; when
     /// that service ends, drop this future and call `shutdown`.
@@ -147,10 +165,23 @@ impl Supervisor {
     /// plugin port even while no tool call is happening. That is the whole point.
     pub async fn supervise(&mut self) {
         loop {
-            let death = match self.role.as_mut() {
-                Some(role) => role.death().await,
-                None => return,
+            let Some(role) = self.role.as_mut() else {
+                // No role: elect one. On the first iteration after `new` this
+                // IS the first election — that is the whole point. There is no
+                // separate startup election path to drift out of step with
+                // this one.
+                let (role, backend) = self.elect_again().await;
+                let role_name = if matches!(role, Role::Leader { .. }) {
+                    "leader"
+                } else {
+                    "follower"
+                };
+                self.client.install(backend);
+                tracing::info!(role = role_name, "installed a new broker backend");
+                self.role = Some(role);
+                continue;
             };
+            let death = role.death().await;
             match &death {
                 // A panic is a genuine internal bug, not the routine death a
                 // dropped connection or a rejected accept represents. Log it
@@ -197,16 +228,6 @@ impl Supervisor {
                 drop(broker);
                 listeners.shutdown().await;
             }
-
-            let (role, backend) = self.elect_again().await;
-            let role_name = if matches!(role, Role::Leader { .. }) {
-                "leader"
-            } else {
-                "follower"
-            };
-            self.client.install(backend);
-            tracing::info!(role = role_name, "installed a new broker backend");
-            self.role = Some(role);
         }
     }
 
@@ -217,17 +238,19 @@ impl Supervisor {
     /// role that lived a while re-elects immediately and only a role that died
     /// on arrival waits. See `MIN_ELECTION_INTERVAL` for why the floor exists.
     async fn elect_again(&mut self) -> (Role, Backend) {
-        let alive_for = self.elected_at.elapsed();
-        if let Some(floor) = MIN_ELECTION_INTERVAL.checked_sub(alive_for) {
-            tracing::warn!(
-                alive_ms = alive_for.as_millis() as u64,
-                floor_ms = floor.as_millis() as u64,
-                "the previous role died immediately, delaying re-election"
-            );
-            tokio::time::sleep(floor).await;
+        if let Some(elected_at) = self.elected_at {
+            let alive_for = elected_at.elapsed();
+            if let Some(floor) = MIN_ELECTION_INTERVAL.checked_sub(alive_for) {
+                tracing::warn!(
+                    alive_ms = alive_for.as_millis() as u64,
+                    floor_ms = floor.as_millis() as u64,
+                    "the previous role died immediately, delaying re-election"
+                );
+                tokio::time::sleep(floor).await;
+            }
         }
         let entered = elect_until_entered(&self.config).await;
-        self.elected_at = Instant::now();
+        self.elected_at = Some(Instant::now());
         entered
     }
 
