@@ -110,6 +110,12 @@ impl StdioServer {
         self.stdin.flush().expect("stdin flush");
     }
 
+    fn kill(mut self) {
+        drop(self.stdin);
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+
     fn terminate_sigterm(mut self) {
         drop(self.stdin);
         let pid = self.child.id();
@@ -229,6 +235,70 @@ fn modern_2026_07_28_discover_and_stateless_lists_over_real_stdio() {
     assert_eq!(prompts["result"]["cacheScope"], "public");
 
     server.terminate_sigterm();
+}
+
+/// The bug this fixes: killing the leader used to close 3056 forever, leaving
+/// the plugin reconnecting against nothing and every follower orphaned.
+#[test]
+fn killing_the_leader_lets_a_follower_reopen_the_plugin_port() {
+    let _guard = STDIO_ERA_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+
+    let leader = StdioServer::spawn();
+    assert!(
+        wait_until(Duration::from_secs(10), || port_is_listening(plugin_port())),
+        "the first server must bind the plugin port"
+    );
+
+    let mut follower = StdioServer::spawn();
+    assert!(
+        wait_until(Duration::from_secs(10), || port_is_listening(
+            frontend_port()
+        )),
+        "the frontend port must stay bound while both servers run"
+    );
+
+    // Gate: a completed `initialize` proves this process finished
+    // `Supervisor::start` and settled into its role. Without this, the kill
+    // below can land while its one-time startup election is still pending —
+    // that election would then bind the free ports itself, and the test would
+    // pass without any re-election having happened.
+    let initialize = follower.request(json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": { "name": "failover-follower", "version": "0.1.0" }
+        }
+    }));
+    assert_eq!(initialize["result"]["serverInfo"]["name"], "figma-dev-mcp");
+
+    leader.kill();
+
+    assert!(
+        wait_until(Duration::from_secs(20), || port_is_listening(plugin_port())),
+        "the surviving server must re-elect and reopen the plugin port"
+    );
+    assert!(
+        port_is_listening(frontend_port()),
+        "the promoted leader must own the frontend port too"
+    );
+
+    follower.kill();
+    assert!(
+        wait_until(Duration::from_secs(10), || {
+            std::net::TcpListener::bind(("127.0.0.1", plugin_port())).is_ok()
+        }),
+        "both listeners must be released once every server is gone"
+    );
+    assert_production_ports_free();
+}
+
+fn port_is_listening(port: u16) -> bool {
+    std::net::TcpStream::connect(("127.0.0.1", port)).is_ok()
 }
 
 #[test]
