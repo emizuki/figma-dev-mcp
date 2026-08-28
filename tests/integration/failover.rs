@@ -352,8 +352,22 @@ async fn a_leader_whose_broker_dies_re_elects_and_rebinds() {
     supervising.abort();
 }
 
+// What this proves: `OpenCall.owner` is populated with the `Broker` that
+// opened the call, and a different `Broker` cannot cancel it through
+// `Broker::cancel`'s own routing (which was never broken).
+//
+// What this does NOT prove: it never swaps a backend, never calls
+// `abort_open`, and never calls `BrokerClient::call`. It does not exercise the
+// stale-cell defect those fixed. The consumer-side guarantee — that
+// cancellation reaches the broker that opened the call even after a backend
+// swap — is enforced by `abort_open`'s signature, which no longer accepts a
+// `BrokerClient` and so cannot reach the swappable cell at all. That is a
+// stronger guarantee than a test could give here; a test that actually swaps
+// the backend would need to live inside `crates/broker` (`install` is
+// `pub(crate)`) with a fake plugin duplicated into that crate, which is a
+// follow-up rather than part of this test.
 #[tokio::test]
-async fn a_cancel_reaches_the_broker_that_opened_the_call() {
+async fn an_open_call_records_the_broker_that_opened_it() {
     use super::multi_client::{connect_plugin, metadata_call};
     use futures_util::StreamExt;
     use tokio_tungstenite::tungstenite::Message;
