@@ -106,11 +106,16 @@ impl BrokerClient {
         call: BrokerCall,
         cancellation: &CancellationToken,
     ) -> Result<BrokerResult, ToolError> {
-        let backend = self.backend();
-        if let Backend::Remote(client) = &backend {
-            return client.call(call, cancellation).await;
-        }
-        let mut open = self.open(call).await?;
+        // Read the backend cell exactly once. Going back through `self.open`
+        // would read it a second time, so a swap landing in between would open
+        // the call against the new backend while the cancellation branch below
+        // cancelled through the old `Broker` — a `Cancel` frame sent to a
+        // connection that no longer owns the request, which is a silent no-op.
+        let broker = match self.backend() {
+            Backend::Remote(client) => return client.call(call, cancellation).await,
+            Backend::Local(broker) => broker,
+        };
+        let mut open = local_open(&broker, call).await?;
         loop {
             tokio::select! {
                 result = &mut open.result => {
@@ -123,8 +128,8 @@ impl BrokerClient {
                 }
                 _ = cancellation.cancelled() => {
                     open.abort.cancel();
-                    if let (Some(connection_id), Some(request_id), Backend::Local(broker)) =
-                        (&open.connection_id, &open.request_id, &backend)
+                    if let (Some(connection_id), Some(request_id)) =
+                        (&open.connection_id, &open.request_id)
                     {
                         let _ = broker.cancel(connection_id, request_id).await;
                     }
