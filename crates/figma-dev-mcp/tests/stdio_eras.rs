@@ -39,7 +39,7 @@ const PROMPT_NAMES: [&str; 3] = [
 
 struct StdioServer {
     child: Child,
-    stdin: std::process::ChildStdin,
+    stdin: Option<std::process::ChildStdin>,
     lines: Receiver<String>,
     collected: Vec<String>,
 }
@@ -84,15 +84,16 @@ impl StdioServer {
         );
         Self {
             child,
-            stdin,
+            stdin: Some(stdin),
             lines,
             collected: Vec::new(),
         }
     }
 
     fn request(&mut self, payload: Value) -> Value {
-        writeln!(self.stdin, "{payload}").expect("stdin write");
-        self.stdin.flush().expect("stdin flush");
+        let stdin = self.stdin.as_mut().expect("stdin is open");
+        writeln!(stdin, "{payload}").expect("stdin write");
+        stdin.flush().expect("stdin flush");
         let line = self
             .lines
             .recv_timeout(Duration::from_secs(5))
@@ -106,18 +107,19 @@ impl StdioServer {
     }
 
     fn notify(&mut self, payload: Value) {
-        writeln!(self.stdin, "{payload}").expect("stdin write");
-        self.stdin.flush().expect("stdin flush");
+        let stdin = self.stdin.as_mut().expect("stdin is open");
+        writeln!(stdin, "{payload}").expect("stdin write");
+        stdin.flush().expect("stdin flush");
     }
 
     fn kill(mut self) {
-        drop(self.stdin);
+        self.stdin.take();
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
 
     fn terminate_sigterm(mut self) {
-        drop(self.stdin);
+        self.stdin.take();
         let pid = self.child.id();
         let status = Command::new("kill")
             .args(["-TERM", &pid.to_string()])
@@ -158,6 +160,18 @@ impl StdioServer {
             "SIGTERM/EOF cleanup must release production listeners"
         );
         assert_production_ports_free();
+    }
+}
+
+impl Drop for StdioServer {
+    /// These tests bind the real production ports. A panic between `spawn` and
+    /// an explicit `kill`/`terminate_sigterm` would otherwise leave a live
+    /// server holding 3056 and 3057 — breaking every later test in this file
+    /// and the developer's own Figma session with it.
+    fn drop(&mut self) {
+        self.stdin.take();
+        let _ = self.child.kill();
+        let _ = self.child.wait();
     }
 }
 
@@ -241,9 +255,7 @@ fn modern_2026_07_28_discover_and_stateless_lists_over_real_stdio() {
 /// the plugin reconnecting against nothing and every follower orphaned.
 #[test]
 fn killing_the_leader_lets_a_follower_reopen_the_plugin_port() {
-    let _guard = STDIO_ERA_LOCK
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
+    let _guard = STDIO_ERA_LOCK.lock().expect("stdio era lock");
 
     let leader = StdioServer::spawn();
     assert!(
@@ -259,11 +271,12 @@ fn killing_the_leader_lets_a_follower_reopen_the_plugin_port() {
         "the frontend port must stay bound while both servers run"
     );
 
-    // Gate: a completed `initialize` proves this process finished
-    // `Supervisor::start` and settled into its role. Without this, the kill
-    // below can land while its one-time startup election is still pending —
-    // that election would then bind the free ports itself, and the test would
-    // pass without any re-election having happened.
+    // Gate: `initialize` completing only proves the process is alive and
+    // answering RPCs — the supervisor now races its own election against
+    // this call, so it does not prove election finished. What actually
+    // proves this process has a backend is the pre-kill `list_files` call
+    // below: an unelected process has an unattached client, which returns
+    // CONNECTION_LOST, so a plain success there is the real gate.
     let initialize = follower.request(json!({
         "jsonrpc": "2.0",
         "id": 1,
@@ -327,6 +340,10 @@ fn killing_the_leader_lets_a_follower_reopen_the_plugin_port() {
         );
         thread::sleep(Duration::from_millis(200));
     };
+    assert!(
+        recovered["result"].is_object(),
+        "the recovered call must return a result, not a protocol-level error frame"
+    );
     assert_ne!(
         recovered["result"]["isError"],
         json!(true),
