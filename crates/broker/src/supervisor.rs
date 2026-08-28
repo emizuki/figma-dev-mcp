@@ -162,6 +162,34 @@ impl Supervisor {
         matches!(self.role, Some(Role::Leader { .. }))
     }
 
+    /// Enter a role and install the backend that serves it.
+    ///
+    /// One of the two mutators of `self.role` and `self.client` after
+    /// construction. They exist as a pair because the two fields carry one
+    /// coupled meaning — a role and the backend that serves it — and nothing
+    /// previously required a detach to accompany an install, which is exactly
+    /// how a dead broker came to stay installed across a re-election.
+    fn install_role(&mut self, role: Role, backend: Backend) {
+        let role_name = if matches!(role, Role::Leader { .. }) {
+            "leader"
+        } else {
+            "follower"
+        };
+        self.client.install(backend);
+        tracing::info!(role = role_name, "installed a new broker backend");
+        self.role = Some(role);
+        self.elected_at = Some(Instant::now());
+    }
+
+    /// Leave the current role and detach the client, so calls arriving before
+    /// the next election fail retryably rather than reaching a dead backend.
+    ///
+    /// Returns the role that was current, so the caller can wind it down.
+    fn clear_role(&mut self) -> Option<Role> {
+        self.client.detach();
+        self.role.take()
+    }
+
     /// Elect a role if there is none, then watch the current backend and
     /// re-elect whenever it dies.
     ///
@@ -179,14 +207,7 @@ impl Supervisor {
                 // separate startup election path to drift out of step with
                 // this one.
                 let (role, backend) = self.elect_next().await;
-                let role_name = if matches!(role, Role::Leader { .. }) {
-                    "leader"
-                } else {
-                    "follower"
-                };
-                self.client.install(backend);
-                tracing::info!(role = role_name, "installed a new broker backend");
-                self.role = Some(role);
+                self.install_role(role, backend);
                 continue;
             };
             let death = role.death().await;
@@ -218,7 +239,7 @@ impl Supervisor {
                 broker,
                 mut listeners,
                 lease,
-            }) = self.role.take()
+            }) = self.clear_role()
             {
                 // Fail the in-flight calls before letting go of the role. Only
                 // one death path does this for us: `ws::serve` cancels the
@@ -247,7 +268,9 @@ impl Supervisor {
     /// on arrival waits. See `MIN_ELECTION_INTERVAL` for why the floor exists.
     /// This is also the very first election when `elected_at` is `None` — there
     /// is no previous role to rate-limit against, so the floor is skipped and
-    /// election runs immediately.
+    /// election runs immediately. The caller's `install_role` is what stamps
+    /// `elected_at` for the role this call produces — this function only reads
+    /// the stamp left by the *previous* one.
     async fn elect_next(&mut self) -> (Role, Backend) {
         if let Some(elected_at) = self.elected_at {
             let alive_for = elected_at.elapsed();
@@ -260,9 +283,7 @@ impl Supervisor {
                 tokio::time::sleep(floor).await;
             }
         }
-        let entered = elect_until_entered(&self.config).await;
-        self.elected_at = Some(Instant::now());
-        entered
+        elect_until_entered(&self.config).await
     }
 
     /// Release the frontend lease, drain, and stop.

@@ -523,3 +523,66 @@ async fn a_supervisor_built_unattached_elects_inside_supervise() {
 
     supervising.abort();
 }
+
+#[tokio::test]
+async fn a_detached_client_stops_answering_through_its_dead_broker() {
+    use super::multi_client::connect_plugin;
+
+    let connection_id = "123e4567-e89b-42d3-a456-426614174091";
+    let broker = Broker::new(BrokerConfig::for_test(Limits::reduced_for_test()).unwrap());
+    let plugin_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let plugin_address = plugin_listener.local_addr().unwrap();
+    let plugin_server = tokio::spawn(broker.clone().serve(plugin_listener));
+    let plugin = connect_plugin(plugin_address, connection_id, "Detach").await;
+    while broker.live_file_count().await != 1 {
+        tokio::task::yield_now().await;
+    }
+
+    let client = BrokerClient::local(broker.clone());
+
+    // Shutting the broker down does NOT clear its SessionRegistry, so a client
+    // still holding it keeps answering with stale data. This half is the proof
+    // that the defect was real — without it the assertion below could pass for
+    // the wrong reason.
+    broker.shutdown().await;
+    let served = client
+        .call(
+            figma_dev_mcp_protocol::wire::BrokerCall::ListFiles {},
+            &tokio_util::sync::CancellationToken::new(),
+        )
+        .await
+        .expect("a shut-down broker that is still installed keeps answering");
+    let figma_dev_mcp_protocol::wire::BrokerResult::Files { result } = served else {
+        panic!("list_files must return a file list");
+    };
+    assert_eq!(
+        result.files.as_slice().len(),
+        1,
+        "the dead broker still serves its stale registry, which is the defect"
+    );
+
+    // Detaching is what turns that confident wrong answer into an honest one.
+    client.detach();
+    assert!(
+        client.local_broker().is_none(),
+        "a detached client has no local Broker"
+    );
+    let error = client
+        .call(
+            figma_dev_mcp_protocol::wire::BrokerCall::ListFiles {},
+            &tokio_util::sync::CancellationToken::new(),
+        )
+        .await
+        .expect_err("a detached client must not answer");
+    assert_eq!(
+        error.code(),
+        figma_dev_mcp_protocol::error::ErrorCode::ConnectionLost
+    );
+    assert!(
+        error.retryable(),
+        "the window between a death and the next election is transient, so the error must be retryable"
+    );
+
+    drop(plugin);
+    let _ = tokio::time::timeout(Duration::from_secs(1), plugin_server).await;
+}

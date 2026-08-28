@@ -94,6 +94,25 @@ impl BrokerClient {
             .expect("broker client backend lock poisoned") = Some(backend);
     }
 
+    /// Drop the current backend, returning to the unattached state.
+    ///
+    /// `install`'s counterpart. The supervisor calls this the moment a role
+    /// dies, so that calls arriving before the next election fail retryably
+    /// instead of being answered by a `Broker` that has been shut down —
+    /// `Broker::shutdown` cancels its token and drains its pending map, but it
+    /// does not clear the `SessionRegistry`, so a dead-but-installed broker
+    /// keeps returning stale answers.
+    ///
+    /// Unlike `install` this is `pub`: installing the wrong backend would
+    /// corrupt routing, but detaching can only turn an answer into a retryable
+    /// error, so it is safe for anyone to call.
+    pub fn detach(&self) {
+        *self
+            .backend
+            .write()
+            .expect("broker client backend lock poisoned") = None;
+    }
+
     /// Clone the current backend out, if there is one. The guard is dropped
     /// before returning, so it can never be held across an await.
     fn backend(&self) -> Option<Backend> {
