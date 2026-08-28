@@ -37,16 +37,62 @@ const PROMPT_NAMES: [&str; 3] = [
     "style_audit_strategy",
 ];
 
+/// Remove ANSI SGR escape sequences (`ESC [ ... m`) from a line.
+///
+/// `tracing_subscriber::fmt()` writes these unconditionally — it does not
+/// check whether the writer is a terminal — so a piped stderr still carries
+/// them. Every occurrence in this codebase's log format is `\x1b[` followed
+/// by digits/semicolons and a terminating `m`, which is all this strips.
+fn strip_ansi(line: &str) -> String {
+    let mut output = String::with_capacity(line.len());
+    let mut chars = line.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' && chars.peek() == Some(&'[') {
+            chars.next();
+            for escaped in chars.by_ref() {
+                if escaped == 'm' {
+                    break;
+                }
+            }
+        } else {
+            output.push(ch);
+        }
+    }
+    output
+}
+
+/// The default: quiet stdout so protocol frames are the only thing on it.
+const LOG_OFF: &[(&str, &str)] = &[("FIGMA_DEV_MCP_LOG", "off")];
+/// For tests that must observe a role transition on stderr and have no other
+/// way to prove it happened (no `initialize`, no tool call to hang a gate on).
+const LOG_INFO: &[(&str, &str)] = &[("FIGMA_DEV_MCP_LOG", "info")];
+
 struct StdioServer {
     child: Child,
     stdin: Option<std::process::ChildStdin>,
     lines: Receiver<String>,
+    stderr_lines: Receiver<String>,
     collected: Vec<String>,
 }
 
 impl StdioServer {
     fn spawn() -> Self {
-        let server = Self::spawn_without_ports();
+        let server = Self::spawn_without_ports(LOG_OFF);
+        server.assert_ports_bound();
+        server
+    }
+
+    /// Like `spawn`, but leaves logging enabled so a test can gate on the
+    /// process's own stderr lines (see `wait_for_stderr`) rather than on
+    /// `initialize`, which the tests that need this are deliberately not
+    /// sending.
+    fn spawn_with_logging() -> Self {
+        let server = Self::spawn_without_ports(LOG_INFO);
+        server.assert_ports_bound();
+        server
+    }
+
+    fn assert_ports_bound(&self) {
         assert!(
             wait_until(Duration::from_secs(5), || {
                 std::net::TcpStream::connect(("127.0.0.1", plugin_port())).is_ok()
@@ -54,27 +100,39 @@ impl StdioServer {
             }),
             "production binary must bind the plugin and frontend listeners"
         );
-        server
     }
 
     /// Spawn without waiting for the listeners. Used by tests where election
     /// cannot succeed, so the ports never come up.
-    fn spawn_without_ports() -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_figma-dev-mcp"))
+    fn spawn_without_ports(env: &[(&str, &str)]) -> Self {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_figma-dev-mcp"));
+        command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .env("FIGMA_DEV_MCP_LOG", "off")
-            .spawn()
-            .expect("production binary must spawn");
+            .stderr(Stdio::piped());
+        for (key, value) in env {
+            command.env(key, value);
+        }
+        let mut child = command.spawn().expect("production binary must spawn");
         let stdin = child.stdin.take().expect("stdin is piped");
         let stdout = child.stdout.take().expect("stdout is piped");
         let stderr = child.stderr.take().expect("stderr is piped");
+        let (stderr_tx, stderr_lines) = mpsc::channel();
         thread::spawn(move || {
-            let mut reader = BufReader::new(stderr);
-            let mut line = String::new();
-            while reader.read_line(&mut line).unwrap_or(0) > 0 {
-                line.clear();
+            let reader = BufReader::new(stderr);
+            for line in reader.lines() {
+                let Ok(line) = line else {
+                    break;
+                };
+                // `tracing_subscriber::fmt()` emits ANSI SGR codes unconditionally,
+                // with no auto-detection of a non-tty writer — stderr is piped
+                // here, but the codes show up anyway. Strip them so a plain
+                // substring match against a field like `role="follower"` isn't
+                // silently split by an escape sequence sitting between the field
+                // name, the `=`, and the value.
+                if stderr_tx.send(strip_ansi(&line)).is_err() {
+                    break;
+                }
             }
         });
         let (tx, lines) = mpsc::channel();
@@ -90,13 +148,39 @@ impl StdioServer {
             }
         });
         // From here the Drop guard is live, so a failed bind assertion in
-        // `spawn` reaps the child instead of leaking it onto the production
-        // ports.
+        // `spawn`/`spawn_with_logging` reaps the child instead of leaking it
+        // onto the production ports.
         Self {
             child,
             stdin: Some(stdin),
             lines,
+            stderr_lines,
             collected: Vec::new(),
+        }
+    }
+
+    /// Wait for a stderr line matching `predicate`. Panics with `message` if
+    /// none arrives within `timeout` — whether because the line never shows up
+    /// or because stderr closed first. Used where `initialize` or a tool call
+    /// can't serve as the gate, because the scenario under test deliberately
+    /// never sends either.
+    fn wait_for_stderr(
+        &self,
+        timeout: Duration,
+        mut predicate: impl FnMut(&str) -> bool,
+        message: &str,
+    ) {
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                panic!("{message}");
+            }
+            match self.stderr_lines.recv_timeout(remaining) {
+                Ok(line) if predicate(&line) => return,
+                Ok(_) => continue,
+                Err(_) => panic!("{message}"),
+            }
         }
     }
 
@@ -178,10 +262,11 @@ impl Drop for StdioServer {
     /// `Self` coming into existence in `spawn` and an explicit
     /// `kill`/`terminate_sigterm` would otherwise leave a live server holding
     /// 3056 and 3057 — breaking every later test in this file and the
-    /// developer's own Figma session with it. `spawn` constructs `Self`
-    /// immediately after taking stdin/stdout/stderr and starting the reader
-    /// threads, before the port-bind assertion, precisely so this guard is
-    /// live for that assertion. The one gap this does not cover: a panic
+    /// developer's own Figma session with it. `spawn_without_ports` constructs
+    /// `Self` immediately after taking stdin/stdout/stderr and starting the
+    /// reader threads, before the port-bind assertion in `spawn` and
+    /// `spawn_with_logging` runs, precisely so this guard is live for that
+    /// assertion. The one gap this does not cover: a panic
     /// during the `Command::spawn` call itself or the three `.take().expect`
     /// calls right after it, before `Self` exists. That window cannot
     /// realistically fire — the pipes were configured on the very same
@@ -443,8 +528,25 @@ fn an_uninitialized_follower_still_reopens_the_plugin_port() {
     let _guard = STDIO_ERA_LOCK.lock().expect("stdio era lock");
 
     let leader = StdioServer::spawn();
-    let follower = StdioServer::spawn();
+    let follower = StdioServer::spawn_with_logging();
     // Deliberately no `initialize` on either process. That is the point.
+
+    // Neither `initialize` nor a tool call can gate here — the whole point of
+    // this test is that this process never gets either. A bare port probe
+    // can't stand in for it either: the parent's path from here to
+    // `leader.kill()` (two connects, `kill`, `waitpid`) is sub-millisecond,
+    // while the child's path to its first election is process exec, dyld,
+    // and tokio runtime construction before `elect()` even dials out. If the
+    // kill lands first, `follower` was never actually attached to `leader` —
+    // its own first election would find both ports free and win them
+    // directly, reopening the port while the follower-death path this test
+    // is named for never ran at all. The follower's own log line is the one
+    // signal that proves attachment happened before the kill.
+    follower.wait_for_stderr(
+        Duration::from_secs(5),
+        |line| line.contains("entered broker role") && line.contains("role=\"follower\""),
+        "the follower must attach to the leader before it dies",
+    );
 
     leader.kill();
 
@@ -467,6 +569,55 @@ fn an_uninitialized_follower_still_reopens_the_plugin_port() {
     assert_production_ports_free();
 }
 
+/// Accepts and holds every connection made to it without ever speaking the
+/// protocol, so every handshake against it times out and an election can
+/// never be entered.
+///
+/// Uses a non-blocking `accept` plus a stop flag, rather than a thread parked
+/// in a blocking `accept()`, so `Drop` can actually join the thread and
+/// release the port — including on an unwind. A plain `stop.store` + `join`
+/// at the end of the test would only cover the happy path; a panic partway
+/// through would leave the thread spinning and holding 3057 for the rest of
+/// the test binary, breaking every test that follows.
+struct Squatter {
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Squatter {
+    fn spawn(listener: std::net::TcpListener) -> Self {
+        listener
+            .set_nonblocking(true)
+            .expect("the squatter must not block its thread forever");
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let thread = std::thread::spawn({
+            let stop = std::sync::Arc::clone(&stop);
+            move || {
+                let mut held = Vec::new();
+                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    match listener.accept() {
+                        Ok((stream, _)) => held.push(stream),
+                        Err(_) => std::thread::sleep(Duration::from_millis(10)),
+                    }
+                }
+            }
+        });
+        Self {
+            stop,
+            thread: Some(thread),
+        }
+    }
+}
+
+impl Drop for Squatter {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
 /// An election that can never succeed must not hang the process. A foreign
 /// listener on the frontend port accepts the connection and never handshakes,
 /// so every election attempt fails — but the MCP service must still answer.
@@ -474,31 +625,11 @@ fn an_uninitialized_follower_still_reopens_the_plugin_port() {
 fn an_election_that_never_succeeds_still_answers_the_client() {
     let _guard = STDIO_ERA_LOCK.lock().expect("stdio era lock");
 
-    let squatter = std::net::TcpListener::bind(("127.0.0.1", frontend_port()))
+    let listener = std::net::TcpListener::bind(("127.0.0.1", frontend_port()))
         .expect("the frontend port must be free before this test");
-    // Non-blocking plus a stop flag, so the thread can be joined and the port
-    // actually released. A thread parked in a blocking `accept()` would hold
-    // 3057 for the rest of the process and break every test that follows.
-    squatter
-        .set_nonblocking(true)
-        .expect("the squatter must not block its thread forever");
-    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let accepting = std::thread::spawn({
-        let stop = std::sync::Arc::clone(&stop);
-        move || {
-            // Accept and hold. Never speak the frontend protocol, so every
-            // handshake times out and the election can never be entered.
-            let mut held = Vec::new();
-            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
-                match squatter.accept() {
-                    Ok((stream, _)) => held.push(stream),
-                    Err(_) => std::thread::sleep(Duration::from_millis(10)),
-                }
-            }
-        }
-    });
+    let squatter = Squatter::spawn(listener);
 
-    let mut server = StdioServer::spawn_without_ports();
+    let mut server = StdioServer::spawn_without_ports(LOG_OFF);
     let initialize = server.request(json!({
         "jsonrpc": "2.0",
         "id": 1,
@@ -527,13 +658,10 @@ fn an_election_that_never_succeeds_still_answers_the_client() {
     );
 
     server.kill();
-    stop.store(true, std::sync::atomic::Ordering::Relaxed);
-    accepting.join().expect("the squatter thread must exit");
-    assert!(
-        wait_until(Duration::from_secs(10), || {
-            std::net::TcpListener::bind(("127.0.0.1", plugin_port())).is_ok()
-        }),
-        "the plugin port must be free once the server is gone"
-    );
+    // This process never bound the plugin port at all — election could never
+    // be entered — so a `plugin_port` bind check here would pass trivially
+    // and prove nothing. `assert_production_ports_free` below covers both
+    // ports for real, once the squatter has actually released 3057.
+    drop(squatter);
     assert_production_ports_free();
 }
