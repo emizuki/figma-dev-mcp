@@ -206,6 +206,14 @@ impl Supervisor {
     /// bounded, not an oversight — but it is a real exception, and this pair is
     /// not exhaustive.
     ///
+    /// `shutdown` also returns early for a follower role without touching
+    /// `self.client` at all, so a follower's client is left attached after
+    /// `shutdown` returns and keeps resolving through its `Backend::remote`
+    /// clone. That is a second bypass of this pair, distinct from the leader
+    /// one above: it is not a stale-data bug, because the leader the follower
+    /// points at is still live and unaffected by this process's shutdown — it
+    /// just means the follower path never detaches.
+    ///
     /// They exist as a pair because the two fields carry one coupled meaning — a
     /// role and the backend that serves it — and nothing previously required a
     /// detach to accompany an install, which is exactly how a dead broker came
@@ -235,13 +243,33 @@ impl Supervisor {
     /// Returns the role that was current, so the caller can wind it down.
     fn clear_role(&mut self) -> Option<Role> {
         self.client.detach();
-        match recycle_log(self.consecutive_immediate_deaths) {
+        match self.death_log() {
             ElectionLog::Full | ElectionLog::Heartbeat => {
                 tracing::info!("detached the broker backend")
             }
             ElectionLog::Quiet => tracing::debug!("detached the broker backend"),
         }
         self.role.take()
+    }
+
+    /// How loudly to report the role that just died, at the two sites — the
+    /// death line in `supervise` and the detach line in `clear_role` — that run
+    /// before `elect_next` updates `consecutive_immediate_deaths`.
+    ///
+    /// `self.consecutive_immediate_deaths` still holds the count left by the
+    /// *previous* cycle at both call sites, so it cannot by itself distinguish
+    /// "this role also died immediately" from "this role ran for hours and then
+    /// died" — the escalation the counter tracks does not apply to a role that
+    /// was healthy. `self.elected_at`, which `install_role` stamped when this
+    /// dying role started and which `clear_role` does not clear, already answers
+    /// that question directly: a role that reached `HEALTHY_ROLE_LIFETIME`
+    /// always reports in full, on its own merit, regardless of how loud the
+    /// prior spin had gone quiet.
+    fn death_log(&self) -> ElectionLog {
+        match self.elected_at {
+            Some(elected_at) if elected_at.elapsed() >= HEALTHY_ROLE_LIFETIME => ElectionLog::Full,
+            _ => recycle_log(self.consecutive_immediate_deaths),
+        }
     }
 
     /// Elect a role if there is none, then watch the current backend and
@@ -265,14 +293,21 @@ impl Supervisor {
                 continue;
             };
             let death = role.death().await;
-            // Read the count after the death, before `elect_next` updates it, so
-            // this line reports how many immediate deaths preceded this one. The
-            // bands therefore lag by one cycle. That is deliberate: the count is
-            // genuinely "how many had happened before this", and shifting the
-            // band by one cycle costs nothing. Do not "fix" it by incrementing
-            // early — the update belongs with the `alive_for` measurement that
-            // decides whether to reset it.
-            let verbosity = recycle_log(self.consecutive_immediate_deaths);
+            // `consecutive_immediate_deaths` is stale here: it still holds the
+            // count from before this death, because `elect_next` — which is
+            // what updates it — has not run yet. That staleness is unbounded in
+            // wall time, not one cycle: a role can run for hours after a long
+            // spin, and this line would otherwise report its death at whatever
+            // band the spin had quieted down to. `death_log` corrects for that
+            // by checking `elected_at` directly, so a death that ended a
+            // healthy role is reported in full on its own merit rather than on
+            // the previous spin's count. That matters here specifically: this
+            // is the only line that names the death cause, and a genuine
+            // `ListenerPanicked` must not be demoted to `debug!` just because
+            // the process spun long ago. Do not "fix" this by incrementing the
+            // counter early — the update still belongs with the `alive_for`
+            // measurement in `elect_next` that decides whether to reset it.
+            let verbosity = self.death_log();
             match (&death, verbosity) {
                 // A panic is a genuine internal bug, not the routine death a
                 // dropped connection or a rejected accept represents. Loud while
