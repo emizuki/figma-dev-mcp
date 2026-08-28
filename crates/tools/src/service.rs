@@ -15,7 +15,8 @@ use rmcp::{
     model::{
         CacheScope, CallToolRequestParams, CallToolResponse, DiscoverResult, ErrorCode,
         GetPromptRequestParams, GetPromptResponse, GetPromptResult, Implementation,
-        ListPromptsResult, ListToolsResult, PaginatedRequestParams, ProtocolVersion,
+        ListPromptsResult, ListResourcesResult, ListToolsResult, PaginatedRequestParams,
+        ProtocolVersion, ReadResourceRequestParams, ReadResourceResponse, ReadResourceResult,
         ServerCapabilities, ServerInfo, Tool,
     },
     service::{RequestContext, RoleServer},
@@ -42,6 +43,7 @@ impl ServerHandler for McpService {
             ServerCapabilities::builder()
                 .enable_tools()
                 .enable_prompts()
+                .enable_resources()
                 .build(),
         )
         .with_server_info(Implementation::new(
@@ -203,6 +205,26 @@ impl ServerHandler for McpService {
             .map(GetPromptResult::into)
             .ok_or_else(|| {
                 McpError::invalid_params(format!("prompt '{}' not found", request.name), None)
+            })
+    }
+
+    async fn list_resources(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, McpError> {
+        Ok(figma_dev_mcp_prompts::resources_catalog())
+    }
+
+    async fn read_resource(
+        &self,
+        request: ReadResourceRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResponse, McpError> {
+        figma_dev_mcp_prompts::read_resource_result(&request.uri)
+            .map(ReadResourceResult::into)
+            .ok_or_else(|| {
+                McpError::invalid_params(format!("resource '{}' not found", request.uri), None)
             })
     }
 }

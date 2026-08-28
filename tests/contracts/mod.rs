@@ -2,6 +2,7 @@
 
 mod allocation;
 mod prompts_catalog;
+mod resources_catalog;
 mod response_accounting;
 mod structured_outputs;
 mod tools_catalog;
@@ -2944,7 +2945,7 @@ const WIRE_SNAPSHOTS: [&str; 3] = [
 
 /// The fingerprint of `WIRE_SNAPSHOTS` at the current wire version, over
 /// LF-normalised bytes so it does not depend on the checkout's line endings.
-const EXPECTED_WIRE_FINGERPRINT: &str = "0xbd759802b174f283";
+const EXPECTED_WIRE_FINGERPRINT: &str = "0xa1a8bc15be026c45";
 
 /// FNV-1a, 64-bit, over the three snapshots in order, separated by a byte that
 /// cannot occur in UTF-8 so moving text between two files still changes it.

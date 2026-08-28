@@ -291,13 +291,45 @@ fn modern_meta() -> Value {
 }
 
 fn assert_tool_catalog(result: &Value) {
-    let names: Vec<&str> = result["tools"]
-        .as_array()
-        .expect("tools list")
+    let tools = result["tools"].as_array().expect("tools list");
+    let names: Vec<&str> = tools
         .iter()
         .map(|tool| tool["name"].as_str().expect("tool name"))
         .collect();
     assert_eq!(names, TOOL_NAMES);
+    assert_no_top_level_combinators(tools);
+}
+
+/// The Anthropic API rejects a tool whose input schema puts `oneOf`, `anyOf`,
+/// or `allOf` at the root, and Claude Code drops such a tool from the catalog
+/// it offers the model. A schema that only reaches the wire is not enough; it
+/// has to reach the model.
+fn assert_no_top_level_combinators(tools: &[Value]) {
+    for tool in tools {
+        let name = tool["name"].as_str().expect("tool name");
+        let schema = tool["inputSchema"].as_object().expect("input schema");
+        for keyword in ["oneOf", "anyOf", "allOf"] {
+            assert!(
+                !schema.contains_key(keyword),
+                "{name} puts {keyword} at the root of its input schema, \
+                 so clients drop the tool before the model ever sees it"
+            );
+        }
+    }
+}
+
+fn assert_resource_catalog(result: &Value) {
+    let uris: Vec<&str> = result["resources"]
+        .as_array()
+        .expect("resources list")
+        .iter()
+        .map(|resource| resource["uri"].as_str().expect("resource uri"))
+        .collect();
+    let expected: Vec<String> = PROMPT_NAMES
+        .iter()
+        .map(|name| format!("figma://strategy/{name}"))
+        .collect();
+    assert_eq!(uris, expected);
 }
 
 fn assert_prompt_catalog(result: &Value) {
@@ -331,6 +363,7 @@ fn modern_2026_07_28_discover_and_stateless_lists_over_real_stdio() {
     assert!(versions.contains(&"2025-11-25"));
     assert!(result["capabilities"]["tools"].is_object());
     assert!(result["capabilities"]["prompts"].is_object());
+    assert!(result["capabilities"]["resources"].is_object());
 
     let tools = server.request(json!({
         "jsonrpc": "2.0",
@@ -351,6 +384,39 @@ fn modern_2026_07_28_discover_and_stateless_lists_over_real_stdio() {
     assert_prompt_catalog(&prompts["result"]);
     assert_eq!(prompts["result"]["ttlMs"], 86_400_000);
     assert_eq!(prompts["result"]["cacheScope"], "public");
+
+    let resources = server.request(json!({
+        "jsonrpc": "2.0",
+        "id": 4,
+        "method": "resources/list",
+        "params": { "_meta": modern_meta() }
+    }));
+    assert_resource_catalog(&resources["result"]);
+    assert_eq!(resources["result"]["ttlMs"], 86_400_000);
+    assert_eq!(resources["result"]["cacheScope"], "public");
+
+    let read = server.request(json!({
+        "jsonrpc": "2.0",
+        "id": 5,
+        "method": "resources/read",
+        "params": {
+            "uri": "figma://strategy/read_design_strategy",
+            "_meta": modern_meta()
+        }
+    }));
+    let contents = read["result"]["contents"]
+        .as_array()
+        .expect("resource contents");
+    assert_eq!(contents.len(), 1);
+    assert_eq!(contents[0]["uri"], "figma://strategy/read_design_strategy");
+    assert_eq!(contents[0]["mimeType"], "text/markdown");
+    assert!(
+        contents[0]["text"]
+            .as_str()
+            .expect("resource text")
+            .contains("get_design_context"),
+        "the strategy body must arrive over real stdio"
+    );
 
     server.terminate_sigterm();
 }

@@ -22,7 +22,7 @@ cargo test --workspace --all-features
 
 Product evidence and official runner evidence are not the same gate.
 
-- **Production stdio eras.** `crates/figma-dev-mcp/tests/stdio_eras.rs` spawns the real `figma-dev-mcp` binary and exercises protocol paths over stdio for `2026-07-28` (including `server/discover`) and legacy `2025-11-25` (`initialize`, `notifications/initialized`, tool and prompt lists). `tests/integration/all_tools.rs` drives the exact 14-tool / three-prompt catalog through production `McpService` with a scripted fake plugin.
+- **Production stdio eras.** `crates/figma-dev-mcp/tests/stdio_eras.rs` spawns the real `figma-dev-mcp` binary and exercises protocol paths over stdio for `2026-07-28` (including `server/discover`) and legacy `2025-11-25` (`initialize`, `notifications/initialized`, tool and prompt lists). `tests/integration/all_tools.rs` drives the exact 14-tool / three-prompt catalog through production `McpService` with a scripted fake plugin, and `tests/integration/strategy_resources.rs` proves the three `figma://strategy/*` resources serve the same bodies as `prompts/get`.
 - **Official lifecycle smoke.** The upstream conformance CLI accepts `--url`, not a stdio command. `scripts/run-conformance.sh` therefore starts the **test-only HTTP adapter** (`tests/src/bin/conformance-server.rs`) and runs the two pinned lifecycle smoke scenarios: modern `server-stateless` (`2026-07-28`) and legacy `server-initialize`. Those two scenarios are **not** a substitute for the production stdio matrix.
 
 Do not treat the two official lifecycle smoke runs as complete product proof. They check lifecycle and handler behavior through the adapter. The production transport, exact catalog, and Figma-facing behavior are proven by the stdio and all-tools tests.
@@ -53,6 +53,6 @@ FIGMA_DEV_MCP_LOG=debug target/release/figma-dev-mcp
 
 ## Related checks
 
-Policy tests in `tests/policy/` snapshot the tool and prompt allowlists, reject mutation APIs, and require these operator documents to keep ports, catalogs, SVG-source behavior, read-only limitations, and the `Origin: null` threat-model caveat accurate.
+Policy tests in `tests/policy/` snapshot the tool, prompt, and strategy-resource allowlists, reject mutation APIs, and require these operator documents to keep ports, catalogs, SVG-source behavior, read-only limitations, and the `Origin: null` threat-model caveat accurate.
 
 Manual Figma checks live in [manual-acceptance.md](manual-acceptance.md). They are a separate external gate from the commands above.

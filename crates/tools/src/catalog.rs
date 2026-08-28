@@ -65,7 +65,7 @@ pub fn tools_catalog() -> ListToolsResult {
         ),
         definition::<GetScreenshotInput, GetScreenshotResult>(
             ToolName::GetScreenshot,
-            "Render bounded nodes or the captured selection as raster or SVG assets. SVG source is always returned, with a `safe` verdict and, when unsafe, a `rejection` naming the rule that fired; safety never withholds the source. The verdict lives only in structured content: the `image/svg+xml` content block is emitted for every SVG asset, safe or not, so a client that previews that block renders an unsafe SVG unlabelled. Treat an unsafe verdict as a caller decision: writing such source to disk can execute a `<script>` element if a browser later opens it. A node the host reports as putting no ink on the page fails with `EMPTY_NODE_BOUNDS` in every format rather than returning an empty asset.",
+            "Render bounded nodes or the captured selection as raster or SVG assets. `format` picks `png`, `jpeg`, or `svg`; `scale` applies to the raster formats only, and `svgOutlineText`, `svgIdAttribute`, and `svgSimplifyStroke` to `svg` only. Passing a field that belongs to another format is rejected. SVG source is always returned, with a `safe` verdict and, when unsafe, a `rejection` naming the rule that fired; safety never withholds the source. The verdict lives only in structured content: the `image/svg+xml` content block is emitted for every SVG asset, safe or not, so a client that previews that block renders an unsafe SVG unlabelled. Treat an unsafe verdict as a caller decision: writing such source to disk can execute a `<script>` element if a browser later opens it. A node the host reports as putting no ink on the page fails with `EMPTY_NODE_BOUNDS` in every format rather than returning an empty asset.",
         ),
         definition::<GetSelectionInput, GetSelectionResult>(
             ToolName::GetSelection,
@@ -85,7 +85,7 @@ pub fn tools_catalog() -> ListToolsResult {
         ),
         definition::<SearchNodesInput, SearchNodesResult>(
             ToolName::SearchNodes,
-            "Search exactly one explicit page or node scope with bounded predicates.",
+            "Search exactly one explicit page or node scope with bounded predicates. At least one of `query` or `types` is required; a call with neither is rejected.",
         ),
     ];
     tools.sort_by(|left, right| left.name.cmp(&right.name));

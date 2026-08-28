@@ -1,5 +1,5 @@
 use figma_dev_mcp_protocol::TOOL_NAMES;
-use figma_dev_mcp_tools::{CACHE_TTL_MS, tools_catalog};
+use figma_dev_mcp_tools::{CACHE_TTL_MS, GetScreenshotInput, tools_catalog};
 use rmcp::model::CacheScope;
 use serde_json::Value;
 use serde_json::json;
@@ -41,7 +41,12 @@ fn screenshot_schema_accepts_each_format_without_top_level_property_blocking() {
         .find(|tool| tool.name == "get_screenshot")
         .expect("screenshot tool must be cataloged")
         .input_schema;
-    assert!(schema.get("additionalProperties").is_none());
+    // The formats are merged into one flat object, so closing the root closes
+    // the schema without hiding any format's own properties.
+    assert_eq!(
+        schema.get("additionalProperties"),
+        Some(&Value::Bool(false))
+    );
 
     let validator = jsonschema::validator_for(&Value::Object((*schema).clone()))
         .expect("screenshot schema must be a valid JSON Schema");
@@ -52,23 +57,46 @@ fn screenshot_schema_accepts_each_format_without_top_level_property_blocking() {
     ] {
         assert!(validator.is_valid(&input), "schema rejected {input}");
     }
+    assert!(
+        !validator.is_valid(&json!({
+            "format": "png",
+            "selector": {"nodeId": "1:2"},
+            "unknown": true
+        })),
+        "a closed root must still reject an unknown field"
+    );
+
+    // Merging the variants costs the schema its per-format pairing: `scale` is
+    // a raster field, but a flat object cannot say so. The contract type is now
+    // the only thing that enforces it, so that is pinned here alongside the
+    // widening it pays for.
+    let crossed = json!({"format": "svg", "selector": {"nodeId": "1:2"}, "scale": 2.0});
+    assert!(
+        validator.is_valid(&crossed),
+        "the flattened schema deliberately no longer carries the pairing"
+    );
+    assert!(
+        serde_json::from_value::<GetScreenshotInput>(crossed).is_err(),
+        "a raster field on an svg request must still be rejected"
+    );
 }
 
 fn assert_closed_object_schema(schema: &Value, tool: &str, direction: &str) {
     assert_object_schema(schema, tool, direction);
-    if schema.get("additionalProperties") == Some(&Value::Bool(false)) {
-        return;
-    }
-    let branches = schema
-        .get("oneOf")
-        .and_then(Value::as_array)
-        .unwrap_or_else(|| panic!("{tool} {direction} schema must be closed"));
-    assert!(
-        branches
-            .iter()
-            .all(|branch| { branch.get("additionalProperties") == Some(&Value::Bool(false)) }),
-        "{tool} {direction} schema branches must be closed"
+    assert_eq!(
+        schema.get("additionalProperties"),
+        Some(&Value::Bool(false)),
+        "{tool} {direction} schema must be closed"
     );
+    // The Anthropic API rejects a root combinator outright, and Claude Code
+    // then drops the tool from the catalog it offers the model. Branches must
+    // be merged into one flat object instead.
+    for keyword in ["oneOf", "anyOf", "allOf"] {
+        assert!(
+            schema.get(keyword).is_none(),
+            "{tool} {direction} schema must not put {keyword} at the root"
+        );
+    }
 }
 
 fn assert_object_schema(schema: &Value, tool: &str, direction: &str) {

@@ -2,6 +2,7 @@
 
 use std::{fs, path::PathBuf};
 
+use figma_dev_mcp_prompts::{RESOURCE_URI_PREFIX, resource_uri};
 use figma_dev_mcp_protocol::wire::{BrokerToPlugin, ReadOperation};
 use figma_dev_mcp_protocol::{PROMPT_NAMES, TOOL_NAMES};
 use figma_dev_mcp_tools::tools_catalog;
@@ -474,6 +475,65 @@ fn documentation_states_exact_ports_tools_and_prompts() {
             .map(|name| (*name).to_owned())
             .collect::<Vec<_>>(),
         "README prompt tables must list exactly the three product prompts"
+    );
+}
+
+/// The body of one `async fn` in a Rust source, from its signature up to the
+/// next item. Returns an empty string when the handler is absent.
+fn handler_body<'a>(source: &'a str, name: &str) -> &'a str {
+    let Some((_, after)) = source.split_once(&format!("async fn {name}(")) else {
+        return "";
+    };
+    let end = ["\n    async fn ", "\n}", "\nfn "]
+        .iter()
+        .filter_map(|boundary| after.find(boundary))
+        .min()
+        .unwrap_or(after.len());
+    &after[..end]
+}
+
+#[test]
+fn documentation_states_the_exact_strategy_resource_uris() {
+    let docs = operator_documentation();
+    for name in PROMPT_NAMES {
+        let uri = resource_uri(name);
+        assert!(
+            docs.contains(&uri),
+            "operator docs must name exact strategy resource {uri}"
+        );
+    }
+    let readme = require_file("README.md");
+    let advertised = readme.matches(RESOURCE_URI_PREFIX).count();
+    assert_eq!(
+        advertised,
+        PROMPT_NAMES.len(),
+        "README must advertise exactly the {} strategy resources",
+        PROMPT_NAMES.len()
+    );
+}
+
+#[test]
+fn serving_a_strategy_resource_never_reaches_the_broker() {
+    let service = require_file("crates/tools/src/service.rs");
+    for handler in ["list_resources", "read_resource"] {
+        let body = handler_body(&service, handler);
+        assert!(!body.is_empty(), "service must handle resources/{handler}");
+        assert!(
+            !body.contains("self.broker"),
+            "{handler} must serve compiled-in text, not a plugin round trip"
+        );
+    }
+
+    let resources = require_file("crates/prompts/src/resources.rs");
+    for forbidden in ["broker", "BrokerClient", "fs::", "File::", "std::net"] {
+        assert!(
+            !resources.contains(forbidden),
+            "the strategy resource catalog must stay static text ({forbidden})"
+        );
+    }
+    assert!(
+        resources.contains("include_str!") || resources.contains("prompt_definitions"),
+        "the strategy resource catalog must reuse the prompt bodies"
     );
 }
 
