@@ -167,6 +167,7 @@ impl Broker {
             connection_id: Some(connection_id.clone()),
             request_id: Some(request_id),
             abort: CancellationToken::new(),
+            owner: Some(self.clone()),
         })
     }
 

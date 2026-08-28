@@ -54,11 +54,10 @@ async fn invoke(
         })
         .await
         .map_err(DispatchError::Tool)?;
-    wait_for_result(broker, open, context).await
+    wait_for_result(open, context).await
 }
 
 async fn wait_for_result(
-    broker: &BrokerClient,
     mut open: OpenCall,
     context: &DispatchContext<'_>,
 ) -> Result<ReadResult, DispatchError> {
@@ -93,18 +92,18 @@ async fn wait_for_result(
                 });
             }
             _ = context.cancellation.cancelled() => {
-                abort_open(broker, &open).await;
+                abort_open(&open).await;
                 return Err(DispatchError::Tool(ToolError::new(
                     ErrorCode::Cancelled,
                     false,
                 )));
             }
             _ = &mut inactivity, if !open.inactivity_timeout.is_zero() => {
-                abort_open(broker, &open).await;
+                abort_open(&open).await;
                 return Err(DispatchError::Tool(ToolError::new(ErrorCode::Timeout, true)));
             }
             _ = &mut total => {
-                abort_open(broker, &open).await;
+                abort_open(&open).await;
                 return Err(DispatchError::Tool(ToolError::new(ErrorCode::Timeout, true)));
             }
         }
@@ -115,12 +114,12 @@ fn sleep_until_deadline(deadline: tokio::time::Instant) -> tokio::time::Sleep {
     tokio::time::sleep_until(deadline)
 }
 
-async fn abort_open(broker: &BrokerClient, open: &OpenCall) {
+async fn abort_open(open: &OpenCall) {
     open.abort.cancel();
-    if let (Some(connection_id), Some(request_id), Some(local)) =
-        (&open.connection_id, &open.request_id, broker.local_broker())
+    if let (Some(connection_id), Some(request_id), Some(owner)) =
+        (&open.connection_id, &open.request_id, &open.owner)
     {
-        let _ = local.cancel(connection_id, request_id).await;
+        let _ = owner.cancel(connection_id, request_id).await;
     }
 }
 

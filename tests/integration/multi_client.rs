@@ -113,7 +113,7 @@ async fn read_raw_frame(stream: &mut TcpStream) -> Vec<u8> {
     body
 }
 
-fn metadata_call(connection_id: Option<&str>) -> BrokerCall {
+pub(super) fn metadata_call(connection_id: Option<&str>) -> BrokerCall {
     BrokerCall::Invoke {
         connection_id: connection_id.map(|value| ConnectionId::try_from(value).unwrap()),
         invocation: Box::new(Invocation {

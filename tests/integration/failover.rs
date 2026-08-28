@@ -351,3 +351,85 @@ async fn a_leader_whose_broker_dies_re_elects_and_rebinds() {
 
     supervising.abort();
 }
+
+#[tokio::test]
+async fn a_cancel_reaches_the_broker_that_opened_the_call() {
+    use super::multi_client::{connect_plugin, metadata_call};
+    use futures_util::StreamExt;
+    use tokio_tungstenite::tungstenite::Message;
+
+    let connection_id = "123e4567-e89b-42d3-a456-426614174090";
+    let opener = Broker::new(BrokerConfig::for_test(Limits::reduced_for_test()).unwrap());
+    let plugin_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let plugin_address = plugin_listener.local_addr().unwrap();
+    let plugin_server = tokio::spawn(opener.clone().serve(plugin_listener));
+    let mut plugin = connect_plugin(plugin_address, connection_id, "Cancel routing").await;
+    while opener.live_file_count().await != 1 {
+        tokio::task::yield_now().await;
+    }
+
+    let client = BrokerClient::local(opener.clone());
+    let open = client
+        .open(metadata_call(Some(connection_id)))
+        .await
+        .unwrap();
+    let request_id = open
+        .request_id
+        .clone()
+        .expect("an invoke carries a request id");
+    let call_connection = open
+        .connection_id
+        .clone()
+        .expect("an invoke carries a connection id");
+
+    // Drain the request the plugin just received, so the next frame we read is
+    // whatever the cancellation produces.
+    loop {
+        let Message::Text(text) = plugin.next().await.unwrap().unwrap() else {
+            continue;
+        };
+        if matches!(
+            serde_json::from_str::<figma_dev_mcp_protocol::wire::BrokerToPlugin>(&text).unwrap(),
+            figma_dev_mcp_protocol::wire::BrokerToPlugin::Request(_)
+        ) {
+            break;
+        }
+    }
+
+    // A different Broker must not be able to cancel this call. This is the
+    // defect: `abort_open` used to re-read the backend cell, so after a swap it
+    // cancelled through whichever Broker was current rather than this one, and
+    // the plugin kept executing an abandoned request to its own deadline.
+    let stranger = Broker::new(BrokerConfig::for_test(Limits::reduced_for_test()).unwrap());
+    assert!(
+        !stranger.cancel(&call_connection, &request_id).await,
+        "a Broker that never opened the call must not be able to cancel it"
+    );
+
+    // The owner recorded on the OpenCall must be able to.
+    let owner = open.owner.clone().expect("a local call records its Broker");
+    assert!(
+        owner.cancel(&call_connection, &request_id).await,
+        "the Broker that opened the call must cancel it"
+    );
+
+    let cancelled = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let Message::Text(text) = plugin.next().await.unwrap().unwrap() else {
+                continue;
+            };
+            if let figma_dev_mcp_protocol::wire::BrokerToPlugin::Cancel(frame) =
+                serde_json::from_str(&text).unwrap()
+            {
+                return frame;
+            }
+        }
+    })
+    .await
+    .expect("the plugin must receive a Cancel frame");
+    assert_eq!(cancelled.request_id, request_id);
+
+    drop(plugin);
+    opener.shutdown().await;
+    let _ = tokio::time::timeout(Duration::from_secs(1), plugin_server).await;
+}

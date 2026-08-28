@@ -300,6 +300,7 @@ impl FrontendClient {
             connection_id: None,
             request_id: None,
             abort,
+            owner: None,
         })
     }
 

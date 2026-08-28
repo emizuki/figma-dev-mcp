@@ -22,6 +22,14 @@ pub struct OpenCall {
     pub connection_id: Option<ConnectionId>,
     pub request_id: Option<RequestId>,
     pub abort: CancellationToken,
+    /// The `Broker` this call was opened against, or `None` when it was opened
+    /// over RPC against a remote leader.
+    ///
+    /// Cancellation must reach *this* broker. The client's backend can be
+    /// swapped mid-call by a re-election, and a `Cancel` sent to a different
+    /// broker finds nothing in its registry, silently does nothing, and leaves
+    /// the plugin executing an abandoned request until its own deadline.
+    pub owner: Option<Broker>,
 }
 
 #[derive(Clone, Debug)]
@@ -128,10 +136,10 @@ impl BrokerClient {
                 }
                 _ = cancellation.cancelled() => {
                     open.abort.cancel();
-                    if let (Some(connection_id), Some(request_id)) =
-                        (&open.connection_id, &open.request_id)
+                    if let (Some(connection_id), Some(request_id), Some(owner)) =
+                        (&open.connection_id, &open.request_id, &open.owner)
                     {
-                        let _ = broker.cancel(connection_id, request_id).await;
+                        let _ = owner.cancel(connection_id, request_id).await;
                     }
                     return Err(ToolError::new(ErrorCode::Cancelled, false));
                 }
@@ -182,6 +190,7 @@ async fn local_open(broker: &Broker, call: BrokerCall) -> Result<OpenCall, ToolE
                 connection_id: None,
                 request_id: None,
                 abort: CancellationToken::new(),
+                owner: None,
             })
         }
         BrokerCall::Invoke {
