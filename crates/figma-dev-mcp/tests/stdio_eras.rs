@@ -75,6 +75,14 @@ impl StdioServer {
                 }
             }
         });
+        let server = Self {
+            child,
+            stdin: Some(stdin),
+            lines,
+            collected: Vec::new(),
+        };
+        // From here the Drop guard is live, so a failed bind assertion below
+        // reaps the child instead of leaking it onto the production ports.
         assert!(
             wait_until(Duration::from_secs(5), || {
                 std::net::TcpStream::connect(("127.0.0.1", plugin_port())).is_ok()
@@ -82,12 +90,7 @@ impl StdioServer {
             }),
             "production binary must bind the plugin and frontend listeners"
         );
-        Self {
-            child,
-            stdin: Some(stdin),
-            lines,
-            collected: Vec::new(),
-        }
+        server
     }
 
     fn request(&mut self, payload: Value) -> Value {
@@ -164,10 +167,19 @@ impl StdioServer {
 }
 
 impl Drop for StdioServer {
-    /// These tests bind the real production ports. A panic between `spawn` and
-    /// an explicit `kill`/`terminate_sigterm` would otherwise leave a live
-    /// server holding 3056 and 3057 — breaking every later test in this file
-    /// and the developer's own Figma session with it.
+    /// These tests bind the real production ports. A panic anywhere between
+    /// `Self` coming into existence in `spawn` and an explicit
+    /// `kill`/`terminate_sigterm` would otherwise leave a live server holding
+    /// 3056 and 3057 — breaking every later test in this file and the
+    /// developer's own Figma session with it. `spawn` constructs `Self`
+    /// immediately after taking stdin/stdout/stderr and starting the reader
+    /// threads, before the port-bind assertion, precisely so this guard is
+    /// live for that assertion. The one gap this does not cover: a panic
+    /// during the `Command::spawn` call itself or the three `.take().expect`
+    /// calls right after it, before `Self` exists. That window cannot
+    /// realistically fire — the pipes were configured on the very same
+    /// `Command` that just spawned successfully — but it is not covered by
+    /// this guard.
     fn drop(&mut self) {
         self.stdin.take();
         let _ = self.child.kill();
