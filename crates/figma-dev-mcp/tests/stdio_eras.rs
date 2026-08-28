@@ -46,6 +46,20 @@ struct StdioServer {
 
 impl StdioServer {
     fn spawn() -> Self {
+        let server = Self::spawn_without_ports();
+        assert!(
+            wait_until(Duration::from_secs(5), || {
+                std::net::TcpStream::connect(("127.0.0.1", plugin_port())).is_ok()
+                    && std::net::TcpStream::connect(("127.0.0.1", frontend_port())).is_ok()
+            }),
+            "production binary must bind the plugin and frontend listeners"
+        );
+        server
+    }
+
+    /// Spawn without waiting for the listeners. Used by tests where election
+    /// cannot succeed, so the ports never come up.
+    fn spawn_without_ports() -> Self {
         let mut child = Command::new(env!("CARGO_BIN_EXE_figma-dev-mcp"))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -75,22 +89,15 @@ impl StdioServer {
                 }
             }
         });
-        let server = Self {
+        // From here the Drop guard is live, so a failed bind assertion in
+        // `spawn` reaps the child instead of leaking it onto the production
+        // ports.
+        Self {
             child,
             stdin: Some(stdin),
             lines,
             collected: Vec::new(),
-        };
-        // From here the Drop guard is live, so a failed bind assertion below
-        // reaps the child instead of leaking it onto the production ports.
-        assert!(
-            wait_until(Duration::from_secs(5), || {
-                std::net::TcpStream::connect(("127.0.0.1", plugin_port())).is_ok()
-                    && std::net::TcpStream::connect(("127.0.0.1", frontend_port())).is_ok()
-            }),
-            "production binary must bind the plugin and frontend listeners"
-        );
-        server
+        }
     }
 
     fn request(&mut self, payload: Value) -> Value {
@@ -425,4 +432,108 @@ fn legacy_2025_11_25_initialize_and_lists_over_real_stdio() {
     assert_prompt_catalog(&prompts["result"]);
 
     server.terminate_sigterm();
+}
+
+/// A follower must notice its leader dying even if its own MCP client has
+/// never sent `initialize`. Supervision used to be driven only after the
+/// stdio service finished its handshake, so an uninitialized follower sat
+/// there while port 3056 stayed shut.
+#[test]
+fn an_uninitialized_follower_still_reopens_the_plugin_port() {
+    let _guard = STDIO_ERA_LOCK.lock().expect("stdio era lock");
+
+    let leader = StdioServer::spawn();
+    let follower = StdioServer::spawn();
+    // Deliberately no `initialize` on either process. That is the point.
+
+    leader.kill();
+
+    assert!(
+        wait_until(Duration::from_secs(20), || port_is_listening(plugin_port())),
+        "an uninitialized follower must re-elect and reopen the plugin port"
+    );
+    assert!(
+        port_is_listening(frontend_port()),
+        "the promoted leader must own the frontend port too"
+    );
+
+    follower.kill();
+    assert!(
+        wait_until(Duration::from_secs(10), || {
+            std::net::TcpListener::bind(("127.0.0.1", plugin_port())).is_ok()
+        }),
+        "both listeners must be released once every server is gone"
+    );
+    assert_production_ports_free();
+}
+
+/// An election that can never succeed must not hang the process. A foreign
+/// listener on the frontend port accepts the connection and never handshakes,
+/// so every election attempt fails — but the MCP service must still answer.
+#[test]
+fn an_election_that_never_succeeds_still_answers_the_client() {
+    let _guard = STDIO_ERA_LOCK.lock().expect("stdio era lock");
+
+    let squatter = std::net::TcpListener::bind(("127.0.0.1", frontend_port()))
+        .expect("the frontend port must be free before this test");
+    // Non-blocking plus a stop flag, so the thread can be joined and the port
+    // actually released. A thread parked in a blocking `accept()` would hold
+    // 3057 for the rest of the process and break every test that follows.
+    squatter
+        .set_nonblocking(true)
+        .expect("the squatter must not block its thread forever");
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let accepting = std::thread::spawn({
+        let stop = std::sync::Arc::clone(&stop);
+        move || {
+            // Accept and hold. Never speak the frontend protocol, so every
+            // handshake times out and the election can never be entered.
+            let mut held = Vec::new();
+            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                match squatter.accept() {
+                    Ok((stream, _)) => held.push(stream),
+                    Err(_) => std::thread::sleep(Duration::from_millis(10)),
+                }
+            }
+        }
+    });
+
+    let mut server = StdioServer::spawn_without_ports();
+    let initialize = server.request(json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": { "name": "stdio-era-squatted", "version": "0.1.0" }
+        }
+    }));
+    assert_eq!(
+        initialize["result"]["serverInfo"]["name"], "figma-dev-mcp",
+        "the process must answer its client even while election keeps failing"
+    );
+
+    server.notify(json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }));
+    let listed = server.request(json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": { "name": "list_files", "arguments": {} }
+    }));
+    assert_eq!(
+        listed["result"]["structuredContent"]["code"], "CONNECTION_LOST",
+        "with no backend the call must fail retryably rather than hang"
+    );
+
+    server.kill();
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    accepting.join().expect("the squatter thread must exit");
+    assert!(
+        wait_until(Duration::from_secs(10), || {
+            std::net::TcpListener::bind(("127.0.0.1", plugin_port())).is_ok()
+        }),
+        "the plugin port must be free once the server is gone"
+    );
+    assert_production_ports_free();
 }
