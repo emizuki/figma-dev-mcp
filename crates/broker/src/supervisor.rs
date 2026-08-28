@@ -125,6 +125,21 @@ pub struct Supervisor {
     /// faster than `MIN_ELECTION_INTERVAL`. `None` before the first election,
     /// where there is no previous role to rate-limit against.
     elected_at: Option<Instant>,
+    /// How long the role that just died actually lived, captured at the death.
+    ///
+    /// `elected_at.elapsed()` answers a different question by the time
+    /// `elect_next` runs: `supervise` has awaited `broker.shutdown()` and
+    /// `listeners.shutdown()` in between, so the elapsed time then covers the
+    /// role's life *plus its teardown*. That distinction is load-bearing. The
+    /// rate limit wants the whole cycle, teardown included — it is bounding how
+    /// often the ports churn. The escalation reset wants the role's life alone:
+    /// scoring a role healthy because its wind-down was slow would zero
+    /// `consecutive_immediate_deaths` and collapse the curve back to the bare
+    /// `MIN_ELECTION_INTERVAL` floor, which is the ten-cycles-a-second spin the
+    /// escalation exists to prevent.
+    ///
+    /// `None` before the first death, where nothing has died to measure.
+    last_role_lifetime: Option<Duration>,
     /// Consecutive role deaths that arrived sooner than `HEALTHY_ROLE_LIFETIME`.
     ///
     /// Zero whenever the last role lived a normal life. `MIN_ELECTION_INTERVAL`
@@ -165,6 +180,7 @@ impl Supervisor {
             role: Some(role),
             elected_at: Some(Instant::now()),
             consecutive_immediate_deaths: 0,
+            last_role_lifetime: None,
         }
     }
 
@@ -182,6 +198,7 @@ impl Supervisor {
             role: None,
             elected_at: None,
             consecutive_immediate_deaths: 0,
+            last_role_lifetime: None,
         }
     }
 
@@ -260,14 +277,18 @@ impl Supervisor {
     /// *previous* cycle at both call sites, so it cannot by itself distinguish
     /// "this role also died immediately" from "this role ran for hours and then
     /// died" — the escalation the counter tracks does not apply to a role that
-    /// was healthy. `self.elected_at`, which `install_role` stamped when this
-    /// dying role started and which `clear_role` does not clear, already answers
-    /// that question directly: a role that reached `HEALTHY_ROLE_LIFETIME`
-    /// always reports in full, on its own merit, regardless of how loud the
-    /// prior spin had gone quiet.
+    /// was healthy. `self.last_role_lifetime`, captured at the death itself,
+    /// answers that question directly: a role that reached
+    /// `HEALTHY_ROLE_LIFETIME` always reports in full, on its own merit,
+    /// regardless of how loud the prior spin had gone quiet.
+    ///
+    /// It reads the captured lifetime rather than `elected_at.elapsed()` so that
+    /// this decision and `elect_next`'s reset decision are made from the same
+    /// number. Reading the clock at two points either side of the teardown let
+    /// them disagree about whether the same role was healthy.
     fn death_log(&self) -> ElectionLog {
-        match self.elected_at {
-            Some(elected_at) if elected_at.elapsed() >= HEALTHY_ROLE_LIFETIME => ElectionLog::Full,
+        match self.last_role_lifetime {
+            Some(lifetime) if lifetime >= HEALTHY_ROLE_LIFETIME => ElectionLog::Full,
             _ => recycle_log(self.consecutive_immediate_deaths),
         }
     }
@@ -293,6 +314,12 @@ impl Supervisor {
                 continue;
             };
             let death = role.death().await;
+            // Measure the role's life HERE, at the death, and not in
+            // `elect_next`. Everything between this line and that call — the
+            // `broker.shutdown()` and `listeners.shutdown()` awaits below — is
+            // teardown, and `elect_next` reading `elected_at.elapsed()` would
+            // count it as time the role was alive. See `last_role_lifetime`.
+            self.last_role_lifetime = self.elected_at.map(|elected_at| elected_at.elapsed());
             // `consecutive_immediate_deaths` is stale here: it still holds the
             // count from before this death, because `elect_next` — which is
             // what updates it — has not run yet. That staleness is unbounded in
@@ -305,8 +332,8 @@ impl Supervisor {
             // is the only line that names the death cause, and a genuine
             // `ListenerPanicked` must not be demoted to `debug!` just because
             // the process spun long ago. Do not "fix" this by incrementing the
-            // counter early — the update still belongs with the `alive_for`
-            // measurement in `elect_next` that decides whether to reset it.
+            // counter early — the update still belongs with the reset decision
+            // in `elect_next`, which reads the same captured lifetime this does.
             let verbosity = self.death_log();
             match (&death, verbosity) {
                 // A panic is a genuine internal bug, not the routine death a
@@ -376,9 +403,15 @@ impl Supervisor {
     /// produces — this function only reads the stamp left by the previous one.
     async fn elect_next(&mut self) -> (Role, Backend) {
         if let Some(elected_at) = self.elected_at {
+            // Two different measurements on purpose; see `last_role_lifetime`.
+            // `alive_for` is elapsed-since-entry, teardown included, because the
+            // delay below rate-limits the whole cycle. `lifetime` is what the
+            // role actually lived, captured at the death, because a slow
+            // wind-down must not score a role healthy and reset the escalation.
             let alive_for = elected_at.elapsed();
+            let lifetime = self.last_role_lifetime.unwrap_or(alive_for);
             // Update before computing the delay: the count includes this death.
-            self.consecutive_immediate_deaths = if alive_for >= HEALTHY_ROLE_LIFETIME {
+            self.consecutive_immediate_deaths = if lifetime >= HEALTHY_ROLE_LIFETIME {
                 0
             } else {
                 self.consecutive_immediate_deaths.saturating_add(1)
