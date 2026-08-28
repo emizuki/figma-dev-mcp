@@ -21,6 +21,7 @@ figma-dev-mcp-tools = { path = "../tools" }
 clap.workspace = true
 rmcp.workspace = true
 tokio.workspace = true
+tracing.workspace = true
 tracing-subscriber.workspace = true
 
 [dev-dependencies]

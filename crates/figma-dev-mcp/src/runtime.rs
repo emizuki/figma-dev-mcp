@@ -44,9 +44,19 @@ pub(crate) async fn run() -> anyhow::Result<()> {
     // Runs on every exit path, including a `serve` that failed to start: the
     // frontend listener may already be accepting followers and the plugin port
     // may already be bound, so an early return here would leave them undrained.
-    supervisor
+    if let Err(error) = supervisor
         .shutdown(Duration::from_secs(IDLE_GRACE_SECS))
         .await
-        .context("broker shutdown failed")?;
+    {
+        // A failing shutdown must not bury why the session actually ended. Both
+        // can fail at once — a broken stdout pipe ends the service while the
+        // leader's `rpc::serve` propagates an accept error — and returning the
+        // shutdown error there would report a consequence as the cause, leaving
+        // the real one in neither the exit code nor the log.
+        if service_result.is_ok() {
+            return Err(anyhow::Error::new(error).context("broker shutdown failed"));
+        }
+        tracing::error!(%error, "broker shutdown failed");
+    }
     service_result
 }
