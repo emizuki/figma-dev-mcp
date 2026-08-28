@@ -1028,3 +1028,88 @@ async fn a_client_stops_answering_once_its_supervisor_has_shut_down() {
          must be retryable rather than a definitive failure"
     );
 }
+
+#[tokio::test]
+async fn a_leader_keeps_trying_the_ipv6_plugin_port_until_it_is_free() {
+    let (plugin_address, frontend_address) = free_addresses().await;
+    let v6 = std::net::SocketAddr::new(
+        std::net::IpAddr::V6(std::net::Ipv6Addr::LOCALHOST),
+        plugin_address.port(),
+    );
+
+    // Squat the IPv6 companion before electing, so `elect`'s v6 bind fails and
+    // the leader has to enter IPv4-only. If this machine has no usable IPv6
+    // loopback, the behaviour under test cannot arise here at all.
+    let Ok(squatter) = tokio::net::TcpListener::bind(v6).await else {
+        return;
+    };
+
+    let supervisor = Supervisor::start(test_config(plugin_address, frontend_address)).await;
+    assert!(supervisor.is_leader(), "the first supervisor must lead");
+
+    // A failed IPv6 bind must never cost us the leader. Making it fatal would
+    // brick every machine with IPv6 disabled, which is far worse than the
+    // stranded-plugin case being fixed.
+    assert!(
+        tokio::net::TcpStream::connect(plugin_address).await.is_ok(),
+        "a failed IPv6 bind must not stop the leader serving IPv4"
+    );
+    assert!(
+        tokio::net::TcpStream::connect(v6).await.is_ok(),
+        "the squatter still holds the IPv6 port at this point"
+    );
+
+    // Release it. Before this fix the leader stayed IPv4-only for the whole life
+    // of the role, so a plugin whose `localhost` resolved to `::1` first found
+    // nothing listening and reconnected forever.
+    drop(squatter);
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if tokio::net::TcpStream::connect(v6).await.is_ok() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the leader must bind the IPv6 plugin port once it is released");
+
+    // Shutdown must still complete. `Supervisor::shutdown` joins its listeners
+    // rather than aborting them, so a retry loop that could not be interrupted
+    // would hang here forever rather than failing.
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        supervisor.shutdown(Duration::from_millis(0)),
+    )
+    .await
+    .expect("shutdown must not hang on the IPv6 retry")
+    .expect("the leader shuts down cleanly");
+}
+
+#[tokio::test]
+async fn a_leader_shuts_down_while_its_ipv6_retry_is_still_waiting() {
+    let (plugin_address, frontend_address) = free_addresses().await;
+    let v6 = std::net::SocketAddr::new(
+        std::net::IpAddr::V6(std::net::Ipv6Addr::LOCALHOST),
+        plugin_address.port(),
+    );
+    let Ok(_squatter) = tokio::net::TcpListener::bind(v6).await else {
+        return;
+    };
+
+    let supervisor = Supervisor::start(test_config(plugin_address, frontend_address)).await;
+    assert!(supervisor.is_leader());
+
+    // The squatter is never released, so the IPv6 retry is still looping when
+    // shutdown arrives. `Supervisor::shutdown` JOINS its listeners rather than
+    // aborting them, so a retry that could not observe the shutdown token would
+    // never be joined and this would hang forever instead of failing — which is
+    // exactly what it did before the token race was added.
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        supervisor.shutdown(Duration::from_millis(0)),
+    )
+    .await
+    .expect("shutdown must interrupt a still-waiting IPv6 retry, not hang on it")
+    .expect("the leader shuts down cleanly");
+}

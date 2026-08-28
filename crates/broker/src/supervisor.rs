@@ -5,6 +5,7 @@
 //! port. The supervisor holds the current role, watches its backend, and
 //! re-enters election when that backend dies.
 
+use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::time::Duration;
 
 use tokio::{net::TcpListener, task::JoinSet, time::Instant};
@@ -28,6 +29,14 @@ const FULL_LOG_ATTEMPTS: u32 = 8;
 /// `RETRY_DELAY_CAP` — so a permanently stuck process stays visible without
 /// flooding the host's captured log.
 const QUIET_HEARTBEAT_ATTEMPTS: u32 = 60;
+/// How long to keep draining sibling listeners for a real failure once one of
+/// them has stopped cleanly.
+///
+/// Sits inside `MIN_ELECTION_INTERVAL`, so in the cascade case — where the whole
+/// point is that the siblings are already unwinding — this costs nothing that
+/// the re-election floor was not going to spend anyway. See `drain_for_cause`.
+const CAUSE_DRAIN_WINDOW: Duration = Duration::from_millis(100);
+
 /// Minimum interval between the start of one role and the start of the next.
 ///
 /// A *successful* election that immediately dies again contains no sleep and no
@@ -78,18 +87,73 @@ impl Role {
     /// listeners keep running. Either way, `join_next()` firing means some
     /// listener stopped, which is sufficient to treat this role as dead. For a
     /// follower it is the RPC connection to the leader closing.
+    ///
+    /// *Which* stop gets reported matters, though. A cascade is a race: when
+    /// `ws::serve` fails an `accept()` it records the error, cancels the shared
+    /// token, and returns `Err` — but that cancellation makes its siblings
+    /// return `Ok(())`, and `join_next()` hands back whichever finished first.
+    /// Reporting that clean stop would name "a listener task stopped" as the
+    /// cause and then discard the real `BrokerError` when `listeners.shutdown()`
+    /// aborts the rest, leaving an fd-exhaustion spin with no cause anywhere in
+    /// the log. So a clean stop is treated as a reason to look at the siblings
+    /// rather than as a cause in itself.
     async fn death(&mut self) -> Death {
         match self {
-            Role::Leader { listeners, .. } => match listeners.join_next().await {
-                Some(Ok(Ok(()))) => Death::ListenerStopped(None),
-                Some(Ok(Err(error))) => Death::ListenerStopped(Some(error)),
-                Some(Err(error)) => Death::ListenerPanicked(error.to_string()),
-                None => Death::ListenerStopped(None),
-            },
+            Role::Leader { listeners, .. } => {
+                let death = classify_join(listeners.join_next().await);
+                if matches!(death, Death::ListenerStopped(None))
+                    && let Some(cause) = drain_for_cause(listeners).await
+                {
+                    return cause;
+                }
+                death
+            }
             Role::Follower { client } => {
                 client.closed().await;
                 Death::LeaderGone
             }
+        }
+    }
+}
+
+/// Read one joined listener as a cause of death.
+fn classify_join(joined: Option<Result<Result<(), BrokerError>, tokio::task::JoinError>>) -> Death {
+    match joined {
+        Some(Ok(Ok(()))) => Death::ListenerStopped(None),
+        Some(Ok(Err(error))) => Death::ListenerStopped(Some(error)),
+        Some(Err(error)) => Death::ListenerPanicked(error.to_string()),
+        None => Death::ListenerStopped(None),
+    }
+}
+
+/// Look through the remaining listeners for a real failure behind a clean stop.
+///
+/// Bounded, and that bound is the whole difficulty: only some death paths cancel
+/// the shared token. `ws::serve` does, so its siblings finish almost at once and
+/// the real error is here within microseconds. `rpc::serve` propagates its
+/// accept error and cancels nothing, so the plugin listeners keep running and
+/// would never arrive. Waiting for them would hang re-election on exactly the
+/// path that still has a working plugin port.
+///
+/// `CAUSE_DRAIN_WINDOW` therefore buys the cascade case without paying for the
+/// non-cascade one, and it is only ever paid when the first result was a clean
+/// stop — which, since nothing else cancels the token while `supervise` holds
+/// the role, already means something went wrong.
+async fn drain_for_cause(listeners: &mut JoinSet<Result<(), BrokerError>>) -> Option<Death> {
+    let deadline = tokio::time::sleep(CAUSE_DRAIN_WINDOW);
+    tokio::pin!(deadline);
+    loop {
+        tokio::select! {
+            // `JoinSet::join_next` is cancel-safe: losing this race removes no
+            // task from the set, so the listeners the caller is about to shut
+            // down are all still there.
+            () = &mut deadline => return None,
+            joined = listeners.join_next() => match joined {
+                None => return None,
+                Some(Ok(Ok(()))) => continue,
+                Some(Ok(Err(error))) => return Some(Death::ListenerStopped(Some(error))),
+                Some(Err(error)) => return Some(Death::ListenerPanicked(error.to_string())),
+            },
         }
     }
 }
@@ -654,12 +718,35 @@ async fn enter_role(outcome: ElectionOutcome, verbosity: ElectionLog) -> Option<
             // tasks: the goal is that the next incident is diagnosable from the
             // log directory alone, without reaching for `lsof`.
             let plugin_address = bound_address(&leader.plugin_listener);
-            let plugin_address_v6 = leader.plugin_listener_v6.as_ref().map(bound_address);
+            // Where the IPv6 companion listener belongs, whether or not `elect`
+            // managed to bind it. Read before the listener moves into its task.
+            let plugin_v6_retry = leader
+                .plugin_listener
+                .local_addr()
+                .ok()
+                .and_then(v6_companion);
+            let plugin_address_v6 = leader
+                .plugin_listener_v6
+                .as_ref()
+                .map(bound_address)
+                .unwrap_or_else(|| match plugin_v6_retry {
+                    // Say which, so the log distinguishes "this port is not
+                    // wanted" from "this port is wanted and not yet held".
+                    Some(address) => format!("retrying {address}"),
+                    None => "none".to_owned(),
+                });
             let frontend_address = bound_address(&leader.frontend_listener);
             let mut listeners = JoinSet::new();
             spawn_listener(&mut listeners, &broker, leader.plugin_listener);
-            if let Some(listener) = leader.plugin_listener_v6 {
-                spawn_listener(&mut listeners, &broker, listener);
+            match leader.plugin_listener_v6 {
+                Some(listener) => spawn_listener(&mut listeners, &broker, listener),
+                // `elect` could not bind it. Keep trying for the life of the
+                // role instead of serving IPv4 only until the role dies.
+                None => {
+                    if let Some(address) = plugin_v6_retry {
+                        listeners.spawn(serve_plugin_v6_when_free(broker.clone(), address));
+                    }
+                }
             }
             let frontend_broker = broker.clone();
             listeners.spawn(frontend_broker.serve_frontends(leader.frontend_listener));
@@ -667,14 +754,14 @@ async fn enter_role(outcome: ElectionOutcome, verbosity: ElectionLog) -> Option<
                 ElectionLog::Full | ElectionLog::Heartbeat => tracing::info!(
                     role = "leader",
                     plugin_address,
-                    plugin_address_v6 = plugin_address_v6.as_deref().unwrap_or("none"),
+                    plugin_address_v6 = plugin_address_v6.as_str(),
                     frontend_address,
                     "entered broker role"
                 ),
                 ElectionLog::Quiet => tracing::debug!(
                     role = "leader",
                     plugin_address,
-                    plugin_address_v6 = plugin_address_v6.as_deref().unwrap_or("none"),
+                    plugin_address_v6 = plugin_address_v6.as_str(),
                     frontend_address,
                     "entered broker role"
                 ),
@@ -729,6 +816,88 @@ async fn enter_role(outcome: ElectionOutcome, verbosity: ElectionLog) -> Option<
     }
 }
 
+/// Serve the IPv6 plugin listener as soon as its address is free.
+///
+/// A failed v6 bind must not be fatal: a machine with IPv6 disabled has to get
+/// an IPv4 leader anyway, and refusing the role there would brick the session
+/// outright — a far worse failure than the one being fixed. But leaving it at a
+/// single `warn!` made the degradation permanent for the role's lifetime.
+/// Whatever held `[::1]:<port>` could release it a second later and this process
+/// would never notice, while a plugin whose `localhost` resolves to `::1` first
+/// found nothing listening and reconnected forever, with one line in the log to
+/// explain it.
+///
+/// Retrying inside the role fixes that without making the bind fatal. While the
+/// bind keeps failing this task never returns, so it cannot itself be mistaken
+/// for a dead backend; once it binds it becomes an ordinary listener and its
+/// failure is an ordinary death.
+async fn serve_plugin_v6_when_free(broker: Broker, address: SocketAddr) -> Result<(), BrokerError> {
+    // Racing the shutdown token is not optional. While the bind keeps failing
+    // the loop below never returns, and `Supervisor::shutdown` JOINS its
+    // listeners rather than aborting them — so without this arm a leader whose
+    // `[::1]` port stayed occupied could never shut down at all. Only the
+    // waiting is raced; once a listener exists, `serve` observes the same token
+    // itself and gets to close its sockets in the usual way.
+    let listener = tokio::select! {
+        () = broker.cancelled() => return Ok(()),
+        listener = bind_v6_when_free(address) => listener,
+    };
+    tracing::info!(%address, "bound the IPv6 plugin listener");
+    broker.serve(listener).await
+}
+
+/// Retry the IPv6 bind until it succeeds. Never gives up, never returns early.
+async fn bind_v6_when_free(address: SocketAddr) -> TcpListener {
+    let mut delay = RETRY_DELAY_BASE;
+    let mut attempt = 1_u32;
+    loop {
+        match TcpListener::bind(address).await {
+            Ok(listener) => return listener,
+            // Gated on the same bands as the election retry: this loop also runs
+            // without a bound, so a permanently occupied `[::1]` would otherwise
+            // write into the host's captured log for as long as the process lives.
+            Err(error) => match election_log(attempt) {
+                ElectionLog::Full => tracing::warn!(
+                    %error,
+                    %address,
+                    attempt,
+                    "failed to bind the IPv6 plugin listener; serving IPv4 only and retrying"
+                ),
+                ElectionLog::Heartbeat => tracing::warn!(
+                    %error,
+                    %address,
+                    attempt,
+                    "the IPv6 plugin listener is still unavailable; serving IPv4 only"
+                ),
+                ElectionLog::Quiet => tracing::debug!(
+                    %error,
+                    %address,
+                    attempt,
+                    "retrying the IPv6 plugin bind"
+                ),
+            },
+        }
+        tokio::time::sleep(delay).await;
+        delay = (delay * 2).min(RETRY_DELAY_CAP);
+        attempt = attempt.wrapping_add(1);
+    }
+}
+
+/// The IPv6 loopback address that pairs with a bound IPv4 loopback plugin port.
+///
+/// `None` when there is no pair to want: a plugin listener that is not on IPv4
+/// loopback is not a case where `localhost` resolving to `::1` can strand the
+/// plugin. Mirrors the predicate `elect` uses when it binds the two together, so
+/// the retry covers exactly the cases the original bind attempted.
+fn v6_companion(plugin_address: SocketAddr) -> Option<SocketAddr> {
+    match plugin_address {
+        SocketAddr::V4(v4) if v4.ip().is_loopback() => {
+            Some(SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), v4.port()))
+        }
+        _ => None,
+    }
+}
+
 fn spawn_listener(
     listeners: &mut JoinSet<Result<(), BrokerError>>,
     broker: &Broker,
@@ -748,11 +917,56 @@ fn bound_address(listener: &TcpListener) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::v6_companion;
+
+    #[test]
+    fn an_ipv4_loopback_plugin_port_wants_the_same_port_on_ipv6() {
+        let companion = v6_companion("127.0.0.1:3056".parse::<SocketAddr>().unwrap())
+            .expect("an IPv4 loopback plugin port has an IPv6 companion");
+        assert_eq!(
+            companion,
+            "[::1]:3056".parse::<SocketAddr>().unwrap(),
+            "the companion must be ::1 on the SAME port — a plugin resolving \
+             `localhost` to ::1 connects to the port it was told, not another"
+        );
+    }
+
+    #[test]
+    fn the_companion_follows_an_ephemeral_port() {
+        // Tests bind port 0 and get an arbitrary port; the retry must chase
+        // whatever was actually bound, not the configured value.
+        let companion = v6_companion("127.0.0.1:49711".parse::<SocketAddr>().unwrap()).unwrap();
+        assert_eq!(companion.port(), 49711);
+    }
+
+    #[test]
+    fn only_ipv4_loopback_has_a_companion() {
+        // Mirrors the predicate `elect` uses when it binds the pair. If these
+        // two ever disagree, the retry would chase an address the original bind
+        // never wanted, or skip one it did.
+        assert_eq!(
+            v6_companion("0.0.0.0:3056".parse::<SocketAddr>().unwrap()),
+            None,
+            "a wildcard bind already accepts what it is going to accept"
+        );
+        assert_eq!(
+            v6_companion("192.168.1.10:3056".parse::<SocketAddr>().unwrap()),
+            None,
+            "a non-loopback plugin port is not the localhost-resolution case"
+        );
+        assert_eq!(
+            v6_companion("[::1]:3056".parse::<SocketAddr>().unwrap()),
+            None,
+            "an IPv6 listener needs no IPv6 companion"
+        );
+    }
+
     use super::{
         ElectionLog, FULL_LOG_ATTEMPTS, FULL_LOG_RECYCLES, HEALTHY_ROLE_LIFETIME,
         MIN_ELECTION_INTERVAL, QUIET_HEARTBEAT_ATTEMPTS, QUIET_HEARTBEAT_RECYCLES, RETRY_DELAY_CAP,
         election_log, recycle_delay, recycle_log,
     };
+    use std::net::SocketAddr;
     use std::time::Duration;
 
     #[test]

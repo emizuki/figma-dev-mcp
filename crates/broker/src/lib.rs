@@ -198,6 +198,15 @@ impl Broker {
         self.state.activity.frontend_lease()
     }
 
+    /// Resolves when this broker has been shut down.
+    ///
+    /// For a listener task that is not yet serving a socket and so has no other
+    /// way to notice — the IPv6 retry in `supervisor`. Everything else observes
+    /// the same token from inside `ws::serve`/`rpc::serve`.
+    pub(crate) async fn cancelled(&self) {
+        self.state.shutdown.cancelled().await;
+    }
+
     pub async fn wait_until_idle(&self, grace: Duration) {
         let mut changes = self.state.activity.subscribe();
         loop {
