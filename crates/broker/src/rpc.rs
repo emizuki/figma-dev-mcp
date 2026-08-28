@@ -283,7 +283,7 @@ impl FrontendClient {
         let abort_watch = abort.clone();
         let commands = self.commands.clone();
         let cancel_id = rpc_request_id.clone();
-        tokio::spawn(async move {
+        let watcher = tokio::spawn(async move {
             abort_watch.cancelled().await;
             let _ = commands.send(ClientCommandMessage::Cancel(cancel_id)).await;
         });
@@ -301,6 +301,7 @@ impl FrontendClient {
             request_id: None,
             abort,
             owner: None,
+            watcher: Some(watcher),
         })
     }
 

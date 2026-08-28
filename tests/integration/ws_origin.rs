@@ -238,11 +238,10 @@ async fn wrong_socket_response_cannot_complete_a_real_pending_request() {
     }
 
     let first_id = ConnectionId::try_from("123e4567-e89b-42d3-a456-426614174000").unwrap();
-    let mut receiver = broker
+    let mut call = broker
         .invoke(&first_id, metadata_request("request-1"))
         .await
-        .unwrap()
-        .result;
+        .unwrap();
     let wrong_response = serde_json::to_string(&json!({
         "type": "error", "requestId": "request-1",
         "error": {"code": "INTERNAL_ERROR", "retryable": false}
@@ -265,7 +264,7 @@ async fn wrong_socket_response_cannot_complete_a_real_pending_request() {
     .expect("wrong socket frame must be processed before the isolation assertion");
     tokio::task::yield_now().await;
     assert!(matches!(
-        receiver.try_recv(),
+        call.result.try_recv(),
         Err(tokio::sync::oneshot::error::TryRecvError::Empty)
     ));
     first
@@ -279,7 +278,7 @@ async fn wrong_socket_response_cannot_complete_a_real_pending_request() {
         ))
         .await
         .unwrap();
-    assert!(receiver.await.unwrap().is_err());
+    assert!((&mut call.result).await.unwrap().is_err());
     task.abort();
 }
 
@@ -298,17 +297,17 @@ async fn broker_shutdown_and_deadlines_resolve_pending_requests() {
         tokio::time::sleep(std::time::Duration::from_millis(1)).await;
     }
     let connection_id = ConnectionId::try_from("123e4567-e89b-42d3-a456-426614174000").unwrap();
-    let timeout = broker
+    let mut timeout = broker
         .invoke(&connection_id, metadata_request("timeout"))
         .await
         .unwrap();
-    let shutdown = broker
+    let mut shutdown = broker
         .invoke(&connection_id, metadata_request("shutdown"))
         .await
         .unwrap();
     broker.shutdown().await;
-    assert!(timeout.result.await.unwrap().is_err());
-    assert!(shutdown.result.await.unwrap().is_err());
+    assert!((&mut timeout.result).await.unwrap().is_err());
+    assert!((&mut shutdown.result).await.unwrap().is_err());
     task.abort();
 }
 
@@ -328,13 +327,12 @@ async fn cancellation_reaches_the_owning_plugin_and_resolves_once() {
     }
     let connection_id = ConnectionId::try_from("123e4567-e89b-42d3-a456-426614174000").unwrap();
     let request_id = figma_dev_mcp_protocol::domain::RequestId::try_from("cancel-me").unwrap();
-    let receiver = broker
+    let mut call = broker
         .invoke(&connection_id, metadata_request(request_id.as_str()))
         .await
-        .unwrap()
-        .result;
+        .unwrap();
     assert!(broker.cancel(&connection_id, &request_id).await);
-    assert!(receiver.await.unwrap().is_err());
+    assert!((&mut call.result).await.unwrap().is_err());
 
     let mut saw_cancel = false;
     for _ in 0..4 {
@@ -368,11 +366,10 @@ async fn write_failure_cleans_session_and_allows_same_connection_id_to_reconnect
         tokio::time::sleep(std::time::Duration::from_millis(1)).await;
     }
     let connection_id = ConnectionId::try_from("123e4567-e89b-42d3-a456-426614174000").unwrap();
-    let receiver = broker
+    let mut call = broker
         .invoke(&connection_id, metadata_request("reset-request"))
         .await
-        .unwrap()
-        .result;
+        .unwrap();
     // Force a TCP reset so the server's pending WebSocket write observes an error.
     #[allow(deprecated)]
     if let tokio_tungstenite::MaybeTlsStream::Plain(stream) = socket.get_mut() {
@@ -389,7 +386,7 @@ async fn write_failure_cleans_session_and_allows_same_connection_id_to_reconnect
     })
     .await
     .expect("reset socket must be removed");
-    assert!(receiver.await.unwrap().is_err());
+    assert!((&mut call.result).await.unwrap().is_err());
 
     let (mut replacement, _) = connect_async(request(address, Some("null"))).await.unwrap();
     replacement

@@ -30,6 +30,30 @@ pub struct OpenCall {
     /// broker finds nothing in its registry, silently does nothing, and leaves
     /// the plugin executing an abandoned request until its own deadline.
     pub owner: Option<Broker>,
+    /// The task watching `abort` for a remote call, so it can be stopped when
+    /// it can no longer be needed.
+    ///
+    /// `FrontendClient::open` spawns a task that waits on `abort` and then
+    /// sends a `Cancel` to the leader. On the success path `abort` is never
+    /// cancelled, and that task holds a clone of the token, so dropping this
+    /// `OpenCall` does not resolve its future — it would wait forever. `None`
+    /// for locally-served calls, which cancel through `owner` instead.
+    pub watcher: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl Drop for OpenCall {
+    fn drop(&mut self) {
+        // Only abort a watcher that can no longer do its job. If the token was
+        // cancelled, the watcher is on its way to sending the `Cancel` frame —
+        // and on the remote path it is the only thing that can send it — so
+        // aborting here would swallow a real cancellation. It ends on its own
+        // once that send completes.
+        if let Some(watcher) = self.watcher.take()
+            && !self.abort.is_cancelled()
+        {
+            watcher.abort();
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -225,6 +249,7 @@ async fn local_open(broker: &Broker, call: BrokerCall) -> Result<OpenCall, ToolE
                 request_id: None,
                 abort: CancellationToken::new(),
                 owner: None,
+                watcher: None,
             })
         }
         BrokerCall::Invoke {
