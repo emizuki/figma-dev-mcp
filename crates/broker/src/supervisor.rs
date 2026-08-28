@@ -46,6 +46,14 @@ const MIN_ELECTION_INTERVAL: Duration = RETRY_DELAY_BASE;
 /// the supervisor will ever impose is treated as healthy. A role that keeps
 /// dying faster than this is not recovering, it is thrashing.
 const HEALTHY_ROLE_LIFETIME: Duration = RETRY_DELAY_CAP;
+/// Recycles reported in full before the loop goes quiet. Three is enough to show
+/// the death cause, the election, and the role that replaced it — the whole
+/// diagnosis. Past that the same lines repeat verbatim.
+const FULL_LOG_RECYCLES: u32 = 3;
+/// Once quiet, one `warn!` every this many recycles — about one a minute once the
+/// delay has escalated to `RETRY_DELAY_CAP` — so a permanently spinning process
+/// stays visible without flooding the host's captured log.
+const QUIET_HEARTBEAT_RECYCLES: u32 = 12;
 
 /// The role this process currently holds.
 enum Role {
@@ -150,7 +158,7 @@ impl Supervisor {
     #[doc(hidden)]
     pub async fn start(config: BrokerConfig) -> Self {
         tracing::info!("running the first broker election");
-        let (role, backend) = elect_until_entered(&config).await;
+        let (role, backend) = elect_until_entered(&config, ElectionLog::Full).await;
         Self {
             config,
             client: BrokerClient::new(backend),
@@ -204,7 +212,14 @@ impl Supervisor {
             "follower"
         };
         self.client.install(backend);
-        tracing::info!(role = role_name, "installed a new broker backend");
+        match recycle_log(self.consecutive_immediate_deaths) {
+            ElectionLog::Full | ElectionLog::Heartbeat => {
+                tracing::info!(role = role_name, "installed a new broker backend")
+            }
+            ElectionLog::Quiet => {
+                tracing::debug!(role = role_name, "installed a new broker backend")
+            }
+        }
         self.role = Some(role);
         self.elected_at = Some(Instant::now());
     }
@@ -215,7 +230,12 @@ impl Supervisor {
     /// Returns the role that was current, so the caller can wind it down.
     fn clear_role(&mut self) -> Option<Role> {
         self.client.detach();
-        tracing::info!("detached the broker backend");
+        match recycle_log(self.consecutive_immediate_deaths) {
+            ElectionLog::Full | ElectionLog::Heartbeat => {
+                tracing::info!("detached the broker backend")
+            }
+            ElectionLog::Quiet => tracing::debug!("detached the broker backend"),
+        }
         self.role.take()
     }
 
@@ -240,15 +260,28 @@ impl Supervisor {
                 continue;
             };
             let death = role.death().await;
-            match &death {
+            // Read the count after the death, before `elect_next` updates it, so
+            // this line reports how many immediate deaths preceded this one. The
+            // bands therefore lag by one cycle. That is deliberate: the count is
+            // genuinely "how many had happened before this", and shifting the
+            // band by one cycle costs nothing. Do not "fix" it by incrementing
+            // early — the update belongs with the `alive_for` measurement that
+            // decides whether to reset it.
+            let verbosity = recycle_log(self.consecutive_immediate_deaths);
+            match (&death, verbosity) {
                 // A panic is a genuine internal bug, not the routine death a
-                // dropped connection or a rejected accept represents. Log it
-                // loudly even though re-election swallows it the same way.
-                Death::ListenerPanicked(_) => {
+                // dropped connection or a rejected accept represents. Loud while
+                // the cycle is still being reported at all.
+                (Death::ListenerPanicked(_), ElectionLog::Full | ElectionLog::Heartbeat) => {
                     tracing::error!(cause = %death, "broker backend died, re-electing")
                 }
-                Death::LeaderGone | Death::ListenerStopped(_) => {
+                (_, ElectionLog::Full | ElectionLog::Heartbeat) => {
                     tracing::warn!(cause = %death, "broker backend died, re-electing")
+                }
+                // A spin repeats the same cause verbatim; the recycle heartbeat
+                // is what keeps the condition visible.
+                (_, ElectionLog::Quiet) => {
+                    tracing::debug!(cause = %death, "broker backend died, re-electing")
                 }
             }
 
@@ -318,16 +351,32 @@ impl Supervisor {
                 .checked_sub(alive_for)
                 .filter(|floor| !floor.is_zero())
             {
-                tracing::warn!(
-                    alive_ms = alive_for.as_millis() as u64,
-                    floor_ms = floor.as_millis() as u64,
-                    consecutive = self.consecutive_immediate_deaths,
-                    "the previous role died immediately, delaying re-election"
-                );
+                match recycle_log(self.consecutive_immediate_deaths) {
+                    ElectionLog::Full => tracing::warn!(
+                        alive_ms = alive_for.as_millis() as u64,
+                        floor_ms = floor.as_millis() as u64,
+                        consecutive = self.consecutive_immediate_deaths,
+                        "the previous role died immediately, delaying re-election"
+                    ),
+                    // The heartbeat names the condition rather than the cycle.
+                    // One line a minute saying the role keeps dying is worth more
+                    // to whoever reads this log than a verbatim transcript.
+                    ElectionLog::Heartbeat => tracing::warn!(
+                        consecutive = self.consecutive_immediate_deaths,
+                        delay_ms = delay.as_millis() as u64,
+                        "the broker role keeps dying on arrival; recycling slowly"
+                    ),
+                    ElectionLog::Quiet => tracing::debug!(
+                        alive_ms = alive_for.as_millis() as u64,
+                        floor_ms = floor.as_millis() as u64,
+                        consecutive = self.consecutive_immediate_deaths,
+                        "the previous role died immediately, delaying re-election"
+                    ),
+                }
                 tokio::time::sleep(floor).await;
             }
         }
-        elect_until_entered(&self.config).await
+        elect_until_entered(&self.config, recycle_log(self.consecutive_immediate_deaths)).await
     }
 
     /// Release the frontend lease, drain, and stop.
@@ -375,11 +424,23 @@ impl Supervisor {
 /// and refusing handshakes — is usually transient, and giving up would brick
 /// this session permanently, which is the bug being fixed. Meanwhile calls fail
 /// with a retryable error, never worse than before.
-async fn elect_until_entered(config: &BrokerConfig) -> (Role, Backend) {
+async fn elect_until_entered(config: &BrokerConfig, ceiling: ElectionLog) -> (Role, Backend) {
     let mut delay = RETRY_DELAY_BASE;
     let mut attempt = 1_u32;
     loop {
-        let verbosity = election_log(attempt);
+        let verbosity = match (election_log(attempt), ceiling) {
+            // Not spinning: the election reports at its own discretion, as before.
+            (level, ElectionLog::Full) => level,
+            // Spinning, and this election is now stuck too. Its own heartbeat
+            // must survive the ceiling: a spin whose next election never returns
+            // stops recycling, so no recycle heartbeat can fire either, and
+            // suppressing this one as well would take the process silent
+            // in the worst state it can reach.
+            (ElectionLog::Heartbeat, _) => ElectionLog::Heartbeat,
+            // Spinning and electing normally: the fresh `attempt = 1` on every
+            // cycle would otherwise keep these lines at full volume forever.
+            _ => ElectionLog::Quiet,
+        };
         if verbosity == ElectionLog::Full {
             tracing::info!(attempt, "starting broker election");
         }
@@ -468,6 +529,23 @@ fn recycle_delay(consecutive: u32) -> Duration {
     MIN_ELECTION_INTERVAL
         .saturating_mul(1u32 << doublings)
         .min(RETRY_DELAY_CAP)
+}
+
+/// How loudly one recycle should be reported.
+///
+/// The counterpart to `election_log`, for the outer loop. `election_log` bounds a
+/// single election that never succeeds; this bounds a succession of elections
+/// that each succeed and then immediately die. They are separate counters
+/// because they are separate failures — and because `attempt` resets on every
+/// re-election, which is exactly why the existing gate cannot see a spin.
+fn recycle_log(consecutive: u32) -> ElectionLog {
+    if consecutive <= FULL_LOG_RECYCLES {
+        ElectionLog::Full
+    } else if consecutive.is_multiple_of(QUIET_HEARTBEAT_RECYCLES) {
+        ElectionLog::Heartbeat
+    } else {
+        ElectionLog::Quiet
+    }
 }
 
 /// Turn an election outcome into a role plus the backend that serves it.
@@ -570,8 +648,9 @@ fn bound_address(listener: &TcpListener) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        ElectionLog, FULL_LOG_ATTEMPTS, HEALTHY_ROLE_LIFETIME, MIN_ELECTION_INTERVAL,
-        QUIET_HEARTBEAT_ATTEMPTS, RETRY_DELAY_CAP, election_log, recycle_delay,
+        ElectionLog, FULL_LOG_ATTEMPTS, FULL_LOG_RECYCLES, HEALTHY_ROLE_LIFETIME,
+        MIN_ELECTION_INTERVAL, QUIET_HEARTBEAT_ATTEMPTS, QUIET_HEARTBEAT_RECYCLES, RETRY_DELAY_CAP,
+        election_log, recycle_delay, recycle_log,
     };
     use std::time::Duration;
 
@@ -668,6 +747,41 @@ mod tests {
             HEALTHY_ROLE_LIFETIME >= RETRY_DELAY_CAP,
             "a role that survived the maximum backoff must count as healthy, or the \
              escalation could never reset once it reached the cap"
+        );
+    }
+
+    #[test]
+    fn the_first_recycles_are_reported_in_full() {
+        for consecutive in 0..=FULL_LOG_RECYCLES {
+            assert_eq!(
+                recycle_log(consecutive),
+                ElectionLog::Full,
+                "recycle {consecutive} is still inside the diagnosable band"
+            );
+        }
+    }
+
+    #[test]
+    fn a_sustained_spin_goes_quiet() {
+        assert_eq!(recycle_log(FULL_LOG_RECYCLES + 1), ElectionLog::Quiet);
+        assert_eq!(recycle_log(FULL_LOG_RECYCLES + 2), ElectionLog::Quiet);
+    }
+
+    #[test]
+    fn a_sustained_spin_still_reports_periodically() {
+        assert_eq!(
+            recycle_log(QUIET_HEARTBEAT_RECYCLES),
+            ElectionLog::Heartbeat,
+            "a process whose role keeps dying must stay visible in the log"
+        );
+        assert_eq!(
+            recycle_log(QUIET_HEARTBEAT_RECYCLES * 2),
+            ElectionLog::Heartbeat
+        );
+        assert_eq!(
+            recycle_log(QUIET_HEARTBEAT_RECYCLES + 1),
+            ElectionLog::Quiet,
+            "only the heartbeat recycle itself is loud"
         );
     }
 }
