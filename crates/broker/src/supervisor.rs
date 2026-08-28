@@ -131,7 +131,17 @@ impl Supervisor {
                 Some(role) => role.death().await,
                 None => return,
             };
-            tracing::warn!(cause = %death, "broker backend died, re-electing");
+            match &death {
+                // A panic is a genuine internal bug, not the routine death a
+                // dropped connection or a rejected accept represents. Log it
+                // loudly even though re-election swallows it the same way.
+                Death::ListenerPanicked(_) => {
+                    tracing::error!(cause = %death, "broker backend died, re-electing")
+                }
+                Death::LeaderGone | Death::ListenerStopped(_) => {
+                    tracing::warn!(cause = %death, "broker backend died, re-electing")
+                }
+            }
 
             // Drop the old role's sockets before re-electing, and wait for it.
             // `JoinSet`'s `Drop` only calls `abort()` on each task, which merely
@@ -216,7 +226,7 @@ impl Supervisor {
             match joined {
                 Ok(Err(error)) if result.is_ok() => result = Err(error),
                 Ok(_) => {}
-                Err(error) => tracing::warn!(%error, "broker listener task panicked"),
+                Err(error) => tracing::error!(%error, "broker listener task panicked"),
             }
         }
         result
