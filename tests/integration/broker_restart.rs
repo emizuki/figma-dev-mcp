@@ -1,4 +1,13 @@
 //! Leader loss and restart do not replay in-flight plugin work.
+//!
+//! Broker-level restart behaviour.
+//!
+//! These tests build their leader by hand rather than through `Supervisor`, on
+//! purpose: the subject is what a `Broker` does when it is torn down and
+//! replaced, not how the process assembles a role around one. `runtime.rs`
+//! covers the latter. The hand-built shape predates `Supervisor` but is retained
+//! deliberately — routing it through the supervisor would put a re-election
+//! between these tests and the behaviour they assert.
 
 use std::time::Duration;
 
