@@ -55,7 +55,7 @@ impl Backend {
 /// than the backend is what lets the stdio MCP service survive that transition.
 #[derive(Clone, Debug)]
 pub struct BrokerClient {
-    backend: Arc<RwLock<Backend>>,
+    backend: Arc<RwLock<Option<Backend>>>,
 }
 
 impl BrokerClient {
@@ -67,9 +67,21 @@ impl BrokerClient {
         Self::new(Backend::remote(client))
     }
 
+    /// A client with no backend yet.
+    ///
+    /// The process holds one of these between start and its first election, so
+    /// the MCP service can be up and answering before a leader exists. Calls
+    /// made in that window fail retryably rather than hanging, which is the
+    /// whole reason the first election is no longer allowed to block startup.
+    pub fn unattached() -> Self {
+        Self {
+            backend: Arc::new(RwLock::new(None)),
+        }
+    }
+
     pub(crate) fn new(backend: Backend) -> Self {
         Self {
-            backend: Arc::new(RwLock::new(backend)),
+            backend: Arc::new(RwLock::new(Some(backend))),
         }
     }
 
@@ -79,12 +91,12 @@ impl BrokerClient {
         *self
             .backend
             .write()
-            .expect("broker client backend lock poisoned") = backend;
+            .expect("broker client backend lock poisoned") = Some(backend);
     }
 
-    /// Clone the current backend out. The guard is dropped before returning, so
-    /// it can never be held across an await.
-    fn backend(&self) -> Backend {
+    /// Clone the current backend out, if there is one. The guard is dropped
+    /// before returning, so it can never be held across an await.
+    fn backend(&self) -> Option<Backend> {
         self.backend
             .read()
             .expect("broker client backend lock poisoned")
@@ -93,10 +105,9 @@ impl BrokerClient {
 
     /// The local `Broker`, when this process is currently the leader.
     ///
-    /// Cancellation paths need it to send a `Cancel` frame to the plugin; a
-    /// follower cancels over RPC instead and gets `None` here.
+    /// `None` when this process is a follower, or when it has not yet elected.
     pub fn local_broker(&self) -> Option<Broker> {
-        match self.backend() {
+        match self.backend()? {
             Backend::Local(broker) => Some(broker),
             Backend::Remote(_) => None,
         }
@@ -104,8 +115,9 @@ impl BrokerClient {
 
     pub async fn open(&self, call: BrokerCall) -> Result<OpenCall, ToolError> {
         match self.backend() {
-            Backend::Local(broker) => local_open(&broker, call).await,
-            Backend::Remote(client) => client.open(call).await,
+            Some(Backend::Local(broker)) => local_open(&broker, call).await,
+            Some(Backend::Remote(client)) => client.open(call).await,
+            None => Err(ToolError::new(ErrorCode::ConnectionLost, true)),
         }
     }
 
@@ -120,8 +132,9 @@ impl BrokerClient {
         // cancelled through the old `Broker` — a `Cancel` frame sent to a
         // connection that no longer owns the request, which is a silent no-op.
         let broker = match self.backend() {
-            Backend::Remote(client) => return client.call(call, cancellation).await,
-            Backend::Local(broker) => broker,
+            Some(Backend::Remote(client)) => return client.call(call, cancellation).await,
+            Some(Backend::Local(broker)) => broker,
+            None => return Err(ToolError::new(ErrorCode::ConnectionLost, true)),
         };
         let mut open = local_open(&broker, call).await?;
         loop {

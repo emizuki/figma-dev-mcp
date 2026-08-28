@@ -433,3 +433,39 @@ async fn a_cancel_reaches_the_broker_that_opened_the_call() {
     opener.shutdown().await;
     let _ = tokio::time::timeout(Duration::from_secs(1), plugin_server).await;
 }
+
+#[tokio::test]
+async fn an_unattached_client_fails_calls_retryably() {
+    let client = BrokerClient::unattached();
+
+    assert!(
+        client.local_broker().is_none(),
+        "an unattached client has no local Broker"
+    );
+
+    let open = client
+        .open(figma_dev_mcp_protocol::wire::BrokerCall::ListFiles {})
+        .await;
+    let error = open.expect_err("an unattached client cannot open a call");
+    assert_eq!(
+        error.code(),
+        figma_dev_mcp_protocol::error::ErrorCode::ConnectionLost
+    );
+    assert!(
+        error.retryable(),
+        "the window before the first election is transient, so the error must be retryable"
+    );
+
+    let called = client
+        .call(
+            figma_dev_mcp_protocol::wire::BrokerCall::ListFiles {},
+            &tokio_util::sync::CancellationToken::new(),
+        )
+        .await;
+    let error = called.expect_err("an unattached client cannot serve a call");
+    assert_eq!(
+        error.code(),
+        figma_dev_mcp_protocol::error::ErrorCode::ConnectionLost
+    );
+    assert!(error.retryable());
+}
