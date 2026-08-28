@@ -127,9 +127,19 @@ impl BrokerClient {
     /// does not clear the `SessionRegistry`, so a dead-but-installed broker
     /// keeps returning stale answers.
     ///
-    /// Unlike `install` this is `pub`: installing the wrong backend would
-    /// corrupt routing, but detaching can only turn an answer into a retryable
-    /// error, so it is safe for anyone to call.
+    /// Only the supervisor should call this: `supervise` installs a new
+    /// backend only after `role.death()` fires, so nothing re-fills the cell
+    /// until the current role actually dies. A stray `detach()` while a role
+    /// is still alive leaves every call in the process returning
+    /// `ConnectionLost { retryable: true }` forever — "retryable" becomes a
+    /// lie told indefinitely, which is the same confident-wrong-answer class
+    /// this type exists to remove, just inverted.
+    ///
+    /// `pub` only so the integration test that proves the detached state
+    /// stops answering can reach it directly; `#[doc(hidden)]` keeps it out
+    /// of the crate's public-facing docs, the way `Supervisor::start` is
+    /// hidden for the same "public only for a test" reason.
+    #[doc(hidden)]
     pub fn detach(&self) {
         *self
             .backend

@@ -190,6 +190,7 @@ impl Supervisor {
     /// Returns the role that was current, so the caller can wind it down.
     fn clear_role(&mut self) -> Option<Role> {
         self.client.detach();
+        tracing::info!("detached the broker backend");
         self.role.take()
     }
 
