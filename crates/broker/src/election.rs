@@ -60,11 +60,24 @@ pub async fn elect(config: BrokerConfig) -> Result<ElectionOutcome, ElectionErro
                     .await
                     .map_err(ElectionError::PluginBind)?;
                 let plugin_listener_v6 = match plugin_listener.local_addr() {
-                    Ok(SocketAddr::V4(v4)) if v4.ip().is_loopback() => TcpListener::bind(
-                        SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), v4.port()),
-                    )
-                    .await
-                    .ok(),
+                    Ok(SocketAddr::V4(v4)) if v4.ip().is_loopback() => {
+                        let address = SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), v4.port());
+                        match TcpListener::bind(address).await {
+                            Ok(listener) => Some(listener),
+                            // Not fatal — the plugin normally reaches
+                            // 127.0.0.1 — but if `localhost` resolves to `::1`
+                            // first it will find nothing listening, so this
+                            // must not be silent. It used to be `.ok()`.
+                            Err(error) => {
+                                tracing::warn!(
+                                    %error,
+                                    %address,
+                                    "failed to bind the IPv6 plugin listener; only IPv4 is served"
+                                );
+                                None
+                            }
+                        }
+                    }
                     _ => None,
                 };
                 return Ok(ElectionOutcome::Leader(LeaderElection {
@@ -106,8 +119,6 @@ pub enum ElectionError {
     FrontendBind(std::io::Error),
     #[error("failed to bind the plugin WebSocket listener: {0}")]
     PluginBind(std::io::Error),
-    #[error("the elected role could not be entered")]
-    RoleUnavailable,
     #[error("leader election did not settle within two seconds")]
     TimedOut,
 }

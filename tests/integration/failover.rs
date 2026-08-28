@@ -91,14 +91,14 @@ async fn the_first_supervisor_leads_and_the_second_follows() {
     let (plugin_address, frontend_address) = free_addresses().await;
     let config = test_config(plugin_address, frontend_address);
 
-    let leader = Supervisor::start(config.clone()).await.unwrap();
+    let leader = Supervisor::start(config.clone()).await;
     assert!(leader.is_leader(), "the first process must lead");
     assert!(
         leader.client().local_broker().is_some(),
         "a leader's client must be backed by a local Broker"
     );
 
-    let follower = Supervisor::start(config).await.unwrap();
+    let follower = Supervisor::start(config).await;
     assert!(!follower.is_leader(), "the second process must follow");
     assert!(
         follower.client().local_broker().is_none(),
@@ -112,9 +112,7 @@ async fn the_first_supervisor_leads_and_the_second_follows() {
 #[tokio::test]
 async fn a_leading_supervisor_binds_both_ports() {
     let (plugin_address, frontend_address) = free_addresses().await;
-    let leader = Supervisor::start(test_config(plugin_address, frontend_address))
-        .await
-        .unwrap();
+    let leader = Supervisor::start(test_config(plugin_address, frontend_address)).await;
 
     assert!(
         tokio::net::TcpStream::connect(plugin_address).await.is_ok(),
@@ -135,9 +133,19 @@ async fn a_follower_promotes_itself_when_the_leader_dies() {
     let (plugin_address, frontend_address) = free_addresses().await;
     let config = test_config(plugin_address, frontend_address);
 
-    let leader = Supervisor::start(config.clone()).await.unwrap();
-    let mut follower = Supervisor::start(config).await.unwrap();
+    let leader = Supervisor::start(config.clone()).await;
+    let mut follower = Supervisor::start(config).await;
     assert!(!follower.is_leader());
+
+    // Take the client handle before the supervisor moves into its task. This is
+    // the handle the MCP service holds for the life of the process, so it is
+    // what proves `BrokerClient::install` actually swapped the backend
+    // underneath a live session rather than merely rebinding the ports.
+    let client = follower.client();
+    assert!(
+        client.local_broker().is_none(),
+        "a follower's client must start out backed by an RPC connection"
+    );
 
     let supervising = tokio::spawn(async move {
         follower.supervise().await;
@@ -176,13 +184,30 @@ async fn a_follower_promotes_itself_when_the_leader_dies() {
         "an orphaned follower must re-elect and reopen the plugin port"
     );
 
+    // Reopening the port is not enough: `elect()` binds before `enter_role`
+    // spawns the listeners and before the new backend is installed, so the
+    // probe above can succeed a moment early. The swap itself is the mechanism
+    // that keeps the MCP session alive, so wait for it and assert it happened.
+    let swapped = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if client.local_broker().is_some() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await;
+    assert!(
+        swapped.is_ok(),
+        "the promoted follower must install its new local Broker into the client \
+         the MCP service already holds"
+    );
+
     // Conclusive check: a fresh participant must find a leader to follow. If
     // the port merely reopened without a real election (impossible, but this
     // is the check that would catch it), a fresh Supervisor would win a second
     // election and become leader itself.
-    let checker = Supervisor::start(test_config(plugin_address, frontend_address))
-        .await
-        .unwrap();
+    let checker = Supervisor::start(test_config(plugin_address, frontend_address)).await;
     assert!(
         !checker.is_leader(),
         "a survivor must have actually promoted itself to leader"
@@ -197,9 +222,9 @@ async fn exactly_one_of_two_orphans_takes_the_ports() {
     let (plugin_address, frontend_address) = free_addresses().await;
     let config = test_config(plugin_address, frontend_address);
 
-    let leader = Supervisor::start(config.clone()).await.unwrap();
-    let mut first = Supervisor::start(config.clone()).await.unwrap();
-    let mut second = Supervisor::start(config).await.unwrap();
+    let leader = Supervisor::start(config.clone()).await;
+    let mut first = Supervisor::start(config.clone()).await;
+    let mut second = Supervisor::start(config).await;
 
     let first_task = tokio::spawn(async move {
         first.supervise().await;
@@ -226,9 +251,7 @@ async fn exactly_one_of_two_orphans_takes_the_ports() {
 
     // A third participant must now find a leader to follow, which is only true
     // if exactly one orphan bound the frontend port.
-    let late = Supervisor::start(test_config(plugin_address, frontend_address))
-        .await
-        .unwrap();
+    let late = Supervisor::start(test_config(plugin_address, frontend_address)).await;
     assert!(
         !late.is_leader(),
         "a late starter must follow the promoted leader, not win a second election"
@@ -244,8 +267,8 @@ async fn election_retries_until_a_squatted_port_is_released() {
     let (plugin_address, frontend_address) = free_addresses().await;
     let config = test_config(plugin_address, frontend_address);
 
-    let leader = Supervisor::start(config.clone()).await.unwrap();
-    let mut follower = Supervisor::start(config).await.unwrap();
+    let leader = Supervisor::start(config.clone()).await;
+    let mut follower = Supervisor::start(config).await;
 
     // Something outside this project takes the plugin port the instant the
     // leader lets go of it, so every election attempt fails at the plugin bind.
@@ -290,9 +313,7 @@ async fn election_retries_until_a_squatted_port_is_released() {
 #[tokio::test]
 async fn a_leader_whose_broker_dies_re_elects_and_rebinds() {
     let (plugin_address, frontend_address) = free_addresses().await;
-    let mut leader = Supervisor::start(test_config(plugin_address, frontend_address))
-        .await
-        .unwrap();
+    let mut leader = Supervisor::start(test_config(plugin_address, frontend_address)).await;
     assert!(leader.is_leader());
 
     // Broker::shutdown cancels the shared token, which is exactly what a failing
@@ -321,9 +342,7 @@ async fn a_leader_whose_broker_dies_re_elects_and_rebinds() {
     .expect("a leader whose broker died must re-elect and rebind the plugin port");
 
     // Conclusive check: a fresh participant must find a leader to follow.
-    let checker = Supervisor::start(test_config(plugin_address, frontend_address))
-        .await
-        .unwrap();
+    let checker = Supervisor::start(test_config(plugin_address, frontend_address)).await;
     assert!(
         !checker.is_leader(),
         "a survivor must have actually promoted itself to leader"

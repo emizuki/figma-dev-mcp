@@ -7,11 +7,11 @@
 
 use std::time::Duration;
 
-use tokio::{net::TcpListener, task::JoinSet};
+use tokio::{net::TcpListener, task::JoinSet, time::Instant};
 
 use crate::{
-    Broker, BrokerClient, BrokerConfig, BrokerError, ElectionError, ElectionOutcome,
-    FrontendClient, FrontendLease, client::Backend, elect,
+    Broker, BrokerClient, BrokerConfig, BrokerError, ElectionOutcome, FrontendClient,
+    FrontendLease, client::Backend, elect,
 };
 
 /// First delay after a failed election. Doubles up to `RETRY_DELAY_CAP`.
@@ -20,6 +20,17 @@ const RETRY_DELAY_BASE: Duration = Duration::from_millis(100);
 /// reconnect backoff saturates. Recovering slower than the plugin retries would
 /// leave it looping for no reason.
 const RETRY_DELAY_CAP: Duration = Duration::from_secs(5);
+/// Minimum interval between the start of one role and the start of the next.
+///
+/// A *successful* election that immediately dies again contains no sleep and no
+/// network round trip — `elect()` is a refused loopback connect plus two or
+/// three binds — so a listener that panics on spawn, or an `accept()` that keeps
+/// failing instantly under fd exhaustion, would spin thousands of times a
+/// second, logging on every pass and unbinding and rebinding the plugin port
+/// each time, which would churn the plugin's own connection. The supervisor
+/// exists to survive bugs in the thing it supervises, so it floors the cycle
+/// rate rather than assuming the listeners never misbehave.
+const MIN_ELECTION_INTERVAL: Duration = RETRY_DELAY_BASE;
 
 /// The role this process currently holds.
 enum Role {
@@ -87,6 +98,9 @@ pub struct Supervisor {
     config: BrokerConfig,
     client: BrokerClient,
     role: Option<Role>,
+    /// When the current role was entered, so `elect_again` can refuse to cycle
+    /// faster than `MIN_ELECTION_INTERVAL`.
+    elected_at: Instant,
 }
 
 impl Supervisor {
@@ -95,16 +109,22 @@ impl Supervisor {
     /// This happens before the MCP service starts, exactly as it did before the
     /// supervisor existed, so there is no window where the service is up with no
     /// backend behind it.
-    pub async fn start(config: BrokerConfig) -> Result<Self, ElectionError> {
-        let outcome = elect(config.clone()).await?;
-        let (role, backend) = enter_role(outcome)
-            .await
-            .ok_or(ElectionError::RoleUnavailable)?;
-        Ok(Self {
+    ///
+    /// It goes through the same retrying election as every later one, so there
+    /// is one election policy rather than two. The first election is not
+    /// specially fatal: an existing leader that has just gone idle sets
+    /// `closing`, after which it refuses the frontend handshake and closes the
+    /// connection, and a session starting inside that window used to exit
+    /// outright rather than wait a beat and win the ports itself.
+    pub async fn start(config: BrokerConfig) -> Self {
+        tracing::info!("running the first broker election");
+        let (role, backend) = elect_until_entered(&config).await;
+        Self {
             config,
             client: BrokerClient::new(backend),
             role: Some(role),
-        })
+            elected_at: Instant::now(),
+        }
     }
 
     /// A handle to the current backend. Clone it for the MCP service; it stays
@@ -161,47 +181,54 @@ impl Supervisor {
                 lease,
             }) = self.role.take()
             {
+                // Fail the in-flight calls before letting go of the role. Only
+                // one death path does this for us: `ws::serve` cancels the
+                // shared token on an accept error, and a follower's
+                // `client_loop` drains its pending map with `ConnectionLost`.
+                // `rpc::serve` propagates its accept error with a bare `?` and
+                // a panicked listener cancels nothing at all, and on those an
+                // in-flight `BrokerClient::call` holds its own clone of this
+                // very `Broker` — so the state cannot drop, and the call waits
+                // on a oneshot whose sender only that state holds until its
+                // tool deadline expires. Cancelling the token here drains the
+                // pending map, which makes every death path uniform.
+                broker.shutdown().await;
                 drop(lease);
                 drop(broker);
                 listeners.shutdown().await;
             }
 
             let (role, backend) = self.elect_again().await;
+            let role_name = if matches!(role, Role::Leader { .. }) {
+                "leader"
+            } else {
+                "follower"
+            };
             self.client.install(backend);
-            tracing::info!("installed a new broker backend");
+            tracing::info!(role = role_name, "installed a new broker backend");
             self.role = Some(role);
         }
     }
 
-    /// Elect until it works, backing off between attempts.
+    /// Re-elect after a death, never cycling faster than
+    /// `MIN_ELECTION_INTERVAL`.
     ///
-    /// Retries forever on purpose. Whatever is wrong — a port held by something
-    /// else, a leader running an incompatible build — is usually transient, and
-    /// giving up would brick this session permanently, which is the bug being
-    /// fixed. Meanwhile calls fail with a retryable error, never worse than
-    /// before.
-    async fn elect_again(&self) -> (Role, Backend) {
-        let mut delay = RETRY_DELAY_BASE;
-        let mut attempt = 1_u32;
-        loop {
-            tracing::info!(attempt, "starting broker election");
-            match elect(self.config.clone()).await {
-                Ok(outcome) => {
-                    if let Some(entered) = enter_role(outcome).await {
-                        return entered;
-                    }
-                }
-                Err(error) => tracing::warn!(%error, attempt, "broker election failed"),
-            }
+    /// The floor is measured from when the *previous* role was entered, so a
+    /// role that lived a while re-elects immediately and only a role that died
+    /// on arrival waits. See `MIN_ELECTION_INTERVAL` for why the floor exists.
+    async fn elect_again(&mut self) -> (Role, Backend) {
+        let alive_for = self.elected_at.elapsed();
+        if let Some(floor) = MIN_ELECTION_INTERVAL.checked_sub(alive_for) {
             tracing::warn!(
-                attempt,
-                delay_ms = delay.as_millis() as u64,
-                "retrying election"
+                alive_ms = alive_for.as_millis() as u64,
+                floor_ms = floor.as_millis() as u64,
+                "the previous role died immediately, delaying re-election"
             );
-            tokio::time::sleep(delay).await;
-            delay = (delay * 2).min(RETRY_DELAY_CAP);
-            attempt = attempt.wrapping_add(1);
+            tokio::time::sleep(floor).await;
         }
+        let entered = elect_until_entered(&self.config).await;
+        self.elected_at = Instant::now();
+        entered
     }
 
     /// Release the frontend lease, drain, and stop.
@@ -233,6 +260,37 @@ impl Supervisor {
     }
 }
 
+/// Elect until it works, backing off between attempts.
+///
+/// Retries forever on purpose. Whatever is wrong — a port held by something
+/// else, a leader running an incompatible build, a leader that is mid-shutdown
+/// and refusing handshakes — is usually transient, and giving up would brick
+/// this session permanently, which is the bug being fixed. Meanwhile calls fail
+/// with a retryable error, never worse than before.
+async fn elect_until_entered(config: &BrokerConfig) -> (Role, Backend) {
+    let mut delay = RETRY_DELAY_BASE;
+    let mut attempt = 1_u32;
+    loop {
+        tracing::info!(attempt, "starting broker election");
+        match elect(config.clone()).await {
+            Ok(outcome) => {
+                if let Some(entered) = enter_role(outcome).await {
+                    return entered;
+                }
+            }
+            Err(error) => tracing::warn!(%error, attempt, "broker election failed"),
+        }
+        tracing::warn!(
+            attempt,
+            delay_ms = delay.as_millis() as u64,
+            "retrying election"
+        );
+        tokio::time::sleep(delay).await;
+        delay = (delay * 2).min(RETRY_DELAY_CAP);
+        attempt = attempt.wrapping_add(1);
+    }
+}
+
 /// Turn an election outcome into a role plus the backend that serves it.
 ///
 /// Returns `None` when the outcome cannot be entered — a follower handshake that
@@ -246,6 +304,12 @@ async fn enter_role(outcome: ElectionOutcome) -> Option<(Role, Backend)> {
                 tracing::warn!("leader frontend lease was unavailable");
                 return None;
             };
+            // Read the bound addresses before the listeners move into their
+            // tasks: the goal is that the next incident is diagnosable from the
+            // log directory alone, without reaching for `lsof`.
+            let plugin_address = bound_address(&leader.plugin_listener);
+            let plugin_address_v6 = leader.plugin_listener_v6.as_ref().map(bound_address);
+            let frontend_address = bound_address(&leader.frontend_listener);
             let mut listeners = JoinSet::new();
             spawn_listener(&mut listeners, &broker, leader.plugin_listener);
             if let Some(listener) = leader.plugin_listener_v6 {
@@ -253,7 +317,13 @@ async fn enter_role(outcome: ElectionOutcome) -> Option<(Role, Backend)> {
             }
             let frontend_broker = broker.clone();
             listeners.spawn(frontend_broker.serve_frontends(leader.frontend_listener));
-            tracing::info!(role = "leader", "entered broker role");
+            tracing::info!(
+                role = "leader",
+                plugin_address,
+                plugin_address_v6 = plugin_address_v6.as_deref().unwrap_or("none"),
+                frontend_address,
+                "entered broker role"
+            );
             let backend = Backend::local(broker.clone());
             Some((
                 Role::Leader {
@@ -265,14 +335,18 @@ async fn enter_role(outcome: ElectionOutcome) -> Option<(Role, Backend)> {
             ))
         }
         ElectionOutcome::Follower(follower) => {
+            let leader_address = follower.stream.peer_addr().map_or_else(
+                |error| format!("unknown ({error})"),
+                |address| address.to_string(),
+            );
             match FrontendClient::from_stream(follower.stream).await {
                 Ok(client) => {
-                    tracing::info!(role = "follower", "entered broker role");
+                    tracing::info!(role = "follower", leader_address, "entered broker role");
                     let backend = Backend::remote(client.clone());
                     Some((Role::Follower { client }, backend))
                 }
                 Err(error) => {
-                    tracing::warn!(%error, "frontend handshake failed");
+                    tracing::warn!(%error, leader_address, "frontend handshake failed");
                     None
                 }
             }
@@ -287,4 +361,12 @@ fn spawn_listener(
 ) {
     let broker = broker.clone();
     listeners.spawn(broker.serve(listener));
+}
+
+/// A listener's bound address, rendered for the log.
+fn bound_address(listener: &TcpListener) -> String {
+    listener.local_addr().map_or_else(
+        |error| format!("unknown ({error})"),
+        |address| address.to_string(),
+    )
 }

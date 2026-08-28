@@ -7,9 +7,12 @@ use figma_dev_mcp_tools::McpService;
 use rmcp::{ServiceExt, transport::stdio};
 
 pub(crate) async fn run() -> anyhow::Result<()> {
-    let mut supervisor = Supervisor::start(BrokerConfig::production())
-        .await
-        .context("broker leader election failed")?;
+    // Election retries forever on a capped backoff rather than failing the
+    // process. A leader that has just gone idle refuses the frontend handshake
+    // while it closes, and a session starting inside that window used to die
+    // with "broker leader election failed" instead of waiting a beat and taking
+    // the ports itself.
+    let mut supervisor = Supervisor::start(BrokerConfig::production()).await;
 
     // One service for the life of the process. Its client follows the
     // supervisor through every role change, so a leader dying no longer ends
