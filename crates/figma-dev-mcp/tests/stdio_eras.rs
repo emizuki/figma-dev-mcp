@@ -367,7 +367,7 @@ fn killing_the_leader_lets_a_follower_reopen_the_plugin_port() {
         "the first server must bind the plugin port"
     );
 
-    let mut follower = StdioServer::spawn();
+    let mut follower = StdioServer::spawn_with_logging();
     assert!(
         wait_until(Duration::from_secs(10), || port_is_listening(
             frontend_port()
@@ -375,12 +375,18 @@ fn killing_the_leader_lets_a_follower_reopen_the_plugin_port() {
         "the frontend port must stay bound while both servers run"
     );
 
-    // Gate: `initialize` completing only proves the process is alive and
-    // answering RPCs — the supervisor now races its own election against
-    // this call, so it does not prove election finished. What actually
-    // proves this process has a backend is the pre-kill `list_files` call
-    // below: an unelected process has an unattached client, which returns
-    // CONNECTION_LOST, so a plain success there is the real gate.
+    // Gate on the follower's own log line rather than on a tool call. The
+    // supervisor races its own election against anything we send, so a single
+    // un-retried `list_files` can arrive while the client is still unattached,
+    // come back CONNECTION_LOST, and fail this test for a reason that is not a
+    // bug. `entered broker role` with role="follower" is emitted only after the
+    // frontend handshake completes, so it proves attachment outright.
+    follower.wait_for_stderr(
+        Duration::from_secs(5),
+        |line| line.contains("entered broker role") && line.contains("role=\"follower\""),
+        "the follower must attach to the leader before it dies",
+    );
+
     let initialize = follower.request(json!({
         "jsonrpc": "2.0",
         "id": 1,
@@ -397,11 +403,10 @@ fn killing_the_leader_lets_a_follower_reopen_the_plugin_port() {
         "method": "notifications/initialized"
     }));
 
-    // The follower is serving through the leader right now, over the RPC hop to
-    // the other process. `list_files` needs no Figma plugin: against a live
-    // broker it returns an empty list *successfully*, and against a dead RPC
-    // connection it returns CONNECTION_LOST — so a plain success here is
-    // unambiguous evidence the hop works before the leader dies.
+    // With attachment already proven above, this call now documents that the
+    // RPC hop works end to end before the leader dies, rather than serving as
+    // the gate. `list_files` needs no Figma plugin: against a live broker it
+    // returns an empty list successfully.
     let served = follower.request(list_files_call(2));
     assert_ne!(
         served["result"]["isError"],
