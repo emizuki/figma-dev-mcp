@@ -126,11 +126,13 @@ impl BrokerClient {
         call: BrokerCall,
         cancellation: &CancellationToken,
     ) -> Result<BrokerResult, ToolError> {
-        // Read the backend cell exactly once. Going back through `self.open`
-        // would read it a second time, so a swap landing in between would open
-        // the call against the new backend while the cancellation branch below
-        // cancelled through the old `Broker` — a `Cancel` frame sent to a
-        // connection that no longer owns the request, which is a silent no-op.
+        // Read the backend cell exactly once, rather than going back through
+        // `self.open` (which would read it a second time): this is still the
+        // read that decides which backend opens the call. The cancellation
+        // branch below no longer depends on this read staying in sync with
+        // it — it cancels through `open.owner`, the `Broker` recorded at open
+        // time, so a swap landing between the two reads can no longer strand
+        // the `Cancel` frame on a backend that never opened the request.
         let broker = match self.backend() {
             Some(Backend::Remote(client)) => return client.call(call, cancellation).await,
             Some(Backend::Local(broker)) => broker,
