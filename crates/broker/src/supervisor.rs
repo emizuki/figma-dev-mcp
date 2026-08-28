@@ -582,13 +582,22 @@ async fn enter_role(outcome: ElectionOutcome, verbosity: ElectionLog) -> Option<
             }
             let frontend_broker = broker.clone();
             listeners.spawn(frontend_broker.serve_frontends(leader.frontend_listener));
-            tracing::info!(
-                role = "leader",
-                plugin_address,
-                plugin_address_v6 = plugin_address_v6.as_deref().unwrap_or("none"),
-                frontend_address,
-                "entered broker role"
-            );
+            match verbosity {
+                ElectionLog::Full | ElectionLog::Heartbeat => tracing::info!(
+                    role = "leader",
+                    plugin_address,
+                    plugin_address_v6 = plugin_address_v6.as_deref().unwrap_or("none"),
+                    frontend_address,
+                    "entered broker role"
+                ),
+                ElectionLog::Quiet => tracing::debug!(
+                    role = "leader",
+                    plugin_address,
+                    plugin_address_v6 = plugin_address_v6.as_deref().unwrap_or("none"),
+                    frontend_address,
+                    "entered broker role"
+                ),
+            }
             let backend = Backend::local(broker.clone());
             Some((
                 Role::Leader {
@@ -606,7 +615,18 @@ async fn enter_role(outcome: ElectionOutcome, verbosity: ElectionLog) -> Option<
             );
             match FrontendClient::from_stream(follower.stream).await {
                 Ok(client) => {
-                    tracing::info!(role = "follower", leader_address, "entered broker role");
+                    match verbosity {
+                        ElectionLog::Full | ElectionLog::Heartbeat => {
+                            tracing::info!(role = "follower", leader_address, "entered broker role")
+                        }
+                        ElectionLog::Quiet => {
+                            tracing::debug!(
+                                role = "follower",
+                                leader_address,
+                                "entered broker role"
+                            )
+                        }
+                    }
                     let backend = Backend::remote(client.clone());
                     Some((Role::Follower { client }, backend))
                 }
