@@ -937,7 +937,24 @@ async fn a_swapped_backend_does_not_steal_a_calls_cancellation() {
 
     let cancelled = tokio::time::timeout(Duration::from_secs(2), async {
         loop {
-            let Message::Text(text) = plugin.next().await.unwrap().unwrap() else {
+            let Message::Text(text) = plugin
+                .next()
+                .await
+                .expect(
+                    "the opener's plugin connection closed before a Cancel arrived: this is \
+                     what happens when the mid-call swap regresses and the Cancel is sent to a \
+                     different Broker than the one that opened the call, so the opener's \
+                     connection sits idle until the 100ms stale_after reaper closes it -- this \
+                     is the mid-call-backend-swap regression this test guards against",
+                )
+                .expect(
+                    "the opener's plugin connection closed before a Cancel arrived: this is \
+                     what happens when the mid-call swap regresses and the Cancel is sent to a \
+                     different Broker than the one that opened the call, so the opener's \
+                     connection sits idle until the 100ms stale_after reaper closes it -- this \
+                     is the mid-call-backend-swap regression this test guards against",
+                )
+            else {
                 continue;
             };
             if let figma_dev_mcp_protocol::wire::BrokerToPlugin::Cancel(frame) =
