@@ -165,10 +165,13 @@ impl Supervisor {
     /// Enter a role and install the backend that serves it.
     ///
     /// One of the two mutators of `self.role` and `self.client` after
-    /// construction. They exist as a pair because the two fields carry one
-    /// coupled meaning — a role and the backend that serves it — and nothing
-    /// previously required a detach to accompany an install, which is exactly
-    /// how a dead broker came to stay installed across a re-election.
+    /// construction, alongside `clear_role` — except for `shutdown`, which
+    /// takes `self.role` directly because it consumes `self`, leaving no
+    /// ongoing state that a paired detach would need to keep coherent. They
+    /// exist as a pair because the two fields carry one coupled meaning — a
+    /// role and the backend that serves it — and nothing previously required a
+    /// detach to accompany an install, which is exactly how a dead broker came
+    /// to stay installed across a re-election.
     fn install_role(&mut self, role: Role, backend: Backend) {
         let role_name = if matches!(role, Role::Leader { .. }) {
             "leader"
@@ -233,8 +236,10 @@ impl Supervisor {
             // `JoinSet::shutdown` aborts and drains, returning only once every
             // listener future has actually been dropped, so the ports are
             // guaranteed free before `elect_next` runs. A follower has no
-            // listeners to wait on; `self.role.take()` still drops its
-            // `FrontendClient` either way.
+            // listeners to wait on, but `clear_role()` runs unconditionally for
+            // either role: it always drops the outgoing role's `FrontendClient`
+            // and detaches `self.client`, so calls arriving before the next
+            // election fail retryably instead of reaching a dead backend.
             if let Some(Role::Leader {
                 broker,
                 mut listeners,
@@ -290,7 +295,9 @@ impl Supervisor {
     ///
     /// A follower has nothing to wind down. A leader keeps the old ordering:
     /// drop its own lease, wait for the others to go idle, then shut down and
-    /// surface any listener error.
+    /// surface any listener error — but not the old exit code. A panicked
+    /// listener is logged at `error!` here rather than turned into an `Err`;
+    /// see the comment on that arm below for why.
     pub async fn shutdown(mut self, grace: Duration) -> Result<(), BrokerError> {
         let Some(Role::Leader {
             broker,
@@ -308,6 +315,13 @@ impl Supervisor {
             match joined {
                 Ok(Err(error)) if result.is_ok() => result = Err(error),
                 Ok(_) => {}
+                // Deliberate: a panicked listener does not fail the process.
+                // With `supervise` racing in the same select, a mid-session
+                // listener panic is consumed by re-election and also exits 0,
+                // so restoring a non-zero exit only on the shutdown path would
+                // make the exit code depend on which side of a sub-millisecond
+                // race the same panic landed on. The signal a supervisor wants
+                // is the `error!` line, which is why it is at that level.
                 Err(error) => tracing::error!(%error, "broker listener task panicked"),
             }
         }
