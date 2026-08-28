@@ -275,6 +275,22 @@ fn killing_the_leader_lets_a_follower_reopen_the_plugin_port() {
         }
     }));
     assert_eq!(initialize["result"]["serverInfo"]["name"], "figma-dev-mcp");
+    follower.notify(json!({
+        "jsonrpc": "2.0",
+        "method": "notifications/initialized"
+    }));
+
+    // The follower is serving through the leader right now, over the RPC hop to
+    // the other process. `list_files` needs no Figma plugin: against a live
+    // broker it returns an empty list *successfully*, and against a dead RPC
+    // connection it returns CONNECTION_LOST — so a plain success here is
+    // unambiguous evidence the hop works before the leader dies.
+    let served = follower.request(list_files_call(2));
+    assert_ne!(
+        served["result"]["isError"],
+        json!(true),
+        "the follower must serve tool calls through the leader before it dies, got {served}"
+    );
 
     leader.kill();
 
@@ -287,6 +303,36 @@ fn killing_the_leader_lets_a_follower_reopen_the_plugin_port() {
         "the promoted leader must own the frontend port too"
     );
 
+    // Reopening the ports is only half the fix. The MCP session on this process
+    // never restarted, so it is still holding the same BrokerClient it was
+    // handed at startup; unless the supervisor installed the new backend into
+    // it, every call still goes to the RPC connection of the process we just
+    // killed and comes back CONNECTION_LOST forever. That is the reported bug —
+    // a server that answers but returns CONNECTION_LOST for everything.
+    //
+    // Retried because `elect()` binds the ports before the new backend is
+    // installed, so the probe above can win by a hair. Without the install the
+    // loop never escapes CONNECTION_LOST and the deadline fires.
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    let mut identifier = 3;
+    let recovered = loop {
+        let response = follower.request(list_files_call(identifier));
+        identifier += 1;
+        if response["result"]["structuredContent"]["code"] != json!("CONNECTION_LOST") {
+            break response;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the promoted follower must stop returning CONNECTION_LOST, still got {response}"
+        );
+        thread::sleep(Duration::from_millis(200));
+    };
+    assert_ne!(
+        recovered["result"]["isError"],
+        json!(true),
+        "the promoted follower must serve tool calls through its own broker, got {recovered}"
+    );
+
     follower.kill();
     assert!(
         wait_until(Duration::from_secs(10), || {
@@ -295,6 +341,16 @@ fn killing_the_leader_lets_a_follower_reopen_the_plugin_port() {
         "both listeners must be released once every server is gone"
     );
     assert_production_ports_free();
+}
+
+/// A `tools/call` for `list_files`, the one tool that needs no Figma plugin.
+fn list_files_call(identifier: u32) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": identifier,
+        "method": "tools/call",
+        "params": { "name": "list_files", "arguments": {} }
+    })
 }
 
 fn port_is_listening(port: u16) -> bool {
