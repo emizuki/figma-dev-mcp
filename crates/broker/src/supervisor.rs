@@ -39,6 +39,13 @@ const QUIET_HEARTBEAT_ATTEMPTS: u32 = 60;
 /// exists to survive bugs in the thing it supervises, so it floors the cycle
 /// rate rather than assuming the listeners never misbehave.
 const MIN_ELECTION_INTERVAL: Duration = RETRY_DELAY_BASE;
+/// A role that lived at least this long counts as a genuine session rather than
+/// a failure to start, and resets the recycle escalation.
+///
+/// Matched to `RETRY_DELAY_CAP` so that a role which outlives the longest delay
+/// the supervisor will ever impose is treated as healthy. A role that keeps
+/// dying faster than this is not recovering, it is thrashing.
+const HEALTHY_ROLE_LIFETIME: Duration = RETRY_DELAY_CAP;
 
 /// The role this process currently holds.
 enum Role {
@@ -110,6 +117,14 @@ pub struct Supervisor {
     /// faster than `MIN_ELECTION_INTERVAL`. `None` before the first election,
     /// where there is no previous role to rate-limit against.
     elected_at: Option<Instant>,
+    /// Consecutive role deaths that arrived sooner than `HEALTHY_ROLE_LIFETIME`.
+    ///
+    /// Zero whenever the last role lived a normal life. `MIN_ELECTION_INTERVAL`
+    /// alone floors the cycle at ten per second, which a role that dies on
+    /// arrival will sustain forever — rebinding the plugin port and dropping the
+    /// plugin's WebSocket ten times a second. This counter is what turns that
+    /// into a curve that settles.
+    consecutive_immediate_deaths: u32,
 }
 
 impl Supervisor {
@@ -141,6 +156,7 @@ impl Supervisor {
             client: BrokerClient::new(backend),
             role: Some(role),
             elected_at: Some(Instant::now()),
+            consecutive_immediate_deaths: 0,
         }
     }
 
@@ -157,6 +173,7 @@ impl Supervisor {
             client: BrokerClient::unattached(),
             role: None,
             elected_at: None,
+            consecutive_immediate_deaths: 0,
         }
     }
 
@@ -274,24 +291,37 @@ impl Supervisor {
         }
     }
 
-    /// Re-elect after a death, never cycling faster than
-    /// `MIN_ELECTION_INTERVAL`.
+    /// Re-elect after a death, never cycling faster than `recycle_delay` allows.
     ///
-    /// The floor is measured from when the *previous* role was entered, so a
-    /// role that lived a while re-elects immediately and only a role that died
-    /// on arrival waits. See `MIN_ELECTION_INTERVAL` for why the floor exists.
+    /// The delay is measured from when the *previous* role was entered, so a role
+    /// that lived a while re-elects immediately and only a role that died on
+    /// arrival waits. Consecutive immediate deaths escalate that wait from
+    /// `MIN_ELECTION_INTERVAL` toward `RETRY_DELAY_CAP`; see `recycle_delay`.
     /// This is also the very first election when `elected_at` is `None` — there
-    /// is no previous role to rate-limit against, so the floor is skipped and
-    /// election runs immediately. The caller's `install_role` is what stamps
-    /// `elected_at` for the role this call produces — this function only reads
-    /// the stamp left by the *previous* one.
+    /// is no previous role to rate-limit against, so it runs immediately. The
+    /// caller's `install_role` is what stamps `elected_at` for the role this call
+    /// produces — this function only reads the stamp left by the previous one.
     async fn elect_next(&mut self) -> (Role, Backend) {
         if let Some(elected_at) = self.elected_at {
             let alive_for = elected_at.elapsed();
-            if let Some(floor) = MIN_ELECTION_INTERVAL.checked_sub(alive_for) {
+            // Update before computing the delay: the count includes this death.
+            self.consecutive_immediate_deaths = if alive_for >= HEALTHY_ROLE_LIFETIME {
+                0
+            } else {
+                self.consecutive_immediate_deaths.saturating_add(1)
+            };
+            let delay = recycle_delay(self.consecutive_immediate_deaths);
+            // `checked_sub` keeps the floor measured from role entry, as before:
+            // a role that lived 60ms against a 100ms delay sleeps the remaining
+            // 40ms. `filter` drops the zero-length sleep a healthy role produces.
+            if let Some(floor) = delay
+                .checked_sub(alive_for)
+                .filter(|floor| !floor.is_zero())
+            {
                 tracing::warn!(
                     alive_ms = alive_for.as_millis() as u64,
                     floor_ms = floor.as_millis() as u64,
+                    consecutive = self.consecutive_immediate_deaths,
                     "the previous role died immediately, delaying re-election"
                 );
                 tokio::time::sleep(floor).await;
@@ -417,6 +447,29 @@ fn election_log(attempt: u32) -> ElectionLog {
     }
 }
 
+/// How long to wait before re-electing, given how many roles in a row have died
+/// on arrival.
+///
+/// Zero for the first death after a healthy role — a leader that ran for hours
+/// and then lost a listener should reclaim its ports at once — then the same
+/// doubling curve `elect_until_entered` uses for its own retries, capped at
+/// `RETRY_DELAY_CAP`. The supervisor's two loops therefore back off identically.
+///
+/// This is the whole escalation policy, extracted from `elect_next` so it can be
+/// tested without driving the loop.
+fn recycle_delay(consecutive: u32) -> Duration {
+    if consecutive == 0 {
+        return Duration::ZERO;
+    }
+    // Clamp before shifting: anything past a handful of doublings saturates at
+    // the cap anyway, and `1u32 << 32` is undefined behaviour territory the
+    // compiler rejects outright at runtime.
+    let doublings = (consecutive - 1).min(16);
+    MIN_ELECTION_INTERVAL
+        .saturating_mul(1u32 << doublings)
+        .min(RETRY_DELAY_CAP)
+}
+
 /// Turn an election outcome into a role plus the backend that serves it.
 ///
 /// Returns `None` when the outcome cannot be entered — a follower handshake that
@@ -516,7 +569,11 @@ fn bound_address(listener: &TcpListener) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{ElectionLog, FULL_LOG_ATTEMPTS, QUIET_HEARTBEAT_ATTEMPTS, election_log};
+    use super::{
+        ElectionLog, FULL_LOG_ATTEMPTS, HEALTHY_ROLE_LIFETIME, MIN_ELECTION_INTERVAL,
+        QUIET_HEARTBEAT_ATTEMPTS, RETRY_DELAY_CAP, election_log, recycle_delay,
+    };
+    use std::time::Duration;
 
     #[test]
     fn the_backoff_growth_phase_is_logged_in_full() {
@@ -550,6 +607,67 @@ mod tests {
             election_log(QUIET_HEARTBEAT_ATTEMPTS + 1),
             ElectionLog::Quiet,
             "only the heartbeat attempt itself is loud"
+        );
+    }
+
+    #[test]
+    fn a_role_that_lived_a_healthy_life_re_elects_immediately() {
+        assert_eq!(
+            recycle_delay(0),
+            Duration::ZERO,
+            "a leader that ran for hours and then lost a listener must not be delayed"
+        );
+    }
+
+    #[test]
+    fn the_first_immediate_death_waits_the_old_floor() {
+        assert_eq!(
+            recycle_delay(1),
+            MIN_ELECTION_INTERVAL,
+            "the escalation must start where the old fixed floor was, so a single \
+             transient death behaves exactly as it did before"
+        );
+    }
+
+    #[test]
+    fn consecutive_immediate_deaths_double_the_delay() {
+        assert_eq!(recycle_delay(2), MIN_ELECTION_INTERVAL * 2);
+        assert_eq!(recycle_delay(3), MIN_ELECTION_INTERVAL * 4);
+        assert_eq!(recycle_delay(4), MIN_ELECTION_INTERVAL * 8);
+    }
+
+    #[test]
+    fn the_recycle_delay_saturates_at_the_backoff_cap() {
+        // 100ms doubling reaches 5s on the seventh consecutive death.
+        assert_eq!(recycle_delay(7), RETRY_DELAY_CAP);
+        for consecutive in [8_u32, 64, 1_000, u32::MAX] {
+            assert_eq!(
+                recycle_delay(consecutive),
+                RETRY_DELAY_CAP,
+                "recycle_delay({consecutive}) must saturate, not overflow"
+            );
+        }
+    }
+
+    #[test]
+    fn the_recycle_delay_never_decreases() {
+        let mut previous = Duration::ZERO;
+        for consecutive in 0..40_u32 {
+            let delay = recycle_delay(consecutive);
+            assert!(
+                delay >= previous,
+                "recycle_delay must be monotonic; {consecutive} gave {delay:?} after {previous:?}"
+            );
+            previous = delay;
+        }
+    }
+
+    #[test]
+    fn a_healthy_role_outlives_the_longest_delay_the_supervisor_imposes() {
+        assert!(
+            HEALTHY_ROLE_LIFETIME >= RETRY_DELAY_CAP,
+            "a role that survived the maximum backoff must count as healthy, or the \
+             escalation could never reset once it reached the cap"
         );
     }
 }
