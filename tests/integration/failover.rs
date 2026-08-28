@@ -773,3 +773,113 @@ async fn frontend_client_open_drop_governs_the_remote_watcher_on_both_branches()
     let _ = tokio::time::timeout(Duration::from_secs(1), plugin_server).await;
     let _ = tokio::time::timeout(Duration::from_secs(1), rpc_server).await;
 }
+
+/// A fake leader that completes the frontend handshake and then hangs up.
+///
+/// Enough for a real `FrontendClient::from_stream` to succeed
+/// (`crates/broker/src/rpc.rs:239-266`), so the supervisor elects, installs a
+/// follower role, and then immediately sees it die. That is a genuine spin
+/// driven entirely through production code paths — no fault injection, no
+/// test-only constructor, no widened API.
+///
+/// Counts accepted connections, which is the supervisor's cycle count.
+async fn handshake_then_hangup(
+    listener: tokio::net::TcpListener,
+    accepts: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    loop {
+        let Ok((mut socket, _)) = listener.accept().await else {
+            return;
+        };
+        accepts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+        // Read the client's `FrontendHello`: a 4-byte big-endian length followed
+        // by that many bytes of JSON. `LengthDelimitedCodec` is built with
+        // `length_field_length(4).big_endian()` (crates/broker/src/rpc.rs:27-33).
+        let mut length = [0u8; 4];
+        if socket.read_exact(&mut length).await.is_err() {
+            continue;
+        }
+        let mut body = vec![0u8; u32::from_be_bytes(length) as usize];
+        if socket.read_exact(&mut body).await.is_err() {
+            continue;
+        }
+
+        // `FrontendHandshake::Ready`. The enum carries `#[serde(tag = "type",
+        // rename_all = "camelCase")]` (crates/protocol/src/rpc.rs:19-29), so the
+        // unit variant serialises as exactly this object.
+        let reply = br#"{"type":"ready"}"#;
+        if socket
+            .write_all(&(reply.len() as u32).to_be_bytes())
+            .await
+            .is_err()
+        {
+            continue;
+        }
+        if socket.write_all(reply).await.is_err() {
+            continue;
+        }
+        // Flush before hanging up, so the handshake reply is not lost with the
+        // socket. The follower's `client_loop` then sees the connection close,
+        // `FrontendClient::closed()` resolves, and the role dies on arrival.
+        let _ = socket.flush().await;
+        drop(socket);
+    }
+}
+
+/// The window the cycle count is measured over.
+const SPIN_WINDOW: Duration = Duration::from_secs(5);
+/// The most accepts a correctly escalating supervisor may produce in
+/// `SPIN_WINDOW`. The curve gives 0, 100ms, 200ms, 400ms, 800ms, 1.6s, 3.2s,
+/// which reaches roughly seven accepts in five seconds. Without escalation the
+/// 100ms floor alone permits about fifty. This bound sits between them: close
+/// enough to catch a lost escalation, far enough above the escalated rate that a
+/// loaded machine cannot reach it.
+///
+/// Note the direction. Escalation can only make the observed count SMALLER, so
+/// machine load can never fail this assertion spuriously — the failure it
+/// detects is "cycled too fast", which load cannot cause.
+const MAX_SPIN_CYCLES: usize = 10;
+
+#[tokio::test]
+async fn a_role_that_dies_on_arrival_recycles_slower_and_slower() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let (plugin_address, frontend_address) = free_addresses().await;
+
+    // Squat the frontend port before the supervisor starts, so every election
+    // takes the follower branch.
+    let fake_leader = tokio::net::TcpListener::bind(frontend_address)
+        .await
+        .unwrap();
+    let accepts = Arc::new(AtomicUsize::new(0));
+    let fake = tokio::spawn(handshake_then_hangup(fake_leader, Arc::clone(&accepts)));
+
+    let mut supervisor = Supervisor::new(test_config(plugin_address, frontend_address));
+    let supervising = tokio::spawn(async move {
+        supervisor.supervise().await;
+    });
+
+    tokio::time::sleep(SPIN_WINDOW).await;
+    let cycles = accepts.load(Ordering::SeqCst);
+
+    supervising.abort();
+    fake.abort();
+
+    // Lower bound first: without it this test would pass if the supervisor never
+    // reached the fake leader at all, which is the way a rate assertion usually
+    // rots into one that cannot fail.
+    assert!(
+        cycles >= 2,
+        "the supervisor must actually be recycling for this bound to mean anything; \
+         saw {cycles} accepts in {SPIN_WINDOW:?}"
+    );
+    assert!(
+        cycles <= MAX_SPIN_CYCLES,
+        "a role dying on arrival must recycle more slowly each time; saw {cycles} \
+         accepts in {SPIN_WINDOW:?}, which is the un-escalated 100ms floor rate"
+    );
+}
