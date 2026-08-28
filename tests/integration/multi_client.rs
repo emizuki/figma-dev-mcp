@@ -50,7 +50,9 @@ pub(super) async fn connect_plugin(
     plugin
 }
 
-async fn next_plugin_request(plugin: &mut PluginSocket) -> figma_dev_mcp_protocol::wire::Request {
+pub(super) async fn next_plugin_request(
+    plugin: &mut PluginSocket,
+) -> figma_dev_mcp_protocol::wire::Request {
     loop {
         let message = plugin.next().await.unwrap().unwrap();
         let Message::Text(text) = message else {
@@ -62,7 +64,11 @@ async fn next_plugin_request(plugin: &mut PluginSocket) -> figma_dev_mcp_protoco
     }
 }
 
-async fn send_metadata_response(plugin: &mut PluginSocket, request_id: &RequestId, name: &str) {
+pub(super) async fn send_metadata_response(
+    plugin: &mut PluginSocket,
+    request_id: &RequestId,
+    name: &str,
+) {
     plugin
         .send(Message::Text(
             serde_json::json!({

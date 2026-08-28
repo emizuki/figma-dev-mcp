@@ -2,7 +2,9 @@
 
 use std::time::Duration;
 
-use figma_dev_mcp_broker::{Broker, BrokerClient, BrokerConfig, Limits, OpenCall, Supervisor};
+use figma_dev_mcp_broker::{
+    Broker, BrokerClient, BrokerConfig, FrontendClient, Limits, OpenCall, Supervisor,
+};
 
 #[tokio::test]
 async fn local_broker_resolves_through_the_swappable_cell() {
@@ -619,13 +621,17 @@ fn bare_open_call(
 }
 
 // `OpenCall::drop` aborts its watcher only when the abort token was never
-// cancelled. Before this test, only the opposite branch had coverage — via
-// `cancelling_a_frontend_call_cancels_the_matching_plugin_request` in
-// `multi_client.rs`, which drives the cancelled case through a real remote
-// call. Both halves matter: the first is what actually prevents the leak (an
-// abandoned watcher sleeping until a dead call's own deadline), and the
-// second is what stops a leak fix from swallowing a real cancellation before
-// it can send its `Cancel` frame.
+// cancelled. This test drives both branches directly against a hand-built
+// `OpenCall`, with nothing else holding the abort token or the join handle.
+// It does NOT exercise `FrontendClient::open` itself — that is covered
+// end-to-end by
+// `frontend_client_open_drop_governs_the_remote_watcher_on_both_branches` in
+// this file, which is the only test in the repo that constructs an `OpenCall`
+// through a real remote call rather than by hand. Both halves matter here
+// too: the first is what actually prevents the leak (an abandoned watcher
+// sleeping until a dead call's own deadline), and the second is what stops a
+// leak fix from swallowing a real cancellation before it can send its
+// `Cancel` frame.
 #[tokio::test]
 async fn dropping_an_open_call_aborts_its_watcher_unless_already_cancelled() {
     use tokio_util::sync::CancellationToken;
@@ -638,7 +644,12 @@ async fn dropping_an_open_call_aborts_its_watcher_unless_already_cancelled() {
     let abort_handle = handle.abort_handle();
     let open = bare_open_call(CancellationToken::new(), handle);
     drop(open);
-    tokio::task::yield_now().await;
+    for _ in 0..100 {
+        if abort_handle.is_finished() {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
     assert!(
         abort_handle.is_finished(),
         "dropping an OpenCall whose abort token was never cancelled must abort its watcher"
@@ -661,4 +672,104 @@ async fn dropping_an_open_call_aborts_its_watcher_unless_already_cancelled() {
         "dropping an OpenCall whose abort token was already cancelled must not abort its watcher"
     );
     abort_handle.abort();
+}
+
+/// The first end-to-end coverage of `FrontendClient::open` in this repo: a
+/// real leader `Broker`, a real fake plugin, and a real RPC connection,
+/// rather than a hand-built `OpenCall`. Every other remote-client test only
+/// issues `list_files`, which routes through `BrokerClient::call` →
+/// `FrontendClient::call` — a different method that builds its own command
+/// and handles cancellation inline in its own `select!` arm, never
+/// constructing an `OpenCall` or spawning a watcher. `open` is the path every
+/// non-`list_files` tool call on a follower takes, and the only path that
+/// creates a watcher, so this is also the first test that can catch a
+/// regression in either branch of `OpenCall::drop` on the code that actually
+/// ships it.
+#[tokio::test]
+async fn frontend_client_open_drop_governs_the_remote_watcher_on_both_branches() {
+    use super::multi_client::{
+        connect_plugin, metadata_call, next_plugin_request, send_metadata_response,
+    };
+
+    let connection_id = "123e4567-e89b-42d3-a456-426614174093";
+    let broker = Broker::new(BrokerConfig::for_test(Limits::reduced_for_test()).unwrap());
+    let plugin_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let plugin_address = plugin_listener.local_addr().unwrap();
+    let plugin_server = tokio::spawn(broker.clone().serve(plugin_listener));
+    let mut plugin = connect_plugin(plugin_address, connection_id, "OpenWatcher").await;
+    while broker.live_file_count().await == 0 {
+        tokio::task::yield_now().await;
+    }
+
+    let frontend_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let frontend_address = frontend_listener.local_addr().unwrap();
+    let rpc_server = tokio::spawn(broker.clone().serve_frontends(frontend_listener));
+    let frontend = FrontendClient::connect(frontend_address).await.unwrap();
+    let client = BrokerClient::remote(frontend);
+
+    // Branch A (the leak fix): let a real remote `open()` finish normally,
+    // then drop it. Nothing else holds `abort` or the watcher's `JoinHandle`
+    // here — if `Drop` did not abort the watcher, it would sleep out its full
+    // deadline for no reason on every single non-`list_files` call a follower
+    // ever makes.
+    let mut open = client
+        .open(metadata_call(Some(connection_id)))
+        .await
+        .expect("open must succeed against a connected plugin");
+    let watcher_abort_handle = open
+        .watcher
+        .as_ref()
+        .expect("FrontendClient::open must always spawn a watcher")
+        .abort_handle();
+    let request = next_plugin_request(&mut plugin).await;
+    send_metadata_response(&mut plugin, &request.request_id, "OpenWatcher").await;
+    (&mut open.result)
+        .await
+        .expect("the response sender must not be dropped mid-call")
+        .expect("a real metadata response must resolve the call successfully");
+    drop(open);
+    let mut watcher_finished = false;
+    for _ in 0..100 {
+        if watcher_abort_handle.is_finished() {
+            watcher_finished = true;
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert!(
+        watcher_finished,
+        "dropping a finished OpenCall must abort its now-useless watcher"
+    );
+
+    // Branch B (must not swallow a real cancel): cancel a second call before
+    // dropping it, and prove the plugin actually receives the `Cancel` frame
+    // naming that request — it is the watcher, not `Drop`, that must send it.
+    let open = client
+        .open(metadata_call(Some(connection_id)))
+        .await
+        .expect("open must succeed against a connected plugin");
+    let request = next_plugin_request(&mut plugin).await;
+    open.abort.cancel();
+    drop(open);
+    use futures_util::StreamExt;
+    let cancelled_request_id = loop {
+        let message = plugin.next().await.unwrap().unwrap();
+        let tokio_tungstenite::tungstenite::Message::Text(text) = message else {
+            continue;
+        };
+        if let figma_dev_mcp_protocol::wire::BrokerToPlugin::Cancel(cancel) =
+            serde_json::from_str(&text).unwrap()
+        {
+            break cancel.request_id;
+        }
+    };
+    assert_eq!(
+        cancelled_request_id, request.request_id,
+        "the watcher must send the plugin a Cancel naming the request it opened"
+    );
+
+    drop(plugin);
+    broker.shutdown().await;
+    let _ = tokio::time::timeout(Duration::from_secs(1), plugin_server).await;
+    let _ = tokio::time::timeout(Duration::from_secs(1), rpc_server).await;
 }
