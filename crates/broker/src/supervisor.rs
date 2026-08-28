@@ -237,6 +237,9 @@ impl Supervisor {
     /// The floor is measured from when the *previous* role was entered, so a
     /// role that lived a while re-elects immediately and only a role that died
     /// on arrival waits. See `MIN_ELECTION_INTERVAL` for why the floor exists.
+    /// This is also the very first election when `elected_at` is `None` — there
+    /// is no previous role to rate-limit against, so the floor is skipped and
+    /// election runs immediately.
     async fn elect_again(&mut self) -> (Role, Backend) {
         if let Some(elected_at) = self.elected_at {
             let alive_for = elected_at.elapsed();
