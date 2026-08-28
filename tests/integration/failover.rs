@@ -985,3 +985,46 @@ async fn a_swapped_backend_does_not_steal_a_calls_cancellation() {
     stranger.shutdown().await;
     let _ = tokio::time::timeout(Duration::from_secs(1), plugin_server).await;
 }
+
+#[tokio::test]
+async fn a_client_stops_answering_once_its_supervisor_has_shut_down() {
+    let (plugin_address, frontend_address) = free_addresses().await;
+    let supervisor = Supervisor::start(test_config(plugin_address, frontend_address)).await;
+    assert!(supervisor.is_leader(), "the first supervisor must lead");
+
+    // A clone kept across the shutdown, standing in for the MCP service's own.
+    let client = supervisor.client();
+    assert!(
+        client.local_broker().is_some(),
+        "an elected leader's client resolves to a local Broker"
+    );
+
+    supervisor
+        .shutdown(Duration::from_millis(0))
+        .await
+        .expect("a leader with no listener errors shuts down cleanly");
+
+    // Before the detach, this call returned `Ok` from the dead broker's
+    // uncleared SessionRegistry — a confident wrong answer from a broker that
+    // had already been shut down.
+    assert!(
+        client.local_broker().is_none(),
+        "shutdown must leave the client unattached"
+    );
+    let error = client
+        .call(
+            figma_dev_mcp_protocol::wire::BrokerCall::ListFiles {},
+            &tokio_util::sync::CancellationToken::new(),
+        )
+        .await
+        .expect_err("a client whose supervisor has shut down must not answer");
+    assert_eq!(
+        error.code(),
+        figma_dev_mcp_protocol::error::ErrorCode::ConnectionLost
+    );
+    assert!(
+        error.retryable(),
+        "the process is exiting, but another one can take the ports, so the error \
+         must be retryable rather than a definitive failure"
+    );
+}

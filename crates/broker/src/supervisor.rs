@@ -199,9 +199,14 @@ impl Supervisor {
     ///
     /// One of the two mutators of `self.role` and `self.client` after
     /// construction, alongside `clear_role` — except for `shutdown`, which
-    /// takes `self.role` directly because it consumes `self`, leaving no
-    /// ongoing state that a paired detach would need to keep coherent. They
-    /// exist as a pair because the two fields carry one coupled meaning — a
+    /// unbundles the pair on purpose: it takes `self.role` up front because it
+    /// must destructure the `Leader` to wind it down, and detaches the client
+    /// only after the idle grace has elapsed, so calls arriving during that
+    /// grace are still served by a live broker. The exception is deliberate and
+    /// bounded, not an oversight — but it is a real exception, and this pair is
+    /// not exhaustive.
+    ///
+    /// They exist as a pair because the two fields carry one coupled meaning — a
     /// role and the backend that serves it — and nothing previously required a
     /// detach to accompany an install, which is exactly how a dead broker came
     /// to stay installed across a re-election.
@@ -397,6 +402,14 @@ impl Supervisor {
         };
         drop(lease);
         broker.wait_until_idle(grace).await;
+        // Detach here, not at the top. A call arriving during the grace is still
+        // served by a live broker, which is the behaviour this path has always
+        // had and which `wait_until_idle` exists to preserve. What must not
+        // survive is the window AFTER `broker.shutdown()`, where the cell would
+        // otherwise still point at a broker answering from a registry it never
+        // cleared — `Ok` with stale files, or a non-retryable
+        // `ConnectionNotFound`.
+        self.client.detach();
         broker.shutdown().await;
         let mut result = Ok(());
         while let Some(joined) = listeners.join_next().await {
