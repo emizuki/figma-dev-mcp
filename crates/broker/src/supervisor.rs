@@ -20,6 +20,14 @@ const RETRY_DELAY_BASE: Duration = Duration::from_millis(100);
 /// reconnect backoff saturates. Recovering slower than the plugin retries would
 /// leave it looping for no reason.
 const RETRY_DELAY_CAP: Duration = Duration::from_secs(5);
+/// Attempts reported in full before the election loop goes quiet. Six cover the
+/// backoff growth from `RETRY_DELAY_BASE` to `RETRY_DELAY_CAP`; the extra two
+/// put the ceiling itself in the log before it falls silent.
+const FULL_LOG_ATTEMPTS: u32 = 8;
+/// Once quiet, one `warn!` every this many attempts — about five minutes at
+/// `RETRY_DELAY_CAP` — so a permanently stuck process stays visible without
+/// flooding the host's captured log.
+const QUIET_HEARTBEAT_ATTEMPTS: u32 = 60;
 /// Minimum interval between the start of one role and the start of the next.
 ///
 /// A *successful* election that immediately dies again contains no sleep and no
@@ -341,23 +349,71 @@ async fn elect_until_entered(config: &BrokerConfig) -> (Role, Backend) {
     let mut delay = RETRY_DELAY_BASE;
     let mut attempt = 1_u32;
     loop {
-        tracing::info!(attempt, "starting broker election");
+        let verbosity = election_log(attempt);
+        if verbosity == ElectionLog::Full {
+            tracing::info!(attempt, "starting broker election");
+        }
         match elect(config.clone()).await {
             Ok(outcome) => {
-                if let Some(entered) = enter_role(outcome).await {
+                if let Some(entered) = enter_role(outcome, verbosity).await {
                     return entered;
                 }
             }
-            Err(error) => tracing::warn!(%error, attempt, "broker election failed"),
+            Err(error) => match verbosity {
+                ElectionLog::Full => tracing::warn!(%error, attempt, "broker election failed"),
+                _ => tracing::debug!(%error, attempt, "broker election failed"),
+            },
         }
-        tracing::warn!(
-            attempt,
-            delay_ms = delay.as_millis() as u64,
-            "retrying election"
-        );
+        let delay_ms = delay.as_millis() as u64;
+        match verbosity {
+            ElectionLog::Full => tracing::warn!(attempt, delay_ms, "retrying election"),
+            ElectionLog::Heartbeat => tracing::warn!(
+                attempt,
+                delay_ms,
+                "broker election is still failing; retrying at the backoff ceiling"
+            ),
+            ElectionLog::Quiet => tracing::debug!(attempt, delay_ms, "retrying election"),
+        }
         tokio::time::sleep(delay).await;
         delay = (delay * 2).min(RETRY_DELAY_CAP);
         attempt = attempt.wrapping_add(1);
+    }
+}
+
+/// How loudly one election attempt should be reported.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ElectionLog {
+    /// Every line, as before. The transient failures this loop exists for
+    /// resolve inside this band.
+    Full,
+    /// Nothing above `debug!`, which the default `info` filter drops.
+    Quiet,
+    /// One `warn!` so a permanently stuck process stays visible.
+    Heartbeat,
+}
+
+/// Decide how loudly to report one attempt.
+///
+/// Since `elect_until_entered` retries forever, logging every attempt at
+/// `info!`/`warn!` means a permanently unavailable election — a foreign process
+/// holding the frontend port, say — writes roughly three lines every
+/// `RETRY_DELAY_CAP` into the MCP host's captured log, indefinitely. Before this
+/// loop retried forever the process exited once with a single error, so the
+/// volume was bounded by construction; now it has to be bounded deliberately.
+///
+/// Full logging covers the whole backoff growth phase — 100ms doubling to the
+/// 5s cap takes six attempts — plus two at the ceiling, so the log always shows
+/// the delay reaching its cap before it falls silent. That band is where a
+/// transient failure lives, and it is exactly the diagnosability the logging was
+/// added for. Past it the process is stuck rather than starting up, and a
+/// heartbeat is worth more than a transcript.
+fn election_log(attempt: u32) -> ElectionLog {
+    if attempt <= FULL_LOG_ATTEMPTS {
+        ElectionLog::Full
+    } else if attempt.is_multiple_of(QUIET_HEARTBEAT_ATTEMPTS) {
+        ElectionLog::Heartbeat
+    } else {
+        ElectionLog::Quiet
     }
 }
 
@@ -366,12 +422,20 @@ async fn elect_until_entered(config: &BrokerConfig) -> (Role, Backend) {
 /// Returns `None` when the outcome cannot be entered — a follower handshake that
 /// fails, or a leader that cannot take its own frontend lease. The caller treats
 /// that as a reason to elect again rather than a fatal error.
-async fn enter_role(outcome: ElectionOutcome) -> Option<(Role, Backend)> {
+async fn enter_role(outcome: ElectionOutcome, verbosity: ElectionLog) -> Option<(Role, Backend)> {
     match outcome {
         ElectionOutcome::Leader(leader) => {
             let broker = leader.broker;
             let Some(lease) = broker.frontend_lease() else {
-                tracing::warn!("leader frontend lease was unavailable");
+                // Gated like the rest of the attempt: a role that cannot be
+                // entered fails once per retry, so an unbounded loop would
+                // otherwise report it forever. See `election_log`.
+                match verbosity {
+                    ElectionLog::Full => {
+                        tracing::warn!("leader frontend lease was unavailable")
+                    }
+                    _ => tracing::debug!("leader frontend lease was unavailable"),
+                }
                 return None;
             };
             // Read the bound addresses before the listeners move into their
@@ -416,7 +480,16 @@ async fn enter_role(outcome: ElectionOutcome) -> Option<(Role, Backend)> {
                     Some((Role::Follower { client }, backend))
                 }
                 Err(error) => {
-                    tracing::warn!(%error, leader_address, "frontend handshake failed");
+                    // The loudest line in the permanently-failing case: a
+                    // foreign process holding the frontend port accepts the
+                    // connect and never handshakes, so this fires once per
+                    // retry forever. Gated with the rest of the attempt.
+                    match verbosity {
+                        ElectionLog::Full => {
+                            tracing::warn!(%error, leader_address, "frontend handshake failed")
+                        }
+                        _ => tracing::debug!(%error, leader_address, "frontend handshake failed"),
+                    }
                     None
                 }
             }
@@ -439,4 +512,44 @@ fn bound_address(listener: &TcpListener) -> String {
         |error| format!("unknown ({error})"),
         |address| address.to_string(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ElectionLog, FULL_LOG_ATTEMPTS, QUIET_HEARTBEAT_ATTEMPTS, election_log};
+
+    #[test]
+    fn the_backoff_growth_phase_is_logged_in_full() {
+        for attempt in 1..=FULL_LOG_ATTEMPTS {
+            assert_eq!(
+                election_log(attempt),
+                ElectionLog::Full,
+                "attempt {attempt} is still in the growth phase and must be logged in full"
+            );
+        }
+    }
+
+    #[test]
+    fn a_permanently_failing_election_goes_quiet() {
+        assert_eq!(election_log(FULL_LOG_ATTEMPTS + 1), ElectionLog::Quiet);
+        assert_eq!(election_log(FULL_LOG_ATTEMPTS + 2), ElectionLog::Quiet);
+    }
+
+    #[test]
+    fn a_stuck_election_still_reports_periodically() {
+        assert_eq!(
+            election_log(QUIET_HEARTBEAT_ATTEMPTS),
+            ElectionLog::Heartbeat,
+            "a process stuck forever must stay visible in the log"
+        );
+        assert_eq!(
+            election_log(QUIET_HEARTBEAT_ATTEMPTS * 2),
+            ElectionLog::Heartbeat
+        );
+        assert_eq!(
+            election_log(QUIET_HEARTBEAT_ATTEMPTS + 1),
+            ElectionLog::Quiet,
+            "only the heartbeat attempt itself is loud"
+        );
+    }
 }
