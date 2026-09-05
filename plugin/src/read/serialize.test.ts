@@ -8,9 +8,12 @@ import {
   collectInstanceIdentities,
   collectStyleNames,
   collectVariableNames,
+  effects,
   namedComponentProperties,
+  paints,
   serializeNodeForest,
   TEXT_CLAMP_LIMIT,
+  textStyle,
   walkNodeForest,
 } from "./serialize"
 
@@ -2002,5 +2005,65 @@ describe("text clamp helper", () => {
         assertStyle(style)
       },
     )
+  })
+})
+
+describe("hidden effects and paints are not reported", () => {
+  test("drops an effect whose visible is false, keeping its live neighbour", () => {
+    const result = effects([
+      {
+        type: "DROP_SHADOW",
+        color: { r: 0, g: 0, b: 0, a: 0.5 },
+        offset: { x: 1, y: 2 },
+        radius: 4,
+        spread: 1,
+        visible: false,
+      },
+      {
+        type: "DROP_SHADOW",
+        color: { r: 0, g: 0, b: 0, a: 0.25 },
+        offset: { x: 0, y: 8 },
+        radius: 16,
+        spread: 2,
+        visible: true,
+      },
+    ])
+
+    expect(result).toEqual([
+      {
+        type: "dropShadow",
+        color: { r: 0, g: 0, b: 0, a: 0.25 },
+        offsetX: 0,
+        offsetY: 8,
+        radius: 16,
+        spread: 2,
+      },
+    ])
+  })
+
+  test("treats an absent visible as visible, matching the Figma default", () => {
+    const result = effects([{ type: "LAYER_BLUR", radius: 4 }])
+    expect(result).toEqual([{ type: "layerBlur", radius: 4 }])
+  })
+
+  test("drops a hidden fill and keeps a live one", () => {
+    const result = paints([
+      { type: "SOLID", color: { r: 1, g: 0, b: 0, a: 1 }, visible: false },
+      { type: "SOLID", color: { r: 0, g: 1, b: 0, a: 1 }, visible: true },
+    ])
+
+    expect(result).toEqual([
+      { type: "solid", color: { r: 0, g: 1, b: 0, a: 1 }, opacity: 1 },
+    ])
+  })
+
+  test("drops a hidden fill from a text style", () => {
+    const style = textStyle({
+      fontName: { family: "Inter", style: "Regular" },
+      fills: [
+        { type: "SOLID", color: { r: 1, g: 0, b: 0, a: 1 }, visible: false },
+      ],
+    })
+    expect(style.paints).toEqual([])
   })
 })

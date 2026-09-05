@@ -154,6 +154,10 @@ export function toColor(value: unknown) {
 function toPaint(value: unknown): PaintValue | undefined {
   if (isMixed(value)) return { type: "mixed" }
   const paint = record(value)
+  // A paint switched off in Figma still sits in the host array. Dropping it here
+  // is what makes `paints` mean "what renders" — the wire carries no visibility
+  // flag, so an entry that survives this line is an entry that paints.
+  if (!boolean(paint.visible, true)) return undefined
   switch (paint.type) {
     case "SOLID":
       return {
@@ -214,6 +218,10 @@ export function effects(value: unknown): EffectValue[] {
   const result: EffectValue[] = []
   for (const effect of array(value)) {
     const source = record(effect)
+    // Same rule as toPaint: an effect toggled off in Figma is still in
+    // node.effects, and reporting it is what produced false "missing shadow"
+    // findings against correct implementations.
+    if (!boolean(source.visible, true)) continue
     const offset = record(source.offset)
     switch (source.type) {
       case "DROP_SHADOW":
