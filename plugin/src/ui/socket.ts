@@ -27,6 +27,7 @@ interface SocketGeneration {
   socket: WebSocket
   metadataRequestId: string
   helloSent: boolean
+  acceptedSinceOpen: boolean
 }
 
 interface RequestOwner {
@@ -39,7 +40,6 @@ export function startSocketTransport(): () => void {
   let reconnectAttempt = 0
   let active: SocketGeneration | undefined
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined
-  let acceptedSinceOpen = false
   const requestOwners = new Map<string, RequestOwner>()
 
   const isActiveOpen = (generation: SocketGeneration): boolean =>
@@ -171,11 +171,11 @@ export function startSocketTransport(): () => void {
       socket: candidate,
       metadataRequestId,
       helloSent: false,
+      acceptedSinceOpen: false,
     }
     active = generation
 
     candidate.addEventListener("open", () => {
-      acceptedSinceOpen = false
       if (!isActiveOpen(generation)) return
       setStatus("Socket open, waiting for Figma…")
       sendToController({
@@ -193,8 +193,8 @@ export function startSocketTransport(): () => void {
       // The broker never acknowledges a hello: `BrokerToPlugin` is
       // request | cancel | ping. A frame can only arrive on a socket it chose
       // to keep, so the first one is the only proof of acceptance available.
-      if (!acceptedSinceOpen) {
-        acceptedSinceOpen = true
+      if (!generation.acceptedSinceOpen) {
+        generation.acceptedSinceOpen = true
         reconnectAttempt = 0
         setStatus("Connected to local broker")
       }
