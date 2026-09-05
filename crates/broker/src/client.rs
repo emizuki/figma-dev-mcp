@@ -255,6 +255,15 @@ impl BrokerClient {
         cancellation: &CancellationToken,
     ) -> Result<OpenCall, ToolError> {
         let backend = tokio::select! {
+            // A caller whose token is already cancelled leaves both branches
+            // ready on the first poll, and an unbiased select would pick between
+            // them at random — the same input opening a call on one run and
+            // returning `Cancelled` on the next. Polling `backend_ready` first
+            // keeps the already-installed case behaving as it did before this
+            // method could wait at all: the call opens and the caller's own
+            // cancellation handling aborts it. On a live token `cancelled()` is
+            // pending, so the bias costs nothing in the case that matters.
+            biased;
             backend = self.backend_ready() => backend,
             _ = cancellation.cancelled() => {
                 return Err(ToolError::new(ErrorCode::Cancelled, false));
@@ -286,6 +295,9 @@ impl BrokerClient {
         // to the whole deadline instead of returning immediately, the way it
         // did before this method could ever wait.
         let broker = tokio::select! {
+            // Biased for the same reason as `open`: an already-cancelled token
+            // must not make the outcome a coin flip.
+            biased;
             backend = self.backend_ready() => match backend {
                 Some(Backend::Remote(client)) => return client.call(call, cancellation).await,
                 Some(Backend::Local(broker)) => broker,
