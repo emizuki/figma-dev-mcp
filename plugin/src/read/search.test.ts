@@ -474,14 +474,39 @@ describe("search_nodes handler", () => {
     expect(result.matches.map((item) => item.node.id)).toEqual(["1:3"])
   })
 
-  test("a switched-on node inside a switched-off parent never matches", async () => {
-    const child = node("1:5", "Button", "FRAME")
-    const hiddenParent = node("1:4", "Group", "FRAME", {
-      visible: false,
-      children: [child],
+  test("a match's childIds omit a hidden child", async () => {
+    // summarizeMatch must not read node.children directly: it disagrees
+    // with the serializer's own filtered view of the same node otherwise,
+    // and hands the caller an id that get_nodes will then refuse.
+    const hiddenChild = node("1:9", "Icon", "VECTOR", { visible: false })
+    const shownChild = node("1:8", "Icon", "VECTOR")
+    const frame = node("1:7", "Button", "FRAME", {
+      children: [hiddenChild, shownChild],
     })
-    ;(child as Record<string, unknown>).parent = hiddenParent
-    const requested = page("0:1", "Requested", [hiddenParent])
+    const requested = page("0:1", "Requested", [frame])
+    installFigma({ currentPage: requested, pages: [requested] })
+
+    const result = await searchNodes({
+      scope: { nodeId: requested.id },
+      query: "button",
+      match: "contains",
+      limit: 50,
+    })
+
+    expect(result.matches.map((item) => item.node.childIds)).toEqual([["1:8"]])
+  })
+
+  test("a switched-on node never matches when an ancestor above the entry point is switched off", async () => {
+    // The child and the search's entry root are both switched on — only a
+    // node *above* the root, outside the searched subtree, is switched off.
+    // A per-node `visible` check, or a walk that stops at the entry root,
+    // would wrongly keep this match; only walking `parent` past the root
+    // catches it.
+    const child = node("1:5", "Button", "FRAME")
+    const requested = page("0:1", "Requested", [child])
+    ;(child as Record<string, unknown>).parent = requested
+    const hiddenAncestor = { id: "0:0", visible: false }
+    ;(requested as Record<string, unknown>).parent = hiddenAncestor
     installFigma({ currentPage: requested, pages: [requested] })
 
     const result = await searchNodes({

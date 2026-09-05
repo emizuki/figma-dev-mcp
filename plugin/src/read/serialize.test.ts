@@ -2393,14 +2393,17 @@ describe("hidden nodes are never returned", () => {
     expect(result.nodes[0]?.children.map((c) => c.summary.id)).toEqual(["1:3"])
   })
 
-  test("a switched-on child inside a switched-off parent is absent", () => {
-    // `parent` is what `rendersVisibly` walks; the child's own `visible` is
-    // true, so a per-node check would wrongly keep it.
-    const hiddenParent = base({ id: "1:2", name: "Group", visible: false })
-    const child = base({ id: "1:4", name: "Deep", visible: true })
-    child.parent = hiddenParent
-    hiddenParent.children = [child]
-    const root = base({ children: [hiddenParent] })
+  test("a switched-on child is absent when an ancestor above the entry point is switched off", () => {
+    // The child and the entry root are both switched on — only a node
+    // *above* the root, outside the traversed subtree, is switched off.
+    // A per-node `visible` check, or a walk that stops at the entry root,
+    // would wrongly keep this child; only walking `parent` past the root
+    // catches it.
+    const grandparent = { id: "0:0", visible: false }
+    const root = base({ id: "1:1", parent: grandparent })
+    const child = base({ id: "1:2", name: "Deep", visible: true })
+    child.parent = root
+    root.children = [child]
 
     const result = forest(root)
     expect(result.nodes[0]?.children.map((c) => c.summary.id)).toEqual([])

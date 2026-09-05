@@ -850,10 +850,12 @@ function nodeData(
   return full
 }
 
-// Every child is judged, and judged on the whole ancestor chain rather than its
-// own flag: this function is reached only while descending a node that already
-// renders, but an explicitly requested subtree can start anywhere, so the walk
-// is what makes the rule hold at any entry point.
+// Every child is judged on the whole ancestor chain, not its own flag: a
+// switched-on child of a switched-off parent must still be dropped, and a
+// per-node check would miss exactly that case. (An explicitly requested root
+// itself is not checked here — a caller can name a hidden node directly, and
+// that entry point's own visibility is a separate concern from its
+// children's.)
 function visibleChildren(node: UnknownRecord): readonly unknown[] {
   return array(node.children).filter((child) => rendersVisibly(child))
 }
@@ -1205,7 +1207,12 @@ export async function collectInstanceIdentities(
     const node = record(raw)
     if (node.type === "INSTANCE") instances.push(node)
     if (level >= depth) return
-    const children = array(hostGet(node, "children"))
+    // Filtered for the same reason the search guard is: an invisible
+    // subtree must not spend the style/variable/instance lookup budget on
+    // content that will never be returned.
+    const children = array(hostGet(node, "children")).filter((child) =>
+      rendersVisibly(child),
+    )
     for (let index = 0; index < children.length; index += 1) {
       throwIfAbortedAtBatch(signal, index, CANCEL_CHECK_BATCH)
       visit(children[index], level + 1)
@@ -1251,7 +1258,12 @@ export async function collectStyleNames(
       if (pending.length < MAX_STYLE_NAME_LOOKUPS) pending.push(id)
     }
     if (level >= depth) return
-    const children = array(hostGet(node, "children"))
+    // Filtered for the same reason the search guard is: an invisible
+    // subtree must not spend the style/variable/instance lookup budget on
+    // content that will never be returned.
+    const children = array(hostGet(node, "children")).filter((child) =>
+      rendersVisibly(child),
+    )
     for (let index = 0; index < children.length; index += 1) {
       throwIfAbortedAtBatch(signal, index, CANCEL_CHECK_BATCH)
       visit(children[index], level + 1)
@@ -1303,7 +1315,12 @@ export async function collectVariableNames(
       if (pending.length < MAX_VARIABLE_NAME_LOOKUPS) pending.push(id)
     }
     if (level >= depth) return
-    const children = array(hostGet(node, "children"))
+    // Filtered for the same reason the search guard is: an invisible
+    // subtree must not spend the style/variable/instance lookup budget on
+    // content that will never be returned.
+    const children = array(hostGet(node, "children")).filter((child) =>
+      rendersVisibly(child),
+    )
     for (let index = 0; index < children.length; index += 1) {
       throwIfAbortedAtBatch(signal, index, CANCEL_CHECK_BATCH)
       visit(children[index], level + 1)

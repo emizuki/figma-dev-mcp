@@ -177,8 +177,7 @@ function summarizeMatch(raw: unknown, includeChildren = true): NodeSummary {
   const node = record(raw)
   const parent = record(node.parent)
   const bounds = record(node.absoluteBoundingBox)
-  const children =
-    includeChildren && Array.isArray(node.children) ? node.children : []
+  const children = includeChildren ? childrenOf(node) : []
   const childIds = children
     .map((child) => string(record(child).id))
     .filter((id) => id.length > 0)
