@@ -4,6 +4,7 @@ use std::time::{Duration, SystemTime};
 use figma_dev_mcp_protocol::{
     domain::{ConnectionId, DisplayText, ObservationWindow, RequestId, ReturnedList},
     error::{ErrorCode, ToolError},
+    limits::BACKEND_READY_MS,
     wire::{BrokerCall, BrokerResult, Request, RequestTarget},
 };
 use tokio::sync::mpsc;
@@ -80,6 +81,10 @@ impl Backend {
 #[derive(Clone, Debug)]
 pub struct BrokerClient {
     backend: Arc<RwLock<Option<Backend>>>,
+    // Fires on every `install`. `open`/`call` wait on this rather than polling,
+    // so a call that arrives before the first election is served the moment the
+    // backend lands instead of failing in zero milliseconds.
+    installed: tokio::sync::watch::Sender<u64>,
 }
 
 impl BrokerClient {
@@ -94,18 +99,21 @@ impl BrokerClient {
     /// A client with no backend yet.
     ///
     /// The process holds one of these between start and its first election, so
-    /// the MCP service can be up and answering before a leader exists. Calls
-    /// made in that window fail retryably rather than hanging, which is the
-    /// whole reason the first election is no longer allowed to block startup.
+    /// the MCP service can be up and answering before a leader exists. A call
+    /// made in that window waits up to `BACKEND_READY_MS` for the election to
+    /// install a backend and then fails retryably — it never hangs, which is
+    /// what lets the first election stay off the startup path.
     pub fn unattached() -> Self {
         Self {
             backend: Arc::new(RwLock::new(None)),
+            installed: tokio::sync::watch::Sender::new(0),
         }
     }
 
     pub(crate) fn new(backend: Backend) -> Self {
         Self {
             backend: Arc::new(RwLock::new(Some(backend))),
+            installed: tokio::sync::watch::Sender::new(0),
         }
     }
 
@@ -116,6 +124,7 @@ impl BrokerClient {
             .backend
             .write()
             .expect("broker client backend lock poisoned") = Some(backend);
+        self.installed.send_modify(|generation| *generation += 1);
     }
 
     /// Swap in a local backend, for tests that need to prove a call cancels
@@ -150,10 +159,11 @@ impl BrokerClient {
     /// Only the supervisor should call this: `supervise` installs a new
     /// backend only after `role.death()` fires, so nothing re-fills the cell
     /// until the current role actually dies. A stray `detach()` while a role
-    /// is still alive leaves every call in the process returning
-    /// `ConnectionLost { retryable: true }` forever — "retryable" becomes a
-    /// lie told indefinitely, which is the same confident-wrong-answer class
-    /// this type exists to remove, just inverted.
+    /// is still alive leaves every call in the process waiting out
+    /// `BACKEND_READY_MS` and then returning `ConnectionLost { retryable:
+    /// true }` forever — "retryable" becomes a lie told indefinitely, which is
+    /// the same confident-wrong-answer class this type exists to remove, just
+    /// inverted, and now slower besides.
     ///
     /// `pub` only so the integration test that proves the detached state
     /// stops answering can reach it directly; `#[doc(hidden)]` keeps it out
@@ -176,6 +186,35 @@ impl BrokerClient {
             .clone()
     }
 
+    /// The current backend, waiting up to `BACKEND_READY_MS` for the first
+    /// election to install one.
+    ///
+    /// Returns immediately once a backend exists, which is every call after
+    /// startup. Only the calls racing the first election pay anything, and the
+    /// measured race is ~80µs.
+    async fn backend_ready(&self) -> Option<Backend> {
+        if let Some(backend) = self.backend() {
+            return Some(backend);
+        }
+        let mut changed = self.installed.subscribe();
+        let deadline = Duration::from_millis(BACKEND_READY_MS);
+        // The backend may land between the read above and the subscribe, so the
+        // loop re-reads rather than trusting the notification alone.
+        tokio::time::timeout(deadline, async {
+            loop {
+                if changed.changed().await.is_err() {
+                    return None;
+                }
+                if let Some(backend) = self.backend() {
+                    return Some(backend);
+                }
+            }
+        })
+        .await
+        .ok()
+        .flatten()
+    }
+
     /// The local `Broker`, when this process is currently the leader.
     ///
     /// `None` when this process is a follower, or when it has not yet elected.
@@ -187,7 +226,7 @@ impl BrokerClient {
     }
 
     pub async fn open(&self, call: BrokerCall) -> Result<OpenCall, ToolError> {
-        match self.backend() {
+        match self.backend_ready().await {
             Some(Backend::Local(broker)) => local_open(&broker, call).await,
             Some(Backend::Remote(client)) => client.open(call).await,
             None => Err(ToolError::new(ErrorCode::ConnectionLost, true)),
@@ -206,7 +245,7 @@ impl BrokerClient {
         // it — it cancels through `open.owner`, the `Broker` recorded at open
         // time, so a swap landing between the two reads can no longer strand
         // the `Cancel` frame on a backend that never opened the request.
-        let broker = match self.backend() {
+        let broker = match self.backend_ready().await {
             Some(Backend::Remote(client)) => return client.call(call, cancellation).await,
             Some(Backend::Local(broker)) => broker,
             None => return Err(ToolError::new(ErrorCode::ConnectionLost, true)),

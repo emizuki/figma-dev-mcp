@@ -450,8 +450,8 @@ async fn an_open_call_records_the_broker_that_opened_it() {
     let _ = tokio::time::timeout(Duration::from_secs(1), plugin_server).await;
 }
 
-#[tokio::test]
-async fn an_unattached_client_fails_calls_retryably() {
+#[tokio::test(start_paused = true)]
+async fn an_unattached_client_still_fails_calls_retryably_after_the_deadline() {
     let client = BrokerClient::unattached();
 
     assert!(
@@ -459,6 +459,7 @@ async fn an_unattached_client_fails_calls_retryably() {
         "an unattached client has no local Broker"
     );
 
+    let started = tokio::time::Instant::now();
     let open = client
         .open(figma_dev_mcp_protocol::wire::BrokerCall::ListFiles {})
         .await;
@@ -470,6 +471,11 @@ async fn an_unattached_client_fails_calls_retryably() {
     assert!(
         error.retryable(),
         "the window before the first election is transient, so the error must be retryable"
+    );
+    assert!(
+        started.elapsed()
+            >= Duration::from_millis(figma_dev_mcp_protocol::limits::BACKEND_READY_MS),
+        "the call must wait for the deadline before concluding there is no backend"
     );
 
     let called = client
@@ -484,6 +490,55 @@ async fn an_unattached_client_fails_calls_retryably() {
         figma_dev_mcp_protocol::error::ErrorCode::ConnectionLost
     );
     assert!(error.retryable());
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_call_made_before_the_first_election_succeeds_once_a_backend_arrives() {
+    // The regression this task exists for: the MCP service answers before
+    // `supervise` has elected, so a call can arrive with the cell still empty.
+    // It must wait for the backend rather than fail in zero milliseconds.
+    let client = BrokerClient::unattached();
+    let installer = client.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        installer.install_local(Broker::new(
+            BrokerConfig::for_test(Limits::reduced_for_test()).unwrap(),
+        ));
+    });
+
+    let open = client
+        .open(figma_dev_mcp_protocol::wire::BrokerCall::ListFiles {})
+        .await;
+
+    assert!(
+        open.is_ok(),
+        "a backend installed inside the deadline must serve the waiting call"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn waiting_for_a_backend_does_not_outlast_the_deadline() {
+    let client = BrokerClient::unattached();
+    let installer = client.clone();
+    tokio::spawn(async move {
+        // Twice the deadline: too late to rescue the call.
+        tokio::time::sleep(Duration::from_millis(
+            figma_dev_mcp_protocol::limits::BACKEND_READY_MS * 2,
+        ))
+        .await;
+        installer.install_local(Broker::new(
+            BrokerConfig::for_test(Limits::reduced_for_test()).unwrap(),
+        ));
+    });
+
+    let open = client
+        .open(figma_dev_mcp_protocol::wire::BrokerCall::ListFiles {})
+        .await;
+
+    assert!(
+        open.is_err(),
+        "a backend that arrives after the deadline must not un-fail the call"
+    );
 }
 
 #[tokio::test]
