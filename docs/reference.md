@@ -43,7 +43,7 @@ Sessions are isolated per document: a node id from one file, asked of another, r
 
 At `detail: "full"` a node's `paints` field carries **fills only** — border colour, width, alignment, and dash pattern live under `strokes`. Optional style fields are omitted when they sit at their Figma default, so an absent field means "default", not "unknown".
 
-Effects and paints that are switched off in Figma are not returned at all, so `effects` and `paints` list only what renders. An empty array means nothing is painted there — never "there is something we could not describe". A paint or effect type this server cannot model is reported as `{ "type": "unsupported", "figmaType": "..." }`, carrying Figma's own name for it. A node whose every stroke is switched off reports no `strokes` field.
+Effects and paints that are switched off in Figma are not returned at all, so `effects` and `paints` list only what renders. An empty array means nothing is painted there — never "there is something we could not describe". A paint or effect type this server cannot model is reported as `{ "type": "unsupported", "figmaType": "..." }`, carrying Figma's own name for it. A node whose every stroke is switched off reports no `strokes` field. The same rule governs `get_styles`: a paint or effect style whose contents are all switched off returns `paints: []` or `effects: []`, not a style-level error.
 
 `get_styles` is two lists in one response: styles **referenced** by your scope, and the document's **local** styles. `selector` constrains only the referenced half. The default, `both`, therefore mixes a document-wide list with a scoped one.
 
@@ -91,7 +91,7 @@ The test is the host's own `absoluteRenderBounds`, measured after strokes and ef
 
 Nodes that are switched off, whether by their own `visible` or an ancestor's, are handed to the exporter anyway, because the host reports no render bounds for anything invisible and that says nothing about whether the node is empty. So is a node whose bounds the host will not report at all.
 
-Switched-off is not the only way something fails to render: a node at `opacity: 0`, a blend mode, or a transparent ancestor all still apply, and none of them are reflected in `effects` or `paints`. The decisive cross-check is the render bounds — Figma expands a node's PNG export to fit its enabled effects, so comparing `get_screenshot`'s returned `width`/`height` against the node's `bounds` measures what actually renders. Expansion per side is `radius + spread`, shifted by `offsetX`/`offsetY`.
+Switched-off is not the only way something fails to render: a node at `opacity: 0`, a blend mode, or a transparent ancestor all still apply, and none of them are reflected in `effects` or `paints`. The decisive cross-check is the render bounds — Figma expands a node's PNG export to fit its enabled effects, so comparing `get_screenshot`'s returned `width`/`height` against the node's `bounds` measures what actually renders. That comparison assumes the default `scale: 1`; a caller-supplied `scale` multiplies every returned dimension regardless of effects, so it must be divided back out before comparing. The expansion formula is drop-shadow-only: per side it is `radius + spread`, shifted by `offsetX`/`offsetY`. An `INNER_SHADOW` paints inside the shape and expands the bounds not at all, so applying that formula to one misreads a real inner shadow as missing. A `LAYER_BLUR` expands the bounds by roughly its `radius`, with no spread or offset term; a `BACKGROUND_BLUR` does not expand the node's own bounds.
 
 ## Guarantees
 

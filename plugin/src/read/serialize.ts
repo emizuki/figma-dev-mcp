@@ -499,21 +499,11 @@ function getStyledRanges(node: UnknownRecord) {
 }
 
 function geometry(node: UnknownRecord) {
-  const transform = array(hostGet(node, "absoluteTransform"))
-  const row0 = array(transform[0])
-  const row1 = array(transform[1])
   const bounds = record(hostGet(node, "absoluteBoundingBox"))
   const result = {
     rotation: finite(hostGet(node, "rotation")),
     opacity: finite(hostGet(node, "opacity"), 1),
-    transform: {
-      m00: finite(row0[0], 1),
-      m01: finite(row0[1]),
-      m02: finite(row0[2]),
-      m10: finite(row1[0]),
-      m11: finite(row1[1], 1),
-      m12: finite(row1[2]),
-    },
+    transform: toTransform(hostGet(node, "absoluteTransform")),
   }
   if (own(bounds, "x") && own(bounds, "y")) {
     return {

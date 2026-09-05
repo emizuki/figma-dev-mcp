@@ -1222,22 +1222,27 @@ impl<'de> Visitor<'de> for EffectVisitor {
                 let offset_y = offset_y.ok_or_else(|| A::Error::missing_field("offsetY"))?;
                 let radius = radius.ok_or_else(|| A::Error::missing_field("radius"))?;
                 let spread = spread.ok_or_else(|| A::Error::missing_field("spread"))?;
-                Ok(if matches!(tag, EffectTag::DropShadow) {
-                    EffectValue::DropShadow {
+                // Name every shadow tag. A wildcard here compiles just as well and
+                // is how a future third shadow tag silently decodes as an inner
+                // shadow: adding it to the outer pattern above would be enough to
+                // build. `unreachable!` is only for the non-shadow tags the outer
+                // match already excluded.
+                Ok(match tag {
+                    EffectTag::DropShadow => EffectValue::DropShadow {
                         color,
                         offset_x,
                         offset_y,
                         radius,
                         spread,
-                    }
-                } else {
-                    EffectValue::InnerShadow {
+                    },
+                    EffectTag::InnerShadow => EffectValue::InnerShadow {
                         color,
                         offset_x,
                         offset_y,
                         radius,
                         spread,
-                    }
+                    },
+                    _ => unreachable!("outer match narrowed tag to shadows"),
                 })
             }
             EffectTag::LayerBlur | EffectTag::BackgroundBlur => {
@@ -1245,10 +1250,15 @@ impl<'de> Visitor<'de> for EffectVisitor {
                     color, offset_x, offset_y, spread, figma_type,
                 )?;
                 let radius = radius.ok_or_else(|| A::Error::missing_field("radius"))?;
-                Ok(if matches!(tag, EffectTag::LayerBlur) {
-                    EffectValue::LayerBlur { radius }
-                } else {
-                    EffectValue::BackgroundBlur { radius }
+                // Name every blur tag. A wildcard here compiles just as well and
+                // is how a future third blur tag silently decodes as a background
+                // blur: adding it to the outer pattern above would be enough to
+                // build. `unreachable!` is only for the non-blur tags the outer
+                // match already excluded.
+                Ok(match tag {
+                    EffectTag::LayerBlur => EffectValue::LayerBlur { radius },
+                    EffectTag::BackgroundBlur => EffectValue::BackgroundBlur { radius },
+                    _ => unreachable!("outer match narrowed tag to blurs"),
                 })
             }
             EffectTag::Unsupported => {
