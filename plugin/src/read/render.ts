@@ -14,12 +14,9 @@ import {
 import { progressFor } from "../main/progress"
 import { PluginReadError } from "./navigation"
 import { loadPageIfNeeded, type FigmaReadApi } from "./common"
+import { hostGet, isRecord, rendersVisibly } from "./visibility"
 
 export const SCREENSHOT_VALIDATION_TIMEOUT_MS = 10_000
-
-/** Figma nests far shallower than this; the cap only stops a malformed parent
- * chain from spinning. */
-const MAX_ANCESTOR_WALK = 128
 
 declare const figma: FigmaReadApi
 
@@ -80,10 +77,6 @@ function observation(startedAt: string) {
   return { startedAt, completedAt: new Date().toISOString() }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object"
-}
-
 function itemError(code: ErrorCode): ItemResult<ScreenshotAsset> {
   const error: ToolError = {
     code,
@@ -122,35 +115,6 @@ function exportSettings(input: GetScreenshotInput): Record<string, unknown> {
   }
 }
 
-// Bounds are node *content*, and under `documentAccess: dynamic-page` some node
-// properties are write-only and throw on read. A hostile or unloaded getter
-// costs us the measurement, not the export.
-function hostGet(node: Record<string, unknown>, key: string): unknown {
-  try {
-    return node[key]
-  } catch {
-    return undefined
-  }
-}
-
-/** A `visible` switch is inherited: the API counts a node as visible only when
- * `visible === true` for itself *and every one of its parents*. So this walks
- * the chain rather than reading one flag.
- *
- * An unfinished walk returns false. Failing to establish visibility is not the
- * same as establishing it, and every caller here treats false as "leave this
- * node alone". */
-function isFullyVisible(node: unknown): boolean {
-  let current: unknown = node
-  for (let step = 0; step < MAX_ANCESTOR_WALK; step += 1) {
-    // Past the root: nothing in the chain was switched off.
-    if (!isRecord(current)) return true
-    if (hostGet(current, "visible") === false) return false
-    current = hostGet(current, "parent")
-  }
-  return false
-}
-
 /** The rule: the host reports `absoluteRenderBounds` as exactly `null` for a
  * node we can also see is switched on.
  *
@@ -175,7 +139,7 @@ function isFullyVisible(node: unknown): boolean {
  * not an empty one. */
 function rendersNothing(node: unknown): boolean {
   if (!isRecord(node)) return false
-  if (!isFullyVisible(node)) return false
+  if (!rendersVisibly(node)) return false
   return hostGet(node, "absoluteRenderBounds") === null
 }
 
