@@ -43,6 +43,7 @@ import {
   type CancellationSignal,
 } from "../main/cancellation"
 import { progressFor, type ProgressReporter } from "../main/progress"
+import { rendersVisibly } from "./visibility"
 
 type UnknownRecord = Record<string, unknown>
 type NodeData = MinimalNodeDetails | CompactNodeData | FullNodeData
@@ -849,13 +850,12 @@ function nodeData(
   return full
 }
 
-function visibleChildren(
-  node: UnknownRecord,
-  includeHidden: boolean | undefined,
-): readonly unknown[] {
-  const children = array(node.children)
-  if (includeHidden !== false) return children
-  return children.filter((child) => boolean(record(child).visible, true))
+// Every child is judged, and judged on the whole ancestor chain rather than its
+// own flag: this function is reached only while descending a node that already
+// renders, but an explicitly requested subtree can start anywhere, so the walk
+// is what makes the rule hold at any entry point.
+function visibleChildren(node: UnknownRecord): readonly unknown[] {
+  return array(node.children).filter((child) => rendersVisibly(child))
 }
 
 function summarize(node: UnknownRecord, children: readonly unknown[]) {
@@ -988,7 +988,7 @@ function serializeNode(
     return stub
   }
 
-  const children = visibleChildren(node, context.includeHidden)
+  const children = visibleChildren(node)
   const result: DesignNode<NodeData> = {
     summary: summarize(node, children),
     data: nodeData(
@@ -1163,7 +1163,7 @@ function walkNode(
   const id = string(node.id)
   if (id.length > 0 && ancestors.has(id)) return
 
-  const children = visibleChildren(node, context.includeHidden)
+  const children = visibleChildren(node)
   const nextAncestors = new Set(ancestors)
   if (id.length > 0) nextAncestors.add(id)
   for (let index = 0; index < children.length; index += 1) {

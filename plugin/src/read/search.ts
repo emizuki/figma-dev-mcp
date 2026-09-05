@@ -18,6 +18,7 @@ import {
 import { PluginReadError } from "./navigation"
 import { loadPageIfNeeded, type FigmaReadApi } from "./common"
 import { byteLength, type SerializerLimits } from "./serialize"
+import { rendersVisibly } from "./visibility"
 
 export type NodeType = string
 export type MatchReason = "name" | "nodeType" | "text"
@@ -309,9 +310,15 @@ function parseCursor(value: string, key: string): SearchCursorPayload {
   }
 }
 
+// Every candidate that reaches the stack passes through here — the initial
+// cursor-path descent and the per-item push both call it — so filtering here
+// keeps a hidden subtree from ever being walked, rather than trimming matches
+// found inside one after the fact.
 function childrenOf(node: unknown): readonly unknown[] {
   const children = record(node).children
-  return Array.isArray(children) ? children : []
+  return Array.isArray(children)
+    ? children.filter((child) => rendersVisibly(child))
+    : []
 }
 
 function initialStack(

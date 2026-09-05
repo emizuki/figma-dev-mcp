@@ -455,4 +455,42 @@ describe("search_nodes handler", () => {
       ),
     ).rejects.toThrow("Operation cancelled")
   })
+
+  test("a switched-off node never matches", async () => {
+    // Search walks the tree independently of the serializer, so it needs its
+    // own guard rather than inheriting one.
+    const hidden = node("1:2", "Button", "FRAME", { visible: false })
+    const shown = node("1:3", "Button", "FRAME")
+    const requested = page("0:1", "Requested", [hidden, shown])
+    installFigma({ currentPage: requested, pages: [requested] })
+
+    const result = await searchNodes({
+      scope: { nodeId: requested.id },
+      query: "button",
+      match: "contains",
+      limit: 50,
+    })
+
+    expect(result.matches.map((item) => item.node.id)).toEqual(["1:3"])
+  })
+
+  test("a switched-on node inside a switched-off parent never matches", async () => {
+    const child = node("1:5", "Button", "FRAME")
+    const hiddenParent = node("1:4", "Group", "FRAME", {
+      visible: false,
+      children: [child],
+    })
+    ;(child as Record<string, unknown>).parent = hiddenParent
+    const requested = page("0:1", "Requested", [hiddenParent])
+    installFigma({ currentPage: requested, pages: [requested] })
+
+    const result = await searchNodes({
+      scope: { nodeId: requested.id },
+      query: "button",
+      match: "contains",
+      limit: 50,
+    })
+
+    expect(result.matches).toEqual([])
+  })
 })

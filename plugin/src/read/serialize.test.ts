@@ -1075,7 +1075,9 @@ describe("bounded node serializer", () => {
     expect(second?.childrenTruncated).toBe(true)
   })
 
-  test("omits hidden children only when includeHidden is false", () => {
+  test("omits hidden children regardless of includeHidden", () => {
+    // includeHidden no longer changes the outcome: a node that does not
+    // render is never returned, whatever the flag says.
     const hidden = base({ id: "1:2", name: "Hidden", visible: false })
     const shown = base({ id: "1:3", name: "Shown", visible: true })
     const root = base({ children: [hidden, shown] })
@@ -1099,7 +1101,7 @@ describe("bounded node serializer", () => {
     })
     expect(
       included.nodes[0]?.children.map((child) => child.summary.id),
-    ).toEqual(["1:2", "1:3"])
+    ).toEqual(["1:3"])
 
     const unspecified = serializeNodeForest([root], {
       detail: "minimal",
@@ -1108,7 +1110,7 @@ describe("bounded node serializer", () => {
     })
     expect(
       unspecified.nodes[0]?.children.map((child) => child.summary.id),
-    ).toEqual(["1:2", "1:3"])
+    ).toEqual(["1:3"])
   })
 
   test("checks cancellation between child batches", () => {
@@ -2370,5 +2372,37 @@ describe("a paint the serializer cannot model is named, not erased", () => {
 
   test("a paint with no usable type produces nothing at all", () => {
     expect(paints([{ type: "" }, { type: 7 }, {}])).toEqual([])
+  })
+})
+
+describe("hidden nodes are never returned", () => {
+  const forest = (root: Record<string, unknown>) =>
+    serializeNodeForest([root], {
+      detail: "minimal",
+      depth: 2,
+      dedupeComponents: false,
+    })
+
+  test("a switched-off child is absent regardless of any flag", () => {
+    const hidden = base({ id: "1:2", name: "Hidden", visible: false })
+    const shown = base({ id: "1:3", name: "Shown", visible: true })
+    const root = base({ children: [hidden, shown] })
+
+    const result = forest(root)
+    expect(result.nodes[0]?.summary.childIds).toEqual(["1:3"])
+    expect(result.nodes[0]?.children.map((c) => c.summary.id)).toEqual(["1:3"])
+  })
+
+  test("a switched-on child inside a switched-off parent is absent", () => {
+    // `parent` is what `rendersVisibly` walks; the child's own `visible` is
+    // true, so a per-node check would wrongly keep it.
+    const hiddenParent = base({ id: "1:2", name: "Group", visible: false })
+    const child = base({ id: "1:4", name: "Deep", visible: true })
+    child.parent = hiddenParent
+    hiddenParent.children = [child]
+    const root = base({ children: [hiddenParent] })
+
+    const result = forest(root)
+    expect(result.nodes[0]?.children.map((c) => c.summary.id)).toEqual([])
   })
 })
