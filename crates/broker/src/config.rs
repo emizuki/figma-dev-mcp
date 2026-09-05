@@ -15,7 +15,15 @@ pub const FRONTEND_ADDRESS: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LO
 // and the EMPTY_NODE_BOUNDS error code. A plugin announcing "1" cannot talk to
 // today's decoders, and being refused at connect time is strictly better than
 // the silent session drop it replaces.
-pub const PLUGIN_PROTOCOL_VERSION: &str = "2";
+//
+// Bumped to "3" for the paint and effect widening: gradient and image paints
+// gained opacity, gradients gained gradientTransform, angular and diamond
+// gradients became real variants, and both PaintValue and EffectValue gained an
+// unsupported marker. PaintValue and EffectValue deserialize through
+// deny_unknown_fields visitors, so a "3" plugin talking to a "2" binary would
+// die on gradientTransform with an opaque serde error. Refusing the handshake
+// names the real problem instead.
+pub const PLUGIN_PROTOCOL_VERSION: &str = "3";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Limits {
