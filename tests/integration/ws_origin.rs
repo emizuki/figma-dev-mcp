@@ -467,9 +467,14 @@ async fn an_accepted_session_is_pinged_without_waiting_a_full_heartbeat() {
     let frame = tokio::time::timeout(Duration::from_millis(500), socket.next())
         .await
         .expect("an accepted session must be spoken to well inside one 5s heartbeat");
-    assert!(
-        frame.is_some(),
-        "the broker sends the session a frame rather than closing it"
+    let Some(Ok(Message::Text(frame))) = frame else {
+        panic!("the broker must send the session a ping frame rather than closing it");
+    };
+    let frame: serde_json::Value = serde_json::from_str(&frame).unwrap();
+    assert_eq!(
+        frame.get("type"),
+        Some(&json!("ping")),
+        "an accepted session with no other traffic can only receive the heartbeat ping"
     );
 
     socket.close(None).await.unwrap();
