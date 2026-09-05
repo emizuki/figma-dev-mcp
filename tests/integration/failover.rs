@@ -531,13 +531,59 @@ async fn waiting_for_a_backend_does_not_outlast_the_deadline() {
         ));
     });
 
+    let started = tokio::time::Instant::now();
+    let open = client
+        .open(figma_dev_mcp_protocol::wire::BrokerCall::ListFiles {})
+        .await;
+    let elapsed = started.elapsed();
+
+    assert!(
+        open.is_err(),
+        "a backend that arrives after the deadline must not un-fail the call"
+    );
+    assert!(
+        elapsed < Duration::from_millis(figma_dev_mcp_protocol::limits::BACKEND_READY_MS * 2),
+        "the call must give up at the deadline rather than waiting for the late install: \
+         elapsed {elapsed:?}"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_detached_backend_does_not_wake_a_call_waiting_for_readiness() {
+    // `detach` clears the cell but must not signal `installed`, unlike
+    // `install`. If it ever did, a call waiting in `backend_ready` would wake
+    // immediately, re-read the still-empty cell, and go back to waiting on the
+    // *next* notification — which may never come — rather than failing
+    // cleanly at the deadline. This pins the "detach signals nothing"
+    // invariant `backend_ready`'s ordering fix depends on.
+    let client = BrokerClient::local(Broker::new(
+        BrokerConfig::for_test(Limits::reduced_for_test()).unwrap(),
+    ));
+    assert!(
+        client.local_broker().is_some(),
+        "a client built with local() starts out attached"
+    );
+
+    client.detach();
+    assert!(
+        client.local_broker().is_none(),
+        "detach must clear the cell"
+    );
+
+    let started = tokio::time::Instant::now();
     let open = client
         .open(figma_dev_mcp_protocol::wire::BrokerCall::ListFiles {})
         .await;
 
     assert!(
         open.is_err(),
-        "a backend that arrives after the deadline must not un-fail the call"
+        "a detached client with nothing re-installed must not answer"
+    );
+    assert!(
+        started.elapsed()
+            >= Duration::from_millis(figma_dev_mcp_protocol::limits::BACKEND_READY_MS),
+        "detach must not signal readiness, so the call must wait out the full deadline \
+         before failing rather than being woken early"
     );
 }
 

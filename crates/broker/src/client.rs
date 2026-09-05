@@ -193,13 +193,22 @@ impl BrokerClient {
     /// startup. Only the calls racing the first election pay anything, and the
     /// measured race is ~80µs.
     async fn backend_ready(&self) -> Option<Backend> {
+        // Subscribe BEFORE the fast-path read. `watch::Sender::subscribe` marks
+        // every message sent before it as already seen, so subscribing after a
+        // failed read would silently swallow an install that landed in between —
+        // `changed()` would then wait for the *next* install that never comes,
+        // and the call would fail after the full deadline with a backend sitting
+        // in the cell. That is this task's own race, one layer up, and rarer.
+        // The production runtime is multi-threaded, so `supervise` really can
+        // install between two instructions here.
+        let mut changed = self.installed.subscribe();
         if let Some(backend) = self.backend() {
             return Some(backend);
         }
-        let mut changed = self.installed.subscribe();
         let deadline = Duration::from_millis(BACKEND_READY_MS);
-        // The backend may land between the read above and the subscribe, so the
-        // loop re-reads rather than trusting the notification alone.
+        // `install` writes the cell before it sends, so an install racing the
+        // subscribe is caught by the read above, and one landing after it wakes
+        // the loop below. The loop re-reads rather than trusting the signal.
         tokio::time::timeout(deadline, async {
             loop {
                 if changed.changed().await.is_err() {
@@ -245,10 +254,21 @@ impl BrokerClient {
         // it — it cancels through `open.owner`, the `Broker` recorded at open
         // time, so a swap landing between the two reads can no longer strand
         // the `Cancel` frame on a backend that never opened the request.
-        let broker = match self.backend_ready().await {
-            Some(Backend::Remote(client)) => return client.call(call, cancellation).await,
-            Some(Backend::Local(broker)) => broker,
-            None => return Err(ToolError::new(ErrorCode::ConnectionLost, true)),
+        //
+        // `backend_ready` can now wait up to `BACKEND_READY_MS`, so it is
+        // raced against `cancellation` here too: without this, a call
+        // cancelled while no backend is installed would go unobserved for up
+        // to the whole deadline instead of returning immediately, the way it
+        // did before this method could ever wait.
+        let broker = tokio::select! {
+            backend = self.backend_ready() => match backend {
+                Some(Backend::Remote(client)) => return client.call(call, cancellation).await,
+                Some(Backend::Local(broker)) => broker,
+                None => return Err(ToolError::new(ErrorCode::ConnectionLost, true)),
+            },
+            _ = cancellation.cancelled() => {
+                return Err(ToolError::new(ErrorCode::Cancelled, false));
+            }
         };
         let mut open = local_open(&broker, call).await?;
         loop {
