@@ -1505,6 +1505,21 @@ fn gradient_and_image_paints_carry_opacity_and_direction() {
 }
 
 #[test]
+fn angular_and_diamond_gradients_are_first_class_paints() {
+    let transform = json!({"m00": 1.0, "m01": 0.0, "m02": 0.0,
+                           "m10": 0.0, "m11": 1.0, "m12": 0.0});
+    let stops = json!([{"position": 0.0, "color": {"r": 1.0, "g": 1.0, "b": 1.0, "a": 1.0}}]);
+
+    for tag in ["angularGradient", "diamondGradient"] {
+        let paint: PaintValue = serde_json::from_value(json!({
+            "type": tag, "stops": stops, "gradientTransform": transform, "opacity": 1.0
+        }))
+        .unwrap();
+        assert_eq!(serde_json::to_value(paint).unwrap()["type"], tag);
+    }
+}
+
+#[test]
 fn a_gradient_without_its_direction_or_opacity_is_rejected() {
     let stops = json!([{"position": 0.0, "color": {"r": 0.0, "g": 0.0, "b": 0.0, "a": 1.0}}]);
     assert!(
@@ -3011,7 +3026,7 @@ const WIRE_SNAPSHOTS: [&str; 3] = [
 
 /// The fingerprint of `WIRE_SNAPSHOTS` at the current wire version, over
 /// LF-normalised bytes so it does not depend on the checkout's line endings.
-const EXPECTED_WIRE_FINGERPRINT: &str = "0x29d77ebb06e34b55";
+const EXPECTED_WIRE_FINGERPRINT: &str = "0x152e24a8b9235f9d";
 
 /// FNV-1a, 64-bit, over the three snapshots in order, separated by a byte that
 /// cannot occur in UTF-8 so moving text between two files still changes it.

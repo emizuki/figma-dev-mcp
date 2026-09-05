@@ -91,6 +91,18 @@ export type PaintValue =
       opacity: number
     }
   | {
+      type: "angularGradient"
+      stops: GradientStop[]
+      gradientTransform: Transform2D
+      opacity: number
+    }
+  | {
+      type: "diamondGradient"
+      stops: GradientStop[]
+      gradientTransform: Transform2D
+      opacity: number
+    }
+  | {
       type: "image"
       imageRef: string
       scaleMode: ImageScaleMode

@@ -852,6 +852,16 @@ pub enum PaintValue {
         gradient_transform: Transform2D,
         opacity: f64,
     },
+    AngularGradient {
+        stops: ReturnedList<GradientStop>,
+        gradient_transform: Transform2D,
+        opacity: f64,
+    },
+    DiamondGradient {
+        stops: ReturnedList<GradientStop>,
+        gradient_transform: Transform2D,
+        opacity: f64,
+    },
     Image {
         image_ref: String,
         scale_mode: ImageScaleMode,
@@ -866,6 +876,8 @@ enum PaintTag {
     Solid,
     LinearGradient,
     RadialGradient,
+    AngularGradient,
+    DiamondGradient,
     Image,
     Mixed,
 }
@@ -957,7 +969,10 @@ impl<'de> Visitor<'de> for PaintVisitor {
                     opacity: opacity.ok_or_else(|| A::Error::missing_field("opacity"))?,
                 })
             }
-            PaintTag::LinearGradient | PaintTag::RadialGradient => {
+            PaintTag::LinearGradient
+            | PaintTag::RadialGradient
+            | PaintTag::AngularGradient
+            | PaintTag::DiamondGradient => {
                 if color.is_some() || image_ref.is_some() || scale_mode.is_some() {
                     return Err(A::Error::custom(
                         "gradient paint contains variant-only fields",
@@ -967,17 +982,33 @@ impl<'de> Visitor<'de> for PaintVisitor {
                 let gradient_transform = gradient_transform
                     .ok_or_else(|| A::Error::missing_field("gradientTransform"))?;
                 let opacity = opacity.ok_or_else(|| A::Error::missing_field("opacity"))?;
+                // Name every gradient tag. A wildcard here compiles just as well
+                // and is how a future fifth gradient type silently decodes as a
+                // diamond: adding it to the outer pattern above would be enough to
+                // build. `unreachable!` is only for the non-gradient tags the outer
+                // match already excluded.
                 Ok(match tag {
                     PaintTag::LinearGradient => PaintValue::LinearGradient {
                         stops,
                         gradient_transform,
                         opacity,
                     },
-                    _ => PaintValue::RadialGradient {
+                    PaintTag::RadialGradient => PaintValue::RadialGradient {
                         stops,
                         gradient_transform,
                         opacity,
                     },
+                    PaintTag::AngularGradient => PaintValue::AngularGradient {
+                        stops,
+                        gradient_transform,
+                        opacity,
+                    },
+                    PaintTag::DiamondGradient => PaintValue::DiamondGradient {
+                        stops,
+                        gradient_transform,
+                        opacity,
+                    },
+                    _ => unreachable!("outer match narrowed tag to gradients"),
                 })
             }
             PaintTag::Image => {

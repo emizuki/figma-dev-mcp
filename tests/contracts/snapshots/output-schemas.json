@@ -1508,6 +1508,58 @@
           {
             "additionalProperties": false,
             "properties": {
+              "gradientTransform": {
+                "$ref": "#/$defs/Transform2D"
+              },
+              "opacity": {
+                "format": "double",
+                "type": "number"
+              },
+              "stops": {
+                "$ref": "#/$defs/ReturnedList_of_GradientStop"
+              },
+              "type": {
+                "const": "angularGradient",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "stops",
+              "gradientTransform",
+              "opacity"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "gradientTransform": {
+                "$ref": "#/$defs/Transform2D"
+              },
+              "opacity": {
+                "format": "double",
+                "type": "number"
+              },
+              "stops": {
+                "$ref": "#/$defs/ReturnedList_of_GradientStop"
+              },
+              "type": {
+                "const": "diamondGradient",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "stops",
+              "gradientTransform",
+              "opacity"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
               "imageRef": {
                 "type": "string"
               },
@@ -5380,6 +5432,58 @@
           {
             "additionalProperties": false,
             "properties": {
+              "gradientTransform": {
+                "$ref": "#/$defs/Transform2D"
+              },
+              "opacity": {
+                "format": "double",
+                "type": "number"
+              },
+              "stops": {
+                "$ref": "#/$defs/ReturnedList_of_GradientStop"
+              },
+              "type": {
+                "const": "angularGradient",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "stops",
+              "gradientTransform",
+              "opacity"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "gradientTransform": {
+                "$ref": "#/$defs/Transform2D"
+              },
+              "opacity": {
+                "format": "double",
+                "type": "number"
+              },
+              "stops": {
+                "$ref": "#/$defs/ReturnedList_of_GradientStop"
+              },
+              "type": {
+                "const": "diamondGradient",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "stops",
+              "gradientTransform",
+              "opacity"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
               "imageRef": {
                 "type": "string"
               },
@@ -8436,6 +8540,58 @@
           {
             "additionalProperties": false,
             "properties": {
+              "gradientTransform": {
+                "$ref": "#/$defs/Transform2D"
+              },
+              "opacity": {
+                "format": "double",
+                "type": "number"
+              },
+              "stops": {
+                "$ref": "#/$defs/ReturnedList_of_GradientStop"
+              },
+              "type": {
+                "const": "angularGradient",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "stops",
+              "gradientTransform",
+              "opacity"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "gradientTransform": {
+                "$ref": "#/$defs/Transform2D"
+              },
+              "opacity": {
+                "format": "double",
+                "type": "number"
+              },
+              "stops": {
+                "$ref": "#/$defs/ReturnedList_of_GradientStop"
+              },
+              "type": {
+                "const": "diamondGradient",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "stops",
+              "gradientTransform",
+              "opacity"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
               "imageRef": {
                 "type": "string"
               },
@@ -9404,6 +9560,58 @@
               },
               "type": {
                 "const": "radialGradient",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "stops",
+              "gradientTransform",
+              "opacity"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "gradientTransform": {
+                "$ref": "#/$defs/Transform2D"
+              },
+              "opacity": {
+                "format": "double",
+                "type": "number"
+              },
+              "stops": {
+                "$ref": "#/$defs/ReturnedList_of_GradientStop"
+              },
+              "type": {
+                "const": "angularGradient",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "stops",
+              "gradientTransform",
+              "opacity"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "gradientTransform": {
+                "$ref": "#/$defs/Transform2D"
+              },
+              "opacity": {
+                "format": "double",
+                "type": "number"
+              },
+              "stops": {
+                "$ref": "#/$defs/ReturnedList_of_GradientStop"
+              },
+              "type": {
+                "const": "diamondGradient",
                 "type": "string"
               }
             },

@@ -185,7 +185,9 @@ function toPaint(value: unknown): PaintValue | undefined {
         opacity: finite(paint.opacity, 1),
       }
     case "GRADIENT_LINEAR":
-    case "GRADIENT_RADIAL": {
+    case "GRADIENT_RADIAL":
+    case "GRADIENT_ANGULAR":
+    case "GRADIENT_DIAMOND": {
       const stops = array(paint.gradientStops).map((stop) => {
         const source = record(stop)
         return {
@@ -194,10 +196,7 @@ function toPaint(value: unknown): PaintValue | undefined {
         }
       })
       return {
-        type:
-          paint.type === "GRADIENT_LINEAR"
-            ? "linearGradient"
-            : "radialGradient",
+        type: GRADIENT_TYPES[paint.type as keyof typeof GRADIENT_TYPES],
         stops,
         gradientTransform: toTransform(paint.gradientTransform),
         opacity: finite(paint.opacity, 1),
@@ -270,6 +269,15 @@ export function effects(value: unknown): EffectValue[] {
   }
   return result
 }
+
+// All four Figma gradient types carry the same {gradientStops, gradientTransform}
+// shape, so they differ only in name.
+const GRADIENT_TYPES = {
+  GRADIENT_LINEAR: "linearGradient",
+  GRADIENT_RADIAL: "radialGradient",
+  GRADIENT_ANGULAR: "angularGradient",
+  GRADIENT_DIAMOND: "diamondGradient",
+} as const
 
 const STROKE_ALIGNS: Record<string, StrokeAlign> = {
   INSIDE: "inside",

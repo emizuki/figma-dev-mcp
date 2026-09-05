@@ -506,7 +506,9 @@ function parsePaint(value: unknown, label: string): PaintValue {
       }
     }
     case "linearGradient":
-    case "radialGradient": {
+    case "radialGradient":
+    case "angularGradient":
+    case "diamondGradient": {
       const gradient = exact(object, label, [
         "type",
         "stops",

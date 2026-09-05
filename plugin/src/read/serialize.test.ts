@@ -753,7 +753,7 @@ describe("bounded node serializer", () => {
 
   test("an unmodelled stroke paint type still reports weight, align, and an empty paints array", () => {
     const node = base({
-      strokes: [{ type: "GRADIENT_ANGULAR", gradientStops: [] }],
+      strokes: [{ type: "VIDEO", gradientStops: [] }],
       strokeWeight: 3,
       strokeAlign: "OUTSIDE",
     })
@@ -2109,9 +2109,7 @@ describe("stroke reporting follows stroke visibility", () => {
   })
 
   test("still reports a visible stroke whose paint type cannot be modelled", () => {
-    const data = fullData(
-      nodeWithStrokes([{ type: "GRADIENT_ANGULAR", visible: true }]),
-    )
+    const data = fullData(nodeWithStrokes([{ type: "VIDEO", visible: true }]))
     expect(data?.strokes).toMatchObject({ weight: 1, align: "outside" })
   })
 })
@@ -2227,5 +2225,76 @@ describe("new paint and effect shapes survive the wire validator", () => {
       { type: "linearGradient", opacity: 0.4 },
       { type: "image", opacity: 0.25 },
     ])
+  })
+
+  test("an angular gradient passes parseReadResult intact", () => {
+    const data = validatedFullData(
+      base({
+        fills: [
+          {
+            type: "GRADIENT_ANGULAR",
+            opacity: 1,
+            gradientTransform: [
+              [1, 0, 0],
+              [0, 1, 0],
+            ],
+            gradientStops: [{ position: 0, color: { r: 1, g: 1, b: 1, a: 1 } }],
+          },
+        ],
+      }),
+    )
+    expect(data?.paints).toMatchObject([{ type: "angularGradient" }])
+  })
+})
+
+describe("angular and diamond gradients are modelled, not discarded", () => {
+  const gradientTransform = [
+    [1, 0, 0],
+    [0, 1, 0],
+  ]
+  const gradientStops = [{ position: 0, color: { r: 1, g: 1, b: 1, a: 1 } }]
+
+  test("an angular gradient reports as angularGradient", () => {
+    expect(
+      paints([
+        {
+          type: "GRADIENT_ANGULAR",
+          gradientTransform,
+          gradientStops,
+          opacity: 1,
+        },
+      ]),
+    ).toEqual([
+      {
+        type: "angularGradient",
+        stops: [{ position: 0, color: { r: 1, g: 1, b: 1, a: 1 } }],
+        gradientTransform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+        opacity: 1,
+      },
+    ])
+  })
+
+  test("a diamond gradient reports as diamondGradient", () => {
+    const [paint] = paints([
+      {
+        type: "GRADIENT_DIAMOND",
+        gradientTransform,
+        gradientStops,
+        opacity: 0.5,
+      },
+    ])
+    expect(paint).toMatchObject({ type: "diamondGradient", opacity: 0.5 })
+  })
+
+  test("a node whose only fill is angular no longer reports an empty paints array", () => {
+    const node = base({
+      fills: [{ type: "GRADIENT_ANGULAR", gradientTransform, gradientStops }],
+    })
+    const data = serializeNodeForest([node], {
+      detail: "full",
+      depth: 0,
+      dedupeComponents: false,
+    }).nodes[0]?.data as { paints?: unknown[] }
+    expect(data?.paints).toHaveLength(1)
   })
 })
