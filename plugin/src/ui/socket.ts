@@ -39,6 +39,7 @@ export function startSocketTransport(): () => void {
   let reconnectAttempt = 0
   let active: SocketGeneration | undefined
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined
+  let acceptedSinceOpen = false
   const requestOwners = new Map<string, RequestOwner>()
 
   const isActiveOpen = (generation: SocketGeneration): boolean =>
@@ -86,8 +87,12 @@ export function startSocketTransport(): () => void {
         ) {
           sendJson(generation.socket, buildHello(message, randomUuid))
           generation.helloSent = true
-          reconnectAttempt = 0
-          setStatus("Connected to local broker")
+          // Not "Connected" yet: the broker has not accepted anything. It can
+          // still refuse this hello — a protocol-version mismatch closes the
+          // socket right here — and claiming success now is what let the
+          // backoff counter reset on every rejected attempt, pinning the
+          // reconnect delay at the table's first entry forever.
+          setStatus("Hello sent, waiting for broker…")
         }
         return
       }
@@ -170,6 +175,7 @@ export function startSocketTransport(): () => void {
     active = generation
 
     candidate.addEventListener("open", () => {
+      acceptedSinceOpen = false
       if (!isActiveOpen(generation)) return
       setStatus("Socket open, waiting for Figma…")
       sendToController({
@@ -184,6 +190,14 @@ export function startSocketTransport(): () => void {
         !generation.helloSent
       )
         return
+      // The broker never acknowledges a hello: `BrokerToPlugin` is
+      // request | cancel | ping. A frame can only arrive on a socket it chose
+      // to keep, so the first one is the only proof of acceptance available.
+      if (!acceptedSinceOpen) {
+        acceptedSinceOpen = true
+        reconnectAttempt = 0
+        setStatus("Connected to local broker")
+      }
       try {
         const message = parseBrokerToPlugin(JSON.parse(event.data))
         switch (message.type) {

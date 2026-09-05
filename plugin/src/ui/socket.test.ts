@@ -88,6 +88,7 @@ function installSocketHarness(): {
   emitController: (message: unknown) => void
   runNextTimer: () => void
   restore: () => void
+  timerDelays: number[]
 } {
   FakeWebSocket.instances.length = 0
   const global = globalThis as unknown as {
@@ -105,6 +106,7 @@ function installSocketHarness(): {
   const listeners = new Set<TestListener>()
   const controllerMessages: unknown[] = []
   const timers = new Map<number, () => void>()
+  const timerDelays: number[] = []
   let nextTimer = 1
 
   global.WebSocket = FakeWebSocket
@@ -121,10 +123,11 @@ function installSocketHarness(): {
     },
   }
   global.parent = controllerParent
-  globalThis.setTimeout = ((callback: () => void) => {
+  globalThis.setTimeout = ((callback: () => void, delay?: number) => {
     const id = nextTimer
     nextTimer += 1
     timers.set(id, callback)
+    timerDelays.push(delay ?? 0)
     return id
   }) as typeof setTimeout
   globalThis.clearTimeout = ((id: number) => {
@@ -134,6 +137,7 @@ function installSocketHarness(): {
 
   return {
     controllerMessages,
+    timerDelays,
     emitController: (message) => {
       for (const listener of listeners) {
         // Figma's inspect iframe delivers pluginMessage with a null event.source.
@@ -358,6 +362,62 @@ describe("WebSocket reconnect ownership", () => {
       stop()
       harness.runNextTimer()
       expect(FakeWebSocket.instances).toHaveLength(3)
+    } finally {
+      harness.restore()
+    }
+  })
+})
+
+describe("connection is reported on acceptance, not on send", () => {
+  const driveHandshake = (
+    socket: FakeWebSocket,
+    harness: ReturnType<typeof installSocketHarness>,
+  ) => {
+    socket.open()
+    const metadata = metadataRequestId(
+      harness.controllerMessages[harness.controllerMessages.length - 1],
+    )
+    harness.emitController(readyFor(metadata))
+  }
+
+  test("a handshake the broker rejects backs off along the delay table", () => {
+    const harness = installSocketHarness()
+    try {
+      const stop = startSocketTransport()
+      // Four attempts the broker refuses: each opens, sends hello, and is
+      // closed without the broker ever sending a frame back — exactly what a
+      // protocol-version mismatch does.
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        const socket =
+          FakeWebSocket.instances[FakeWebSocket.instances.length - 1]
+        if (socket === undefined) throw new Error("no socket was opened")
+        driveHandshake(socket, harness)
+        socket.close()
+        harness.runNextTimer()
+      }
+
+      expect(harness.timerDelays.slice(0, 4)).toEqual([250, 500, 1_000, 2_000])
+      stop()
+    } finally {
+      harness.restore()
+    }
+  })
+
+  test("a frame from the broker resets the delay table", () => {
+    const harness = installSocketHarness()
+    try {
+      const stop = startSocketTransport()
+      const socket = FakeWebSocket.instances[0]
+      if (socket === undefined) throw new Error("no socket was opened")
+      driveHandshake(socket, harness)
+      // The broker kept the socket and pinged it. That frame is the only
+      // proof of acceptance the protocol offers.
+      socket.message(JSON.stringify({ type: "ping", nonce: 1 }))
+      socket.close()
+      harness.runNextTimer()
+
+      expect(harness.timerDelays[harness.timerDelays.length - 1]).toBe(250)
+      stop()
     } finally {
       harness.restore()
     }
