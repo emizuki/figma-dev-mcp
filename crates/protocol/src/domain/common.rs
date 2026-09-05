@@ -868,6 +868,9 @@ pub enum PaintValue {
         opacity: f64,
     },
     Mixed,
+    Unsupported {
+        figma_type: String,
+    },
 }
 
 #[derive(Deserialize, Clone, Copy)]
@@ -880,6 +883,7 @@ enum PaintTag {
     DiamondGradient,
     Image,
     Mixed,
+    Unsupported,
 }
 
 #[derive(Deserialize)]
@@ -892,6 +896,7 @@ enum PaintField {
     GradientTransform,
     ImageRef,
     ScaleMode,
+    FigmaType,
 }
 
 impl<'de> Deserialize<'de> for PaintValue {
@@ -923,6 +928,7 @@ impl<'de> Visitor<'de> for PaintVisitor {
         let mut gradient_transform = None;
         let mut image_ref = None;
         let mut scale_mode = None;
+        let mut figma_type = None;
         while let Some(field) = map.next_key::<PaintField>()? {
             match field {
                 PaintField::Type => {
@@ -952,6 +958,9 @@ impl<'de> Visitor<'de> for PaintVisitor {
                     map.next_value::<ImageScaleMode>()?,
                     "scaleMode",
                 )?,
+                PaintField::FigmaType => {
+                    set_field_once(&mut figma_type, map.next_value::<String>()?, "figmaType")?
+                }
             }
         }
         let tag = tag.ok_or_else(|| A::Error::missing_field("type"))?;
@@ -961,6 +970,7 @@ impl<'de> Visitor<'de> for PaintVisitor {
                     || gradient_transform.is_some()
                     || image_ref.is_some()
                     || scale_mode.is_some()
+                    || figma_type.is_some()
                 {
                     return Err(A::Error::custom("solid paint contains variant-only fields"));
                 }
@@ -973,7 +983,11 @@ impl<'de> Visitor<'de> for PaintVisitor {
             | PaintTag::RadialGradient
             | PaintTag::AngularGradient
             | PaintTag::DiamondGradient => {
-                if color.is_some() || image_ref.is_some() || scale_mode.is_some() {
+                if color.is_some()
+                    || image_ref.is_some()
+                    || scale_mode.is_some()
+                    || figma_type.is_some()
+                {
                     return Err(A::Error::custom(
                         "gradient paint contains variant-only fields",
                     ));
@@ -1012,7 +1026,11 @@ impl<'de> Visitor<'de> for PaintVisitor {
                 })
             }
             PaintTag::Image => {
-                if color.is_some() || stops.is_some() || gradient_transform.is_some() {
+                if color.is_some()
+                    || stops.is_some()
+                    || gradient_transform.is_some()
+                    || figma_type.is_some()
+                {
                     return Err(A::Error::custom("image paint contains variant-only fields"));
                 }
                 Ok(PaintValue::Image {
@@ -1028,12 +1046,29 @@ impl<'de> Visitor<'de> for PaintVisitor {
                     || gradient_transform.is_some()
                     || image_ref.is_some()
                     || scale_mode.is_some()
+                    || figma_type.is_some()
                 {
                     return Err(A::Error::custom(
                         "mixed paint cannot contain payload fields",
                     ));
                 }
                 Ok(PaintValue::Mixed)
+            }
+            PaintTag::Unsupported => {
+                if color.is_some()
+                    || opacity.is_some()
+                    || stops.is_some()
+                    || gradient_transform.is_some()
+                    || image_ref.is_some()
+                    || scale_mode.is_some()
+                {
+                    return Err(A::Error::custom(
+                        "unsupported paint cannot contain payload fields",
+                    ));
+                }
+                Ok(PaintValue::Unsupported {
+                    figma_type: figma_type.ok_or_else(|| A::Error::missing_field("figmaType"))?,
+                })
             }
         }
     }

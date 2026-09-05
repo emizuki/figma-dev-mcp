@@ -546,6 +546,13 @@ function parsePaint(value: unknown, label: string): PaintValue {
     case "mixed":
       exact(object, label, ["type"])
       return { type: "mixed" }
+    case "unsupported": {
+      const unsupported = exact(object, label, ["type", "figmaType"])
+      return {
+        type: "unsupported",
+        figmaType: string(unsupported.figmaType, `${label}.figmaType`),
+      }
+    }
     default:
       return fail(`${label}.type is not allowed`)
   }

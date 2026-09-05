@@ -751,7 +751,7 @@ describe("bounded node serializer", () => {
     expect(Object.hasOwn(data, "strokes")).toBe(false)
   })
 
-  test("an unmodelled stroke paint type still reports weight, align, and an empty paints array", () => {
+  test("an unmodelled stroke paint type still reports weight, align, and an unsupported paint marker", () => {
     const node = base({
       strokes: [{ type: "VIDEO", gradientStops: [] }],
       strokeWeight: 3,
@@ -766,7 +766,11 @@ describe("bounded node serializer", () => {
       }).nodes[0]?.data as { strokes?: Record<string, unknown> }
     ).strokes
 
-    expect(strokes).toMatchObject({ paints: [], weight: 3, align: "outside" })
+    expect(strokes).toMatchObject({
+      paints: [{ type: "unsupported", figmaType: "VIDEO" }],
+      weight: 3,
+      align: "outside",
+    })
   })
 
   test("throwing stroke getters leave the node serializable", () => {
@@ -2245,6 +2249,30 @@ describe("new paint and effect shapes survive the wire validator", () => {
     )
     expect(data?.paints).toMatchObject([{ type: "angularGradient" }])
   })
+
+  test("a diamond gradient passes parseReadResult intact", () => {
+    const data = validatedFullData(
+      base({
+        fills: [
+          {
+            type: "GRADIENT_DIAMOND",
+            opacity: 1,
+            gradientTransform: [
+              [1, 0, 0],
+              [0, 1, 0],
+            ],
+            gradientStops: [{ position: 0, color: { r: 1, g: 1, b: 1, a: 1 } }],
+          },
+        ],
+      }),
+    )
+    expect(data?.paints).toMatchObject([{ type: "diamondGradient" }])
+  })
+
+  test("an unsupported paint passes parseReadResult intact", () => {
+    const data = validatedFullData(base({ fills: [{ type: "VIDEO" }] }))
+    expect(data?.paints).toEqual([{ type: "unsupported", figmaType: "VIDEO" }])
+  })
 })
 
 describe("angular and diamond gradients are modelled, not discarded", () => {
@@ -2296,5 +2324,29 @@ describe("angular and diamond gradients are modelled, not discarded", () => {
       dedupeComponents: false,
     }).nodes[0]?.data as { paints?: unknown[] }
     expect(data?.paints).toHaveLength(1)
+  })
+})
+
+describe("a paint the serializer cannot model is named, not erased", () => {
+  test("an unknown paint type becomes an unsupported marker", () => {
+    expect(paints([{ type: "VIDEO", videoHash: "v-1" }])).toEqual([
+      { type: "unsupported", figmaType: "VIDEO" },
+    ])
+  })
+
+  test("the marker keeps Figma's raw spelling", () => {
+    const [paint] = paints([{ type: "SOME_FUTURE_PAINT" }])
+    expect(paint).toEqual({
+      type: "unsupported",
+      figmaType: "SOME_FUTURE_PAINT",
+    })
+  })
+
+  test("a hidden unmodellable paint is dropped, not marked", () => {
+    expect(paints([{ type: "VIDEO", visible: false }])).toEqual([])
+  })
+
+  test("a paint with no usable type produces nothing at all", () => {
+    expect(paints([{ type: "" }, { type: 7 }, {}])).toEqual([])
   })
 })

@@ -3026,7 +3026,7 @@ const WIRE_SNAPSHOTS: [&str; 3] = [
 
 /// The fingerprint of `WIRE_SNAPSHOTS` at the current wire version, over
 /// LF-normalised bytes so it does not depend on the checkout's line endings.
-const EXPECTED_WIRE_FINGERPRINT: &str = "0x152e24a8b9235f9d";
+const EXPECTED_WIRE_FINGERPRINT: &str = "0x2f2ace5975f55d91";
 
 /// FNV-1a, 64-bit, over the three snapshots in order, separated by a byte that
 /// cannot occur in UTF-8 so moving text between two files still changes it.
@@ -3116,5 +3116,32 @@ fn a_wire_snapshot_change_must_be_a_deliberate_version_decision() {
          together, then update EXPECTED_WIRE_FINGERPRINT.\n\
          If it is only a description or documentation edit, update \
          EXPECTED_WIRE_FINGERPRINT alone.\n"
+    );
+}
+
+#[test]
+fn an_unsupported_paint_names_its_figma_type() {
+    let paint: PaintValue = serde_json::from_value(json!({
+        "type": "unsupported", "figmaType": "VIDEO"
+    }))
+    .unwrap();
+    let encoded = serde_json::to_value(paint).unwrap();
+    assert_eq!(encoded["figmaType"], "VIDEO");
+
+    assert!(serde_json::from_value::<PaintValue>(json!({"type": "unsupported"})).is_err());
+    assert!(
+        serde_json::from_value::<PaintValue>(json!({
+            "type": "unsupported", "figmaType": "VIDEO", "opacity": 1.0
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<PaintValue>(json!({
+            "type": "solid",
+            "color": {"r": 0.0, "g": 0.0, "b": 0.0, "a": 1.0},
+            "opacity": 1.0,
+            "figmaType": "VIDEO"
+        }))
+        .is_err()
     );
 }

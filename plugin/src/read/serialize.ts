@@ -209,8 +209,16 @@ function toPaint(value: unknown): PaintValue | undefined {
         scaleMode: imageScaleMode(paint.scaleMode),
         opacity: finite(paint.opacity, 1),
       }
-    default:
-      return undefined
+    default: {
+      // Name what we cannot model rather than deleting it: an empty paints array
+      // must mean "nothing is painted", never "there is a paint we could not
+      // describe". figmaType keeps Figma's own SCREAMING_SNAKE spelling because
+      // it is a foreign identifier, not a value in this protocol's vocabulary.
+      const figmaType = string(paint.type)
+      // A paint whose type is absent or not a string never claimed to be a paint,
+      // so a marker there would invent one.
+      return figmaType === "" ? undefined : { type: "unsupported", figmaType }
+    }
   }
 }
 

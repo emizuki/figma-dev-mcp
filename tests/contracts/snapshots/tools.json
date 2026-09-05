@@ -1949,6 +1949,23 @@
                 "type"
               ],
               "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "figmaType": {
+                  "type": "string"
+                },
+                "type": {
+                  "const": "unsupported",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "figmaType"
+              ],
+              "type": "object"
             }
           ]
         },
@@ -6479,6 +6496,23 @@
                 "type"
               ],
               "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "figmaType": {
+                  "type": "string"
+                },
+                "type": {
+                  "const": "unsupported",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "figmaType"
+              ],
+              "type": "object"
             }
           ]
         },
@@ -9959,6 +9993,23 @@
                 "type"
               ],
               "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "figmaType": {
+                  "type": "string"
+                },
+                "type": {
+                  "const": "unsupported",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "figmaType"
+              ],
+              "type": "object"
             }
           ]
         },
@@ -11163,6 +11214,23 @@
               },
               "required": [
                 "type"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "figmaType": {
+                  "type": "string"
+                },
+                "type": {
+                  "const": "unsupported",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "figmaType"
               ],
               "type": "object"
             }

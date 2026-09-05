@@ -109,6 +109,7 @@ export type PaintValue =
       opacity: number
     }
   | { type: "mixed" }
+  | { type: "unsupported"; figmaType: string }
 
 export type EffectValue =
   | {
