@@ -549,13 +549,21 @@ async fn waiting_for_a_backend_does_not_outlast_the_deadline() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_detached_backend_does_not_wake_a_call_waiting_for_readiness() {
-    // `detach` clears the cell but must not signal `installed`, unlike
-    // `install`. If it ever did, a call waiting in `backend_ready` would wake
-    // immediately, re-read the still-empty cell, and go back to waiting on the
-    // *next* notification — which may never come — rather than failing
-    // cleanly at the deadline. This pins the "detach signals nothing"
-    // invariant `backend_ready`'s ordering fix depends on.
+async fn a_detached_client_fails_calls_after_the_deadline() {
+    // What this pins: a detached client whose cell stays empty fails a call
+    // only after the full `BACKEND_READY_MS` wait, rather than hanging or
+    // (wrongly) succeeding.
+    //
+    // What this does NOT cover: whether `detach` itself sends a spurious
+    // signal on `installed`. It should not, but that invariant is not
+    // observable from this surface either way. `backend_ready`'s loop
+    // re-checks the ground-truth `backend()` cell on every wake and the whole
+    // wait is bounded by `timeout(deadline, ...)`, so a spurious wake here
+    // costs one harmless extra iteration — it changes neither `elapsed` nor
+    // whether `open` errors. Pinning "detach must not signal" directly would
+    // need a test-only accessor into the private `installed` channel, which
+    // `client.rs:141`'s comment on `install_local` argues against adding a
+    // fourth `#[doc(hidden)]` test-only door for.
     let client = BrokerClient::local(Broker::new(
         BrokerConfig::for_test(Limits::reduced_for_test()).unwrap(),
     ));

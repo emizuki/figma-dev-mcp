@@ -189,9 +189,15 @@ impl BrokerClient {
     /// The current backend, waiting up to `BACKEND_READY_MS` for the first
     /// election to install one.
     ///
-    /// Returns immediately once a backend exists, which is every call after
-    /// startup. Only the calls racing the first election pay anything, and the
-    /// measured race is ~80µs.
+    /// Every call subscribes to `installed` unconditionally, even the ones
+    /// that never end up waiting — the fast-path read below has to run after
+    /// the subscribe, not before it, or an install landing in the gap can be
+    /// missed entirely (see the comment inside). Subscribing is a cheap
+    /// refcount bump, not a hot-path cost, so this trades a negligible
+    /// allocation on every call for correctness on the rare one that races
+    /// the first election. That race is ~80µs, and is the only case that
+    /// pays anything beyond the subscribe: every call after startup finds a
+    /// backend on the first read and returns immediately.
     async fn backend_ready(&self) -> Option<Backend> {
         // Subscribe BEFORE the fast-path read. `watch::Sender::subscribe` marks
         // every message sent before it as already seen, so subscribing after a
