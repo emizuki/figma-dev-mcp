@@ -240,8 +240,27 @@ impl BrokerClient {
         }
     }
 
-    pub async fn open(&self, call: BrokerCall) -> Result<OpenCall, ToolError> {
-        match self.backend_ready().await {
+    /// Open a call, waiting up to `BACKEND_READY_MS` for a backend if none is
+    /// installed yet.
+    ///
+    /// Raced against `cancellation` for the same reason `call` is: without
+    /// this, a call cancelled while no backend is installed would go
+    /// unobserved for up to the whole deadline — the caller's own
+    /// `tokio::select!` on this future's cancellation branch would never fire
+    /// because this future itself would not resolve until `backend_ready`
+    /// gives up or succeeds.
+    pub async fn open(
+        &self,
+        call: BrokerCall,
+        cancellation: &CancellationToken,
+    ) -> Result<OpenCall, ToolError> {
+        let backend = tokio::select! {
+            backend = self.backend_ready() => backend,
+            _ = cancellation.cancelled() => {
+                return Err(ToolError::new(ErrorCode::Cancelled, false));
+            }
+        };
+        match backend {
             Some(Backend::Local(broker)) => local_open(&broker, call).await,
             Some(Backend::Remote(client)) => client.open(call).await,
             None => Err(ToolError::new(ErrorCode::ConnectionLost, true)),

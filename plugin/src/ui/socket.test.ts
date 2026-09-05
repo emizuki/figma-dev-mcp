@@ -400,10 +400,17 @@ describe("connection is reported on acceptance, not on send", () => {
     const harness = installSocketHarness()
     try {
       const stop = startSocketTransport()
-      // Four attempts the broker refuses: each opens, sends hello, and is
+      // Six attempts the broker refuses: each opens, sends hello, and is
       // closed without the broker ever sending a frame back — exactly what a
-      // protocol-version mismatch does.
-      for (let attempt = 0; attempt < 4; attempt += 1) {
+      // protocol-version mismatch does. Six, not four, so the run reaches
+      // past the delay table's last entry (index 4, value 5000) and exercises
+      // the `Math.min(reconnectAttempt, RECONNECT_DELAYS_MS.length - 1)` clamp
+      // in `scheduleReconnect`: without it, the 6th consecutive rejection
+      // would index past the table's end, read `undefined`, and throw
+      // "reconnect delay table is empty" from inside the `close` listener —
+      // which leaves `reconnectTimer` unset and the plugin never reconnecting
+      // again.
+      for (let attempt = 0; attempt < 6; attempt += 1) {
         const socket =
           FakeWebSocket.instances[FakeWebSocket.instances.length - 1]
         if (socket === undefined) throw new Error("no socket was opened")
@@ -412,7 +419,9 @@ describe("connection is reported on acceptance, not on send", () => {
         harness.runNextTimer()
       }
 
-      expect(harness.timerDelays.slice(0, 4)).toEqual([250, 500, 1_000, 2_000])
+      expect(harness.timerDelays).toEqual([
+        250, 500, 1_000, 2_000, 5_000, 5_000,
+      ])
       stop()
     } finally {
       harness.restore()
@@ -453,6 +462,43 @@ describe("connection is reported on acceptance, not on send", () => {
       harness.runNextTimer()
 
       expect(harness.timerDelays).toEqual([250, 500, 250])
+      stop()
+    } finally {
+      harness.restore()
+    }
+  })
+
+  test("a frame the plugin cannot parse is not proof of acceptance: no backoff reset, no Connected status", () => {
+    const harness = installSocketHarness()
+    try {
+      const stop = startSocketTransport()
+
+      // First attempt: rejected outright, advancing the table past its
+      // first entry.
+      const first = FakeWebSocket.instances[0]
+      if (first === undefined) throw new Error("no socket was opened")
+      driveHandshake(first, harness)
+      first.close()
+      harness.runNextTimer()
+
+      // Second attempt: the broker sends a frame, but one this plugin
+      // cannot parse — `ping` with an unknown field, which `exact` in
+      // `parseBrokerToPlugin` rejects. If any text frame counted as
+      // acceptance rather than only one the plugin could actually parse,
+      // this would reset the backoff and announce "Connected to local
+      // broker" even though the plugin can never understand this broker.
+      const second = FakeWebSocket.instances[FakeWebSocket.instances.length - 1]
+      if (second === undefined) throw new Error("no socket was opened")
+      driveHandshake(second, harness)
+      second.message(JSON.stringify({ type: "ping", nonce: 1, extra: true }))
+      second.close()
+      harness.runNextTimer()
+
+      // The table must keep climbing rather than resetting: 250 then 500,
+      // not 250 then 250 again.
+      expect(harness.timerDelays).toEqual([250, 500])
+      expect(harness.statuses).not.toContain("Connected to local broker")
+
       stop()
     } finally {
       harness.restore()

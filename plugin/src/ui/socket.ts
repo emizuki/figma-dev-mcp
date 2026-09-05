@@ -190,16 +190,21 @@ export function startSocketTransport(): () => void {
         !generation.helloSent
       )
         return
-      // The broker never acknowledges a hello: `BrokerToPlugin` is
-      // request | cancel | ping. A frame can only arrive on a socket it chose
-      // to keep, so the first one is the only proof of acceptance available.
-      if (!generation.acceptedSinceOpen) {
-        generation.acceptedSinceOpen = true
-        reconnectAttempt = 0
-        setStatus("Connected to local broker")
-      }
       try {
         const message = parseBrokerToPlugin(JSON.parse(event.data))
+        // The broker never acknowledges a hello: `BrokerToPlugin` is
+        // request | cancel | ping. A frame can only arrive on a socket it
+        // chose to keep, but that alone is not proof the broker is working —
+        // acceptance requires a frame this plugin could actually parse as
+        // one of those three. This latch also resets the reconnect backoff,
+        // so gating it on parse success matters: a broker whose frames this
+        // plugin cannot parse is not a broker that is working, and resetting
+        // the backoff on it would defeat the backoff's purpose.
+        if (!generation.acceptedSinceOpen) {
+          generation.acceptedSinceOpen = true
+          reconnectAttempt = 0
+          setStatus("Connected to local broker")
+        }
         switch (message.type) {
           case "request": {
             if (

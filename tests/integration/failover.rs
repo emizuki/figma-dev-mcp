@@ -386,7 +386,10 @@ async fn an_open_call_records_the_broker_that_opened_it() {
 
     let client = BrokerClient::local(opener.clone());
     let open = client
-        .open(metadata_call(Some(connection_id)))
+        .open(
+            metadata_call(Some(connection_id)),
+            &tokio_util::sync::CancellationToken::new(),
+        )
         .await
         .unwrap();
     let request_id = open
@@ -461,7 +464,10 @@ async fn an_unattached_client_still_fails_calls_retryably_after_the_deadline() {
 
     let started = tokio::time::Instant::now();
     let open = client
-        .open(figma_dev_mcp_protocol::wire::BrokerCall::ListFiles {})
+        .open(
+            figma_dev_mcp_protocol::wire::BrokerCall::ListFiles {},
+            &tokio_util::sync::CancellationToken::new(),
+        )
         .await;
     let error = open.expect_err("an unattached client cannot open a call");
     assert_eq!(
@@ -507,7 +513,10 @@ async fn a_call_made_before_the_first_election_succeeds_once_a_backend_arrives()
     });
 
     let open = client
-        .open(figma_dev_mcp_protocol::wire::BrokerCall::ListFiles {})
+        .open(
+            figma_dev_mcp_protocol::wire::BrokerCall::ListFiles {},
+            &tokio_util::sync::CancellationToken::new(),
+        )
         .await;
 
     assert!(
@@ -533,13 +542,26 @@ async fn waiting_for_a_backend_does_not_outlast_the_deadline() {
 
     let started = tokio::time::Instant::now();
     let open = client
-        .open(figma_dev_mcp_protocol::wire::BrokerCall::ListFiles {})
+        .open(
+            figma_dev_mcp_protocol::wire::BrokerCall::ListFiles {},
+            &tokio_util::sync::CancellationToken::new(),
+        )
         .await;
     let elapsed = started.elapsed();
 
     assert!(
         open.is_err(),
         "a backend that arrives after the deadline must not un-fail the call"
+    );
+    // Lower bound first: without it this test would also pass on pre-fix code
+    // where `open` returns instantly instead of waiting for a backend at all —
+    // `elapsed == 0` satisfies the upper bound below just as well. Its sibling
+    // `a_detached_client_fails_calls_after_the_deadline` already asserts this
+    // shape.
+    assert!(
+        elapsed >= Duration::from_millis(figma_dev_mcp_protocol::limits::BACKEND_READY_MS),
+        "the call must actually wait out the deadline before giving up, not return \
+         immediately: elapsed {elapsed:?}"
     );
     assert!(
         elapsed < Duration::from_millis(figma_dev_mcp_protocol::limits::BACKEND_READY_MS * 2),
@@ -580,7 +602,10 @@ async fn a_detached_client_fails_calls_after_the_deadline() {
 
     let started = tokio::time::Instant::now();
     let open = client
-        .open(figma_dev_mcp_protocol::wire::BrokerCall::ListFiles {})
+        .open(
+            figma_dev_mcp_protocol::wire::BrokerCall::ListFiles {},
+            &tokio_util::sync::CancellationToken::new(),
+        )
         .await;
 
     assert!(
@@ -592,6 +617,94 @@ async fn a_detached_client_fails_calls_after_the_deadline() {
             >= Duration::from_millis(figma_dev_mcp_protocol::limits::BACKEND_READY_MS),
         "detach must not signal readiness, so the call must wait out the full deadline \
          before failing rather than being woken early"
+    );
+}
+
+// The `tokio::select!` added alongside `backend_ready`'s wait — in `call` and
+// now, matching it, in `open` — has to actually race the cancellation against
+// the wait rather than only being polled after it. Without this test, someone
+// simplifying either method back to a plain `self.backend_ready().await` would
+// see every other test in this file stay green: none of them cancel a token
+// while the client is unattached. `start_paused = true` plus asserting on
+// `elapsed` is what pins "promptly" — without the elapsed assertion, a
+// `select!` that (incorrectly) polled the two branches in sequence rather
+// than concurrently could still return `Cancelled`, just after paying the
+// full `BACKEND_READY_MS` wait first.
+#[tokio::test(start_paused = true)]
+async fn cancelling_a_call_against_an_unattached_client_returns_promptly() {
+    let client = BrokerClient::unattached();
+    let token = tokio_util::sync::CancellationToken::new();
+    let calling = tokio::spawn({
+        let client = client.clone();
+        let token = token.clone();
+        async move {
+            client
+                .call(
+                    figma_dev_mcp_protocol::wire::BrokerCall::ListFiles {},
+                    &token,
+                )
+                .await
+        }
+    });
+
+    // Let the spawned task actually reach `backend_ready`'s wait before
+    // cancelling, so this proves the race is won mid-wait rather than merely
+    // short-circuiting a call that never started.
+    tokio::task::yield_now().await;
+
+    let started = tokio::time::Instant::now();
+    token.cancel();
+    let result = calling.await.expect("the call task must not panic");
+    let elapsed = started.elapsed();
+
+    let error = result.expect_err("a cancelled call must not return a result");
+    assert_eq!(
+        error.code(),
+        figma_dev_mcp_protocol::error::ErrorCode::Cancelled
+    );
+    assert!(
+        elapsed < Duration::from_millis(figma_dev_mcp_protocol::limits::BACKEND_READY_MS),
+        "a call cancelled while no backend is installed must return before the \
+         BACKEND_READY_MS deadline elapses, not after it: elapsed {elapsed:?}"
+    );
+}
+
+/// `open`'s mirror of the test above: it gained the same
+/// `backend_ready` / `cancellation` race in this same change, so it needs the
+/// same proof.
+#[tokio::test(start_paused = true)]
+async fn cancelling_an_open_call_against_an_unattached_client_returns_promptly() {
+    let client = BrokerClient::unattached();
+    let token = tokio_util::sync::CancellationToken::new();
+    let opening = tokio::spawn({
+        let client = client.clone();
+        let token = token.clone();
+        async move {
+            client
+                .open(
+                    figma_dev_mcp_protocol::wire::BrokerCall::ListFiles {},
+                    &token,
+                )
+                .await
+        }
+    });
+
+    tokio::task::yield_now().await;
+
+    let started = tokio::time::Instant::now();
+    token.cancel();
+    let result = opening.await.expect("the open task must not panic");
+    let elapsed = started.elapsed();
+
+    let error = result.expect_err("a cancelled open must not return a result");
+    assert_eq!(
+        error.code(),
+        figma_dev_mcp_protocol::error::ErrorCode::Cancelled
+    );
+    assert!(
+        elapsed < Duration::from_millis(figma_dev_mcp_protocol::limits::BACKEND_READY_MS),
+        "an open cancelled while no backend is installed must return before the \
+         BACKEND_READY_MS deadline elapses, not after it: elapsed {elapsed:?}"
     );
 }
 
@@ -822,7 +935,10 @@ async fn frontend_client_open_drop_governs_the_remote_watcher_on_both_branches()
     // deadline for no reason on every single non-`list_files` call a follower
     // ever makes.
     let mut open = client
-        .open(metadata_call(Some(connection_id)))
+        .open(
+            metadata_call(Some(connection_id)),
+            &tokio_util::sync::CancellationToken::new(),
+        )
         .await
         .expect("open must succeed against a connected plugin");
     let watcher_abort_handle = open
@@ -854,7 +970,10 @@ async fn frontend_client_open_drop_governs_the_remote_watcher_on_both_branches()
     // dropping it, and prove the plugin actually receives the `Cancel` frame
     // naming that request — it is the watcher, not `Drop`, that must send it.
     let open = client
-        .open(metadata_call(Some(connection_id)))
+        .open(
+            metadata_call(Some(connection_id)),
+            &tokio_util::sync::CancellationToken::new(),
+        )
         .await
         .expect("open must succeed against a connected plugin");
     let request = next_plugin_request(&mut plugin).await;

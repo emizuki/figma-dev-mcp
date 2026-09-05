@@ -113,7 +113,7 @@ async fn serve_frontend(broker: Broker, stream: TcpStream) -> Result<(), BrokerE
                             let client = client.clone();
                             let progress_tx = progress_tx.clone();
                             calls.spawn(async move {
-                                let result = match client.open(*call).await {
+                                let result = match client.open(*call, &cancellation).await {
                                     Ok(mut open) => loop {
                                         tokio::select! {
                                             result = &mut open.result => {
