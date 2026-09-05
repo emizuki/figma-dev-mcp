@@ -2067,3 +2067,51 @@ describe("hidden effects and paints are not reported", () => {
     expect(style.paints).toEqual([])
   })
 })
+
+describe("stroke reporting follows stroke visibility", () => {
+  const nodeWithStrokes = (strokes: unknown[]) =>
+    base({
+      strokes,
+      strokeWeight: 1,
+      strokeAlign: "OUTSIDE",
+    })
+
+  const fullData = (node: Record<string, unknown>) =>
+    serializeNodeForest([node], {
+      detail: "full",
+      depth: 0,
+      dedupeComponents: false,
+    }).nodes[0]?.data as { strokes?: Record<string, unknown> } | undefined
+
+  test("omits strokes entirely when every stroke is hidden", () => {
+    const data = fullData(
+      nodeWithStrokes([
+        { type: "SOLID", color: { r: 0, g: 0, b: 0, a: 1 }, visible: false },
+      ]),
+    )
+    expect(data?.strokes).toBeUndefined()
+  })
+
+  test("keeps weight and align when only some strokes are hidden", () => {
+    const data = fullData(
+      nodeWithStrokes([
+        { type: "SOLID", color: { r: 1, g: 0, b: 0, a: 1 }, visible: false },
+        { type: "SOLID", color: { r: 0, g: 0, b: 1, a: 1 }, visible: true },
+      ]),
+    )
+    expect(data?.strokes).toEqual({
+      paints: [
+        { type: "solid", color: { r: 0, g: 0, b: 1, a: 1 }, opacity: 1 },
+      ],
+      weight: 1,
+      align: "outside",
+    })
+  })
+
+  test("still reports a visible stroke whose paint type cannot be modelled", () => {
+    const data = fullData(
+      nodeWithStrokes([{ type: "GRADIENT_ANGULAR", visible: true }]),
+    )
+    expect(data?.strokes).toMatchObject({ weight: 1, align: "outside" })
+  })
+})

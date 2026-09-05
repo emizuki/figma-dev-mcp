@@ -259,11 +259,18 @@ const STROKE_ALIGNS: Record<string, StrokeAlign> = {
 function strokes(node: UnknownRecord): StrokeValue | undefined {
   const rawStrokes = hostGet(node, "strokes")
   // Gate on the raw stroke list (or a mixed marker), not the parsed paint count: a
-  // paint type toPaint() cannot model (e.g. GRADIENT_ANGULAR) parses to nothing,
+  // paint type toPaint() cannot model (e.g. VIDEO) parses to a marker or nothing,
   // but the node still has a visible border, so weight/align/dashPattern must
-  // still be reported with an empty paints array rather than the whole field
-  // disappearing.
-  if (!isMixed(rawStrokes) && array(rawStrokes).length === 0) return undefined
+  // still be reported rather than the whole field disappearing.
+  //
+  // Count only strokes that are switched on. Since hidden paints are dropped, a
+  // node whose every stroke is off would otherwise report a live weight and align
+  // beside an empty paints array — an assertion that a border exists when none
+  // does, which is the bug this gate now has to avoid rather than cause.
+  const liveStrokes = array(rawStrokes).filter((stroke) =>
+    boolean(record(stroke).visible, true),
+  )
+  if (!isMixed(rawStrokes) && liveStrokes.length === 0) return undefined
   const strokePaints = paints(rawStrokes)
   const value: StrokeValue = { paints: strokePaints }
   const weight = optionalFinite(hostGet(node, "strokeWeight"))
