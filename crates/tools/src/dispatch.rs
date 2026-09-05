@@ -48,10 +48,13 @@ async fn invoke(
     context: &DispatchContext<'_>,
 ) -> Result<ReadResult, DispatchError> {
     let open = broker
-        .open(BrokerCall::Invoke {
-            connection_id,
-            invocation: Box::new(Invocation { operation }),
-        })
+        .open(
+            BrokerCall::Invoke {
+                connection_id,
+                invocation: Box::new(Invocation { operation }),
+            },
+            context.cancellation,
+        )
         .await
         .map_err(DispatchError::Tool)?;
     wait_for_result(open, context).await

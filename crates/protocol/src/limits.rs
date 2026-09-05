@@ -23,3 +23,10 @@ pub const TOTAL_TIMEOUT_SECS: u64 = 120;
 pub const HEARTBEAT_SECS: u64 = 5;
 pub const STALE_SESSION_SECS: u64 = 20;
 pub const IDLE_GRACE_SECS: u64 = 30;
+/// How long a call waits for the first election to install a backend before
+/// giving up. The measured race is ~80µs — the MCP service starts answering
+/// before `supervise` finishes electing — so this is orders of magnitude more
+/// than the real case needs. It is capped so that a genuinely stuck election
+/// still surfaces as an error rather than as latency: election retries from
+/// 100ms to a 5s ceiling and can stay stuck for minutes.
+pub const BACKEND_READY_MS: u64 = 1_000;

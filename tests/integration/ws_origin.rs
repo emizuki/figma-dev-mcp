@@ -1,7 +1,9 @@
 use std::net::SocketAddr;
+use std::time::Duration;
 
 use figma_dev_mcp_broker::{Broker, BrokerConfig, Limits, PLUGIN_PROTOCOL_VERSION};
 use figma_dev_mcp_protocol::domain::ConnectionId;
+use figma_dev_mcp_protocol::limits::{HEARTBEAT_SECS, STALE_SESSION_SECS};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
 use tokio::net::TcpListener;
@@ -417,4 +419,64 @@ async fn shutdown_interrupts_a_tcp_peer_stalled_before_websocket_upgrade() {
         .await
         .expect("broker shutdown must not wait for a stalled upgrade")
         .unwrap();
+}
+
+#[tokio::test]
+async fn an_accepted_session_is_pinged_without_waiting_a_full_heartbeat() {
+    // Task 3 moves the plugin's "Connected" status onto the first inbound
+    // frame, so a session that is accepted but not spoken to for a whole
+    // heartbeat would read "Connecting…" for seconds on a healthy link.
+    // `ws.rs:138` builds the heartbeat with `time::interval`, whose first tick
+    // completes immediately; this pins that so a later change to the heartbeat
+    // cannot silently regress the plugin's status.
+    //
+    // Real time on purpose: a paused clock would make any delay free and the
+    // assertion meaningless.
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let limits = Limits::checked(
+        64 * 1024,
+        64 * 1024,
+        4,
+        Duration::from_secs(HEARTBEAT_SECS),
+        Duration::from_secs(STALE_SESSION_SECS),
+    )
+    .unwrap();
+    let broker = Broker::new(BrokerConfig::for_test(limits).unwrap());
+    let server = broker.clone();
+    let task = tokio::spawn(async move {
+        server.serve(listener).await.unwrap();
+    });
+
+    let (mut socket, _) = connect_async(request(address, Some("null"))).await.unwrap();
+    socket
+        .send(Message::Text(
+            serde_json::to_string(&json!({
+                "type": "hello", "protocolVersion": PLUGIN_PROTOCOL_VERSION,
+                "connectionId": "123e4567-e89b-42d3-a456-426614174000",
+                "displayName": "File", "fileName": "File",
+                "currentPage": {"id": "0:1", "name": "Page"},
+                "editorType": "dev", "pluginVersion": "0.1.0", "capabilities": {}
+            }))
+            .unwrap()
+            .into(),
+        ))
+        .await
+        .unwrap();
+
+    let frame = tokio::time::timeout(Duration::from_millis(500), socket.next())
+        .await
+        .expect("an accepted session must be spoken to well inside one 5s heartbeat");
+    let Some(Ok(Message::Text(frame))) = frame else {
+        panic!("the broker must send the session a ping frame rather than closing it");
+    };
+    let frame: serde_json::Value = serde_json::from_str(&frame).unwrap();
+    assert_eq!(
+        frame.get("type"),
+        Some(&json!("ping")),
+        "an accepted session with no other traffic can only receive the heartbeat ping"
+    );
+
+    socket.close(None).await.unwrap();
+    task.abort();
 }

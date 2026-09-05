@@ -67,6 +67,19 @@ const LOG_OFF: &[(&str, &str)] = &[("FIGMA_DEV_MCP_LOG", "off")];
 /// way to prove it happened (no `initialize`, no tool call to hang a gate on).
 const LOG_INFO: &[(&str, &str)] = &[("FIGMA_DEV_MCP_LOG", "info")];
 
+/// How long `StdioServer::request` waits for a reply on stdout.
+///
+/// A call with no backend installed can legitimately sit inside
+/// `BrokerClient::backend_ready` for up to `BACKEND_READY_MS` before it fails,
+/// so the budget has to cover that wait plus real scheduling slack — a fixed
+/// margin sized against a call that used to fail in zero milliseconds is not
+/// generous once the call can wait. Deriving this from `BACKEND_READY_MS`
+/// keeps it in step with that constant instead of silently shrinking every
+/// time it grows.
+fn request_timeout() -> Duration {
+    Duration::from_millis(figma_dev_mcp_protocol::limits::BACKEND_READY_MS) + Duration::from_secs(5)
+}
+
 struct StdioServer {
     child: Child,
     stdin: Option<std::process::ChildStdin>,
@@ -190,7 +203,7 @@ impl StdioServer {
         stdin.flush().expect("stdin flush");
         let line = self
             .lines
-            .recv_timeout(Duration::from_secs(5))
+            .recv_timeout(request_timeout())
             .expect("server must emit a JSON-RPC frame on stdout");
         self.collected.push(line.clone());
         let value: Value = serde_json::from_str(&line).unwrap_or_else(|error| {
@@ -501,7 +514,23 @@ fn killing_the_leader_lets_a_follower_reopen_the_plugin_port() {
     // Retried because `elect()` binds the ports before the new backend is
     // installed, so the probe above can win by a hair. Without the install the
     // loop never escapes CONNECTION_LOST and the deadline fires.
-    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    //
+    // Each failing probe now costs up to `BACKEND_READY_MS` inside
+    // `backend_ready` plus the sleep, where it used to cost only the sleep. Cap
+    // the wall clock rather than the probe count: the point of this loop is to
+    // notice a promoted follower within a bounded time, and a re-election that
+    // has not landed in this long is a failure worth reporting quickly, not one
+    // worth waiting minutes for.
+    //
+    // Sanity check on the headroom: a healthy role's recycle delay is dropped
+    // entirely (a non-positive floor is filtered) and `elect()` is a refused
+    // loopback connect plus a couple of binds, so a normal promotion lands
+    // well inside a second. Even a contested one is bounded by
+    // `ELECTION_TIMEOUT` (2s). At ~1.2s per probe, 30s gives ~25 of them —
+    // ample margin above either case.
+    const RETRY_SLEEP: Duration = Duration::from_millis(200);
+    const RETRY_DEADLINE: Duration = Duration::from_secs(30);
+    let deadline = std::time::Instant::now() + RETRY_DEADLINE;
     let mut identifier = 3;
     let recovered = loop {
         let response = follower.request(list_files_call(identifier));
@@ -513,7 +542,7 @@ fn killing_the_leader_lets_a_follower_reopen_the_plugin_port() {
             std::time::Instant::now() < deadline,
             "the promoted follower must stop returning CONNECTION_LOST, still got {response}"
         );
-        thread::sleep(Duration::from_millis(200));
+        thread::sleep(RETRY_SLEEP);
     };
     assert!(
         recovered["result"].is_object(),

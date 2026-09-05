@@ -27,6 +27,7 @@ interface SocketGeneration {
   socket: WebSocket
   metadataRequestId: string
   helloSent: boolean
+  acceptedSinceOpen: boolean
 }
 
 interface RequestOwner {
@@ -86,8 +87,12 @@ export function startSocketTransport(): () => void {
         ) {
           sendJson(generation.socket, buildHello(message, randomUuid))
           generation.helloSent = true
-          reconnectAttempt = 0
-          setStatus("Connected to local broker")
+          // Not "Connected" yet: the broker has not accepted anything. It can
+          // still refuse this hello — a protocol-version mismatch closes the
+          // socket right here — and claiming success now is what let the
+          // backoff counter reset on every rejected attempt, pinning the
+          // reconnect delay at the table's first entry forever.
+          setStatus("Hello sent, waiting for broker…")
         }
         return
       }
@@ -166,6 +171,7 @@ export function startSocketTransport(): () => void {
       socket: candidate,
       metadataRequestId,
       helloSent: false,
+      acceptedSinceOpen: false,
     }
     active = generation
 
@@ -186,6 +192,19 @@ export function startSocketTransport(): () => void {
         return
       try {
         const message = parseBrokerToPlugin(JSON.parse(event.data))
+        // The broker never acknowledges a hello: `BrokerToPlugin` is
+        // request | cancel | ping. A frame can only arrive on a socket it
+        // chose to keep, but that alone is not proof the broker is working —
+        // acceptance requires a frame this plugin could actually parse as
+        // one of those three. This latch also resets the reconnect backoff,
+        // so gating it on parse success matters: a broker whose frames this
+        // plugin cannot parse is not a broker that is working, and resetting
+        // the backoff on it would defeat the backoff's purpose.
+        if (!generation.acceptedSinceOpen) {
+          generation.acceptedSinceOpen = true
+          reconnectAttempt = 0
+          setStatus("Connected to local broker")
+        }
         switch (message.type) {
           case "request": {
             if (
