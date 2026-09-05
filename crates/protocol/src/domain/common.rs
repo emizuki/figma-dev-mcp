@@ -844,18 +844,23 @@ pub enum PaintValue {
     },
     LinearGradient {
         stops: ReturnedList<GradientStop>,
+        gradient_transform: Transform2D,
+        opacity: f64,
     },
     RadialGradient {
         stops: ReturnedList<GradientStop>,
+        gradient_transform: Transform2D,
+        opacity: f64,
     },
     Image {
         image_ref: String,
         scale_mode: ImageScaleMode,
+        opacity: f64,
     },
     Mixed,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone, Copy)]
 #[serde(rename_all = "camelCase")]
 enum PaintTag {
     Solid,
@@ -872,6 +877,7 @@ enum PaintField {
     Color,
     Opacity,
     Stops,
+    GradientTransform,
     ImageRef,
     ScaleMode,
 }
@@ -902,6 +908,7 @@ impl<'de> Visitor<'de> for PaintVisitor {
         let mut color = None;
         let mut opacity = None;
         let mut stops = None;
+        let mut gradient_transform = None;
         let mut image_ref = None;
         let mut scale_mode = None;
         while let Some(field) = map.next_key::<PaintField>()? {
@@ -920,6 +927,11 @@ impl<'de> Visitor<'de> for PaintVisitor {
                     map.next_value::<ReturnedList<GradientStop>>()?,
                     "stops",
                 )?,
+                PaintField::GradientTransform => set_field_once(
+                    &mut gradient_transform,
+                    map.next_value::<Transform2D>()?,
+                    "gradientTransform",
+                )?,
                 PaintField::ImageRef => {
                     set_field_once(&mut image_ref, map.next_value::<String>()?, "imageRef")?
                 }
@@ -930,9 +942,14 @@ impl<'de> Visitor<'de> for PaintVisitor {
                 )?,
             }
         }
-        match tag.ok_or_else(|| A::Error::missing_field("type"))? {
+        let tag = tag.ok_or_else(|| A::Error::missing_field("type"))?;
+        match tag {
             PaintTag::Solid => {
-                if stops.is_some() || image_ref.is_some() || scale_mode.is_some() {
+                if stops.is_some()
+                    || gradient_transform.is_some()
+                    || image_ref.is_some()
+                    || scale_mode.is_some()
+                {
                     return Err(A::Error::custom("solid paint contains variant-only fields"));
                 }
                 Ok(PaintValue::Solid {
@@ -940,46 +957,44 @@ impl<'de> Visitor<'de> for PaintVisitor {
                     opacity: opacity.ok_or_else(|| A::Error::missing_field("opacity"))?,
                 })
             }
-            PaintTag::LinearGradient => {
-                if color.is_some()
-                    || opacity.is_some()
-                    || image_ref.is_some()
-                    || scale_mode.is_some()
-                {
+            PaintTag::LinearGradient | PaintTag::RadialGradient => {
+                if color.is_some() || image_ref.is_some() || scale_mode.is_some() {
                     return Err(A::Error::custom(
                         "gradient paint contains variant-only fields",
                     ));
                 }
                 let stops = stops.ok_or_else(|| A::Error::missing_field("stops"))?;
-                Ok(PaintValue::LinearGradient { stops })
-            }
-            PaintTag::RadialGradient => {
-                if color.is_some()
-                    || opacity.is_some()
-                    || image_ref.is_some()
-                    || scale_mode.is_some()
-                {
-                    return Err(A::Error::custom(
-                        "gradient paint contains variant-only fields",
-                    ));
-                }
-                Ok(PaintValue::RadialGradient {
-                    stops: stops.ok_or_else(|| A::Error::missing_field("stops"))?,
+                let gradient_transform = gradient_transform
+                    .ok_or_else(|| A::Error::missing_field("gradientTransform"))?;
+                let opacity = opacity.ok_or_else(|| A::Error::missing_field("opacity"))?;
+                Ok(match tag {
+                    PaintTag::LinearGradient => PaintValue::LinearGradient {
+                        stops,
+                        gradient_transform,
+                        opacity,
+                    },
+                    _ => PaintValue::RadialGradient {
+                        stops,
+                        gradient_transform,
+                        opacity,
+                    },
                 })
             }
             PaintTag::Image => {
-                if color.is_some() || opacity.is_some() || stops.is_some() {
+                if color.is_some() || stops.is_some() || gradient_transform.is_some() {
                     return Err(A::Error::custom("image paint contains variant-only fields"));
                 }
                 Ok(PaintValue::Image {
                     image_ref: image_ref.ok_or_else(|| A::Error::missing_field("imageRef"))?,
                     scale_mode: scale_mode.ok_or_else(|| A::Error::missing_field("scaleMode"))?,
+                    opacity: opacity.ok_or_else(|| A::Error::missing_field("opacity"))?,
                 })
             }
             PaintTag::Mixed => {
                 if color.is_some()
                     || opacity.is_some()
                     || stops.is_some()
+                    || gradient_transform.is_some()
                     || image_ref.is_some()
                     || scale_mode.is_some()
                 {

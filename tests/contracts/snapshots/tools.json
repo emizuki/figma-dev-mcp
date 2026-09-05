@@ -1810,6 +1810,13 @@
             {
               "additionalProperties": false,
               "properties": {
+                "gradientTransform": {
+                  "$ref": "#/$defs/Transform2D"
+                },
+                "opacity": {
+                  "format": "double",
+                  "type": "number"
+                },
                 "stops": {
                   "$ref": "#/$defs/ReturnedList_of_GradientStop"
                 },
@@ -1820,13 +1827,22 @@
               },
               "required": [
                 "type",
-                "stops"
+                "stops",
+                "gradientTransform",
+                "opacity"
               ],
               "type": "object"
             },
             {
               "additionalProperties": false,
               "properties": {
+                "gradientTransform": {
+                  "$ref": "#/$defs/Transform2D"
+                },
+                "opacity": {
+                  "format": "double",
+                  "type": "number"
+                },
                 "stops": {
                   "$ref": "#/$defs/ReturnedList_of_GradientStop"
                 },
@@ -1837,7 +1853,9 @@
               },
               "required": [
                 "type",
-                "stops"
+                "stops",
+                "gradientTransform",
+                "opacity"
               ],
               "type": "object"
             },
@@ -1846,6 +1864,10 @@
               "properties": {
                 "imageRef": {
                   "type": "string"
+                },
+                "opacity": {
+                  "format": "double",
+                  "type": "number"
                 },
                 "scaleMode": {
                   "$ref": "#/$defs/ImageScaleMode"
@@ -1858,7 +1880,8 @@
               "required": [
                 "type",
                 "imageRef",
-                "scaleMode"
+                "scaleMode",
+                "opacity"
               ],
               "type": "object"
             },
@@ -6265,6 +6288,13 @@
             {
               "additionalProperties": false,
               "properties": {
+                "gradientTransform": {
+                  "$ref": "#/$defs/Transform2D"
+                },
+                "opacity": {
+                  "format": "double",
+                  "type": "number"
+                },
                 "stops": {
                   "$ref": "#/$defs/ReturnedList_of_GradientStop"
                 },
@@ -6275,13 +6305,22 @@
               },
               "required": [
                 "type",
-                "stops"
+                "stops",
+                "gradientTransform",
+                "opacity"
               ],
               "type": "object"
             },
             {
               "additionalProperties": false,
               "properties": {
+                "gradientTransform": {
+                  "$ref": "#/$defs/Transform2D"
+                },
+                "opacity": {
+                  "format": "double",
+                  "type": "number"
+                },
                 "stops": {
                   "$ref": "#/$defs/ReturnedList_of_GradientStop"
                 },
@@ -6292,7 +6331,9 @@
               },
               "required": [
                 "type",
-                "stops"
+                "stops",
+                "gradientTransform",
+                "opacity"
               ],
               "type": "object"
             },
@@ -6301,6 +6342,10 @@
               "properties": {
                 "imageRef": {
                   "type": "string"
+                },
+                "opacity": {
+                  "format": "double",
+                  "type": "number"
                 },
                 "scaleMode": {
                   "$ref": "#/$defs/ImageScaleMode"
@@ -6313,7 +6358,8 @@
               "required": [
                 "type",
                 "imageRef",
-                "scaleMode"
+                "scaleMode",
+                "opacity"
               ],
               "type": "object"
             },
@@ -9670,6 +9716,13 @@
             {
               "additionalProperties": false,
               "properties": {
+                "gradientTransform": {
+                  "$ref": "#/$defs/Transform2D"
+                },
+                "opacity": {
+                  "format": "double",
+                  "type": "number"
+                },
                 "stops": {
                   "$ref": "#/$defs/ReturnedList_of_GradientStop"
                 },
@@ -9680,13 +9733,22 @@
               },
               "required": [
                 "type",
-                "stops"
+                "stops",
+                "gradientTransform",
+                "opacity"
               ],
               "type": "object"
             },
             {
               "additionalProperties": false,
               "properties": {
+                "gradientTransform": {
+                  "$ref": "#/$defs/Transform2D"
+                },
+                "opacity": {
+                  "format": "double",
+                  "type": "number"
+                },
                 "stops": {
                   "$ref": "#/$defs/ReturnedList_of_GradientStop"
                 },
@@ -9697,7 +9759,9 @@
               },
               "required": [
                 "type",
-                "stops"
+                "stops",
+                "gradientTransform",
+                "opacity"
               ],
               "type": "object"
             },
@@ -9706,6 +9770,10 @@
               "properties": {
                 "imageRef": {
                   "type": "string"
+                },
+                "opacity": {
+                  "format": "double",
+                  "type": "number"
                 },
                 "scaleMode": {
                   "$ref": "#/$defs/ImageScaleMode"
@@ -9718,7 +9786,8 @@
               "required": [
                 "type",
                 "imageRef",
-                "scaleMode"
+                "scaleMode",
+                "opacity"
               ],
               "type": "object"
             },
@@ -10801,6 +10870,13 @@
             {
               "additionalProperties": false,
               "properties": {
+                "gradientTransform": {
+                  "$ref": "#/$defs/Transform2D"
+                },
+                "opacity": {
+                  "format": "double",
+                  "type": "number"
+                },
                 "stops": {
                   "$ref": "#/$defs/ReturnedList_of_GradientStop"
                 },
@@ -10811,13 +10887,22 @@
               },
               "required": [
                 "type",
-                "stops"
+                "stops",
+                "gradientTransform",
+                "opacity"
               ],
               "type": "object"
             },
             {
               "additionalProperties": false,
               "properties": {
+                "gradientTransform": {
+                  "$ref": "#/$defs/Transform2D"
+                },
+                "opacity": {
+                  "format": "double",
+                  "type": "number"
+                },
                 "stops": {
                   "$ref": "#/$defs/ReturnedList_of_GradientStop"
                 },
@@ -10828,7 +10913,9 @@
               },
               "required": [
                 "type",
-                "stops"
+                "stops",
+                "gradientTransform",
+                "opacity"
               ],
               "type": "object"
             },
@@ -10837,6 +10924,10 @@
               "properties": {
                 "imageRef": {
                   "type": "string"
+                },
+                "opacity": {
+                  "format": "double",
+                  "type": "number"
                 },
                 "scaleMode": {
                   "$ref": "#/$defs/ImageScaleMode"
@@ -10849,7 +10940,8 @@
               "required": [
                 "type",
                 "imageRef",
-                "scaleMode"
+                "scaleMode",
+                "opacity"
               ],
               "type": "object"
             },
@@ -11262,6 +11354,44 @@
             "characters",
             "defaultStyle",
             "styledRanges"
+          ],
+          "type": "object"
+        },
+        "Transform2D": {
+          "additionalProperties": false,
+          "properties": {
+            "m00": {
+              "format": "double",
+              "type": "number"
+            },
+            "m01": {
+              "format": "double",
+              "type": "number"
+            },
+            "m02": {
+              "format": "double",
+              "type": "number"
+            },
+            "m10": {
+              "format": "double",
+              "type": "number"
+            },
+            "m11": {
+              "format": "double",
+              "type": "number"
+            },
+            "m12": {
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "m00",
+            "m01",
+            "m02",
+            "m10",
+            "m11",
+            "m12"
           ],
           "type": "object"
         },

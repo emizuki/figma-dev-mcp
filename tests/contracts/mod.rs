@@ -1046,7 +1046,7 @@ fn unknown_fields_are_rejected_at_nested_boundaries() {
 #[test]
 fn nested_enum_fields_are_camel_case_and_input_bounds_are_schema_backed() {
     let paint: PaintValue = serde_json::from_value(json!({
-        "type": "image", "imageRef": "image-1", "scaleMode": "fill"
+        "type": "image", "imageRef": "image-1", "scaleMode": "fill", "opacity": 1.0
     }))
     .unwrap();
     let paint = serde_json::to_value(paint).unwrap();
@@ -1474,7 +1474,73 @@ fn nested_returned_value_collections_reject_more_than_the_result_limit() {
     assert!(
         serde_json::from_value::<PaintValue>(json!({
             "type": "linearGradient",
-            "stops": vec![gradient_stop; MAX_RETURNED_NODES + 1]
+            "stops": vec![gradient_stop; MAX_RETURNED_NODES + 1],
+            "gradientTransform": {"m00": 1.0, "m01": 0.0, "m02": 0.0,
+                                  "m10": 0.0, "m11": 1.0, "m12": 0.0},
+            "opacity": 1.0
+        }))
+        .is_err()
+    );
+}
+
+#[test]
+fn gradient_and_image_paints_carry_opacity_and_direction() {
+    let gradient: PaintValue = serde_json::from_value(json!({
+        "type": "linearGradient",
+        "stops": [{"position": 0.0, "color": {"r": 1.0, "g": 0.0, "b": 0.0, "a": 1.0}}],
+        "gradientTransform": {"m00": 0.0, "m01": 1.0, "m02": 0.0,
+                              "m10": -1.0, "m11": 0.0, "m12": 1.0},
+        "opacity": 0.4
+    }))
+    .unwrap();
+    let encoded = serde_json::to_value(gradient).unwrap();
+    assert_eq!(encoded["opacity"], 0.4);
+    assert_eq!(encoded["gradientTransform"]["m01"], 1.0);
+
+    let image: PaintValue = serde_json::from_value(json!({
+        "type": "image", "imageRef": "image-1", "scaleMode": "fill", "opacity": 0.25
+    }))
+    .unwrap();
+    assert_eq!(serde_json::to_value(image).unwrap()["opacity"], 0.25);
+}
+
+#[test]
+fn a_gradient_without_its_direction_or_opacity_is_rejected() {
+    let stops = json!([{"position": 0.0, "color": {"r": 0.0, "g": 0.0, "b": 0.0, "a": 1.0}}]);
+    assert!(
+        serde_json::from_value::<PaintValue>(json!({
+            "type": "linearGradient", "stops": stops, "opacity": 1.0
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<PaintValue>(json!({
+            "type": "image", "imageRef": "i", "scaleMode": "fill"
+        }))
+        .is_err()
+    );
+}
+
+#[test]
+fn a_gradient_transform_belongs_only_to_gradients() {
+    let transform = json!({"m00": 1.0, "m01": 0.0, "m02": 0.0,
+                           "m10": 0.0, "m11": 1.0, "m12": 0.0});
+    assert!(
+        serde_json::from_value::<PaintValue>(json!({
+            "type": "solid",
+            "color": {"r": 0.0, "g": 0.0, "b": 0.0, "a": 1.0},
+            "opacity": 1.0,
+            "gradientTransform": transform
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<PaintValue>(json!({
+            "type": "image",
+            "imageRef": "i",
+            "scaleMode": "fill",
+            "opacity": 1.0,
+            "gradientTransform": transform
         }))
         .is_err()
     );
@@ -2945,7 +3011,7 @@ const WIRE_SNAPSHOTS: [&str; 3] = [
 
 /// The fingerprint of `WIRE_SNAPSHOTS` at the current wire version, over
 /// LF-normalised bytes so it does not depend on the checkout's line endings.
-const EXPECTED_WIRE_FINGERPRINT: &str = "0xa1a8bc15be026c45";
+const EXPECTED_WIRE_FINGERPRINT: &str = "0x29d77ebb06e34b55";
 
 /// FNV-1a, 64-bit, over the three snapshots in order, separated by a byte that
 /// cannot occur in UTF-8 so moving text between two files still changes it.

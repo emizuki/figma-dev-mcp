@@ -78,9 +78,24 @@ export type ImageScaleMode = "fill" | "fit" | "crop" | "tile"
 
 export type PaintValue =
   | { type: "solid"; color: Color; opacity: number }
-  | { type: "linearGradient"; stops: GradientStop[] }
-  | { type: "radialGradient"; stops: GradientStop[] }
-  | { type: "image"; imageRef: string; scaleMode: ImageScaleMode }
+  | {
+      type: "linearGradient"
+      stops: GradientStop[]
+      gradientTransform: Transform2D
+      opacity: number
+    }
+  | {
+      type: "radialGradient"
+      stops: GradientStop[]
+      gradientTransform: Transform2D
+      opacity: number
+    }
+  | {
+      type: "image"
+      imageRef: string
+      scaleMode: ImageScaleMode
+      opacity: number
+    }
   | { type: "mixed" }
 
 export type EffectValue =

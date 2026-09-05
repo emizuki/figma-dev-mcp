@@ -33,6 +33,7 @@ import type {
   TextDecoration,
   TextStyle,
   TextValue,
+  Transform2D,
   Truncation,
   VariableReference,
 } from "../shared/results"
@@ -151,6 +152,24 @@ export function toColor(value: unknown) {
   }
 }
 
+// Figma's Transform is [[m00,m01,m02],[m10,m11,m12]] — the same six numbers as
+// Transform2D, which geometry() already emits. gradientTransform carries the
+// gradient's direction, so without it a caller gets stops and no angle and
+// cannot write the CSS.
+function toTransform(value: unknown): Transform2D {
+  const rows = array(value)
+  const row0 = array(rows[0])
+  const row1 = array(rows[1])
+  return {
+    m00: finite(row0[0], 1),
+    m01: finite(row0[1]),
+    m02: finite(row0[2]),
+    m10: finite(row1[0]),
+    m11: finite(row1[1], 1),
+    m12: finite(row1[2]),
+  }
+}
+
 function toPaint(value: unknown): PaintValue | undefined {
   if (isMixed(value)) return { type: "mixed" }
   const paint = record(value)
@@ -180,6 +199,8 @@ function toPaint(value: unknown): PaintValue | undefined {
             ? "linearGradient"
             : "radialGradient",
         stops,
+        gradientTransform: toTransform(paint.gradientTransform),
+        opacity: finite(paint.opacity, 1),
       }
     }
     case "IMAGE":
@@ -187,6 +208,7 @@ function toPaint(value: unknown): PaintValue | undefined {
         type: "image",
         imageRef: string(paint.imageHash),
         scaleMode: imageScaleMode(paint.scaleMode),
+        opacity: finite(paint.opacity, 1),
       }
     default:
       return undefined

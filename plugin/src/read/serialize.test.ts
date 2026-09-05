@@ -2115,3 +2115,117 @@ describe("stroke reporting follows stroke visibility", () => {
     expect(data?.strokes).toMatchObject({ weight: 1, align: "outside" })
   })
 })
+
+describe("non-solid paints keep their opacity and direction", () => {
+  const gradientTransform = [
+    [0, 1, 0],
+    [-1, 0, 1],
+  ]
+
+  test("a linear gradient reports opacity and gradientTransform", () => {
+    expect(
+      paints([
+        {
+          type: "GRADIENT_LINEAR",
+          opacity: 0.4,
+          gradientTransform,
+          gradientStops: [
+            { position: 0, color: { r: 1, g: 0, b: 0, a: 1 } },
+            { position: 1, color: { r: 0, g: 0, b: 1, a: 1 } },
+          ],
+        },
+      ]),
+    ).toEqual([
+      {
+        type: "linearGradient",
+        opacity: 0.4,
+        gradientTransform: { m00: 0, m01: 1, m02: 0, m10: -1, m11: 0, m12: 1 },
+        stops: [
+          { position: 0, color: { r: 1, g: 0, b: 0, a: 1 } },
+          { position: 1, color: { r: 0, g: 0, b: 1, a: 1 } },
+        ],
+      },
+    ])
+  })
+
+  test("an image paint reports opacity", () => {
+    expect(
+      paints([
+        { type: "IMAGE", imageHash: "img-1", scaleMode: "FIT", opacity: 0.25 },
+      ]),
+    ).toEqual([
+      { type: "image", imageRef: "img-1", scaleMode: "fit", opacity: 0.25 },
+    ])
+  })
+
+  test("an absent opacity defaults to 1, as it already does for solid", () => {
+    const [gradient] = paints([
+      { type: "GRADIENT_RADIAL", gradientTransform, gradientStops: [] },
+    ])
+    expect(gradient).toMatchObject({ type: "radialGradient", opacity: 1 })
+  })
+
+  test("an absent gradientTransform falls back to identity", () => {
+    const [gradient] = paints([{ type: "GRADIENT_LINEAR", gradientStops: [] }])
+    expect(gradient).toMatchObject({
+      gradientTransform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+    })
+  })
+})
+
+describe("new paint and effect shapes survive the wire validator", () => {
+  const observation = {
+    startedAt: "2024-01-01T00:00:00.000Z",
+    completedAt: "2024-01-01T00:00:00.000Z",
+  }
+
+  // Exported for reuse by the later paint and effect shape tasks.
+  const validatedFullData = (node: Record<string, unknown>) => {
+    const forest = serializeNodeForest([node], {
+      detail: "full",
+      depth: 0,
+      dedupeComponents: false,
+    })
+    const validated = parseReadResult({
+      operation: "get_selection",
+      result: {
+        detail: "full",
+        nodes: forest.nodes,
+        truncated: forest.truncated,
+        observation,
+      },
+    })
+    const result = validated.result as unknown as {
+      nodes: readonly { data: Record<string, unknown> }[]
+    }
+    return result.nodes[0]?.data
+  }
+
+  test("a gradient and image fill pass parseReadResult intact", () => {
+    const data = validatedFullData(
+      base({
+        fills: [
+          {
+            type: "GRADIENT_LINEAR",
+            opacity: 0.4,
+            gradientTransform: [
+              [0, 1, 0],
+              [-1, 0, 1],
+            ],
+            gradientStops: [{ position: 0, color: { r: 1, g: 0, b: 0, a: 1 } }],
+          },
+          {
+            type: "IMAGE",
+            imageHash: "img-1",
+            scaleMode: "FIT",
+            opacity: 0.25,
+          },
+        ],
+      }),
+    )
+    expect(data?.paints).toMatchObject([
+      { type: "linearGradient", opacity: 0.4 },
+      { type: "image", opacity: 0.25 },
+    ])
+  })
+})
