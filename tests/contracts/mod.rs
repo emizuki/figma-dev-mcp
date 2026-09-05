@@ -10,7 +10,7 @@ mod tools_catalog;
 use figma_dev_mcp_broker::PLUGIN_PROTOCOL_VERSION;
 use figma_dev_mcp_protocol::{
     domain::{
-        AxisAlign, ComponentValue, ConnectionId, CornerRadiusValue, DesignNode,
+        AxisAlign, ComponentValue, ConnectionId, CornerRadiusValue, DesignNode, EffectValue,
         GetDesignContextResult, GetDevModeDataResult, GetMotionResult, GetNodesResult,
         GetReactionsResult, GetSelectionResult, InstanceValue, ItemIdentifier, LayoutValue,
         LetterSpacingValue, LineHeightValue, MinimalNodeDetails, NodeForest, NodeId, NodeTypeList,
@@ -3026,7 +3026,7 @@ const WIRE_SNAPSHOTS: [&str; 3] = [
 
 /// The fingerprint of `WIRE_SNAPSHOTS` at the current wire version, over
 /// LF-normalised bytes so it does not depend on the checkout's line endings.
-const EXPECTED_WIRE_FINGERPRINT: &str = "0x2f2ace5975f55d91";
+const EXPECTED_WIRE_FINGERPRINT: &str = "0xaebcb22af45c3699";
 
 /// FNV-1a, 64-bit, over the three snapshots in order, separated by a byte that
 /// cannot occur in UTF-8 so moving text between two files still changes it.
@@ -3141,6 +3141,53 @@ fn an_unsupported_paint_names_its_figma_type() {
             "color": {"r": 0.0, "g": 0.0, "b": 0.0, "a": 1.0},
             "opacity": 1.0,
             "figmaType": "VIDEO"
+        }))
+        .is_err()
+    );
+}
+
+#[test]
+fn an_unsupported_effect_names_its_figma_type_and_needs_no_radius() {
+    // Regression guard: visit_map used to require `radius` for every effect
+    // variant before it looked at the tag, so an unsupported effect would have
+    // been rejected for a field it does not have.
+    let effect: EffectValue = serde_json::from_value(json!({
+        "type": "unsupported", "figmaType": "NOISE"
+    }))
+    .unwrap();
+    assert_eq!(serde_json::to_value(effect).unwrap()["figmaType"], "NOISE");
+
+    assert!(serde_json::from_value::<EffectValue>(json!({"type": "unsupported"})).is_err());
+    assert!(
+        serde_json::from_value::<EffectValue>(json!({
+            "type": "unsupported", "figmaType": "NOISE", "radius": 4.0
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<EffectValue>(json!({
+            "type": "layerBlur", "radius": 4.0, "figmaType": "NOISE"
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<EffectValue>(json!({
+            "type": "unsupported",
+            "figmaType": "NOISE",
+            "color": {"r": 0.0, "g": 0.0, "b": 0.0, "a": 1.0}
+        }))
+        .is_err()
+    );
+}
+
+#[test]
+fn modelled_effects_still_require_their_own_fields() {
+    assert!(serde_json::from_value::<EffectValue>(json!({"type": "layerBlur"})).is_err());
+    assert!(
+        serde_json::from_value::<EffectValue>(json!({
+            "type": "dropShadow",
+            "color": {"r": 0.0, "g": 0.0, "b": 0.0, "a": 1.0},
+            "offsetX": 0.0, "offsetY": 2.0, "spread": 0.0
         }))
         .is_err()
     );

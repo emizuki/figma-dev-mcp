@@ -271,8 +271,14 @@ export function effects(value: unknown): EffectValue[] {
           radius: finite(source.radius),
         })
         break
-      default:
+      default: {
+        // Figma's NOISE and TEXTURE effects land here, as will anything added
+        // later. Same rule as toPaint: an empty effects array must mean "nothing
+        // renders", never "we could not describe what does".
+        const figmaType = string(source.type)
+        if (figmaType !== "") result.push({ type: "unsupported", figmaType })
         break
+      }
     }
   }
   return result

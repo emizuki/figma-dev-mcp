@@ -1130,15 +1130,19 @@ pub enum EffectValue {
     BackgroundBlur {
         radius: f64,
     },
+    Unsupported {
+        figma_type: String,
+    },
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone, Copy)]
 #[serde(rename_all = "camelCase")]
 enum EffectTag {
     DropShadow,
     InnerShadow,
     LayerBlur,
     BackgroundBlur,
+    Unsupported,
 }
 
 #[derive(Deserialize)]
@@ -1150,6 +1154,7 @@ enum EffectField {
     OffsetY,
     Radius,
     Spread,
+    FigmaType,
 }
 
 impl<'de> Deserialize<'de> for EffectValue {
@@ -1180,6 +1185,7 @@ impl<'de> Visitor<'de> for EffectVisitor {
         let mut offset_y = None;
         let mut radius = None;
         let mut spread = None;
+        let mut figma_type = None;
         while let Some(field) = map.next_key::<EffectField>()? {
             match field {
                 EffectField::Type => {
@@ -1200,31 +1206,59 @@ impl<'de> Visitor<'de> for EffectVisitor {
                 EffectField::Spread => {
                     set_field_once(&mut spread, map.next_value::<f64>()?, "spread")?
                 }
+                EffectField::FigmaType => {
+                    set_field_once(&mut figma_type, map.next_value::<String>()?, "figmaType")?
+                }
             }
         }
-        let radius = radius.ok_or_else(|| A::Error::missing_field("radius"))?;
-        match tag.ok_or_else(|| A::Error::missing_field("type"))? {
-            EffectTag::DropShadow => Ok(EffectValue::DropShadow {
-                color: color.ok_or_else(|| A::Error::missing_field("color"))?,
-                offset_x: offset_x.ok_or_else(|| A::Error::missing_field("offsetX"))?,
-                offset_y: offset_y.ok_or_else(|| A::Error::missing_field("offsetY"))?,
-                radius,
-                spread: spread.ok_or_else(|| A::Error::missing_field("spread"))?,
-            }),
-            EffectTag::InnerShadow => Ok(EffectValue::InnerShadow {
-                color: color.ok_or_else(|| A::Error::missing_field("color"))?,
-                offset_x: offset_x.ok_or_else(|| A::Error::missing_field("offsetX"))?,
-                offset_y: offset_y.ok_or_else(|| A::Error::missing_field("offsetY"))?,
-                radius,
-                spread: spread.ok_or_else(|| A::Error::missing_field("spread"))?,
-            }),
-            EffectTag::LayerBlur => {
-                reject_shadow_fields::<A::Error>(color, offset_x, offset_y, spread)?;
-                Ok(EffectValue::LayerBlur { radius })
+        let tag = tag.ok_or_else(|| A::Error::missing_field("type"))?;
+        match tag {
+            EffectTag::DropShadow | EffectTag::InnerShadow => {
+                if figma_type.is_some() {
+                    return Err(A::Error::custom("shadow effect cannot name a figma type"));
+                }
+                let color = color.ok_or_else(|| A::Error::missing_field("color"))?;
+                let offset_x = offset_x.ok_or_else(|| A::Error::missing_field("offsetX"))?;
+                let offset_y = offset_y.ok_or_else(|| A::Error::missing_field("offsetY"))?;
+                let radius = radius.ok_or_else(|| A::Error::missing_field("radius"))?;
+                let spread = spread.ok_or_else(|| A::Error::missing_field("spread"))?;
+                Ok(if matches!(tag, EffectTag::DropShadow) {
+                    EffectValue::DropShadow {
+                        color,
+                        offset_x,
+                        offset_y,
+                        radius,
+                        spread,
+                    }
+                } else {
+                    EffectValue::InnerShadow {
+                        color,
+                        offset_x,
+                        offset_y,
+                        radius,
+                        spread,
+                    }
+                })
             }
-            EffectTag::BackgroundBlur => {
-                reject_shadow_fields::<A::Error>(color, offset_x, offset_y, spread)?;
-                Ok(EffectValue::BackgroundBlur { radius })
+            EffectTag::LayerBlur | EffectTag::BackgroundBlur => {
+                reject_shadow_fields::<A::Error>(color, offset_x, offset_y, spread, figma_type)?;
+                let radius = radius.ok_or_else(|| A::Error::missing_field("radius"))?;
+                Ok(if matches!(tag, EffectTag::LayerBlur) {
+                    EffectValue::LayerBlur { radius }
+                } else {
+                    EffectValue::BackgroundBlur { radius }
+                })
+            }
+            EffectTag::Unsupported => {
+                if radius.is_some() {
+                    return Err(A::Error::custom(
+                        "unsupported effect cannot contain payload fields",
+                    ));
+                }
+                reject_shadow_fields::<A::Error>(color, offset_x, offset_y, spread, None)?;
+                Ok(EffectValue::Unsupported {
+                    figma_type: figma_type.ok_or_else(|| A::Error::missing_field("figmaType"))?,
+                })
             }
         }
     }
@@ -1235,12 +1269,20 @@ fn reject_shadow_fields<E>(
     offset_x: Option<f64>,
     offset_y: Option<f64>,
     spread: Option<f64>,
+    figma_type: Option<String>,
 ) -> Result<(), E>
 where
     E: serde::de::Error,
 {
-    if color.is_some() || offset_x.is_some() || offset_y.is_some() || spread.is_some() {
-        return Err(E::custom("blur effect cannot contain shadow-only fields"));
+    if color.is_some()
+        || offset_x.is_some()
+        || offset_y.is_some()
+        || spread.is_some()
+        || figma_type.is_some()
+    {
+        return Err(E::custom(
+            "effect contains fields its variant does not carry",
+        ));
     }
     Ok(())
 }

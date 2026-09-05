@@ -121,6 +121,7 @@ export type EffectValue =
       spread: number
     }
   | { type: "layerBlur" | "backgroundBlur"; radius: number }
+  | { type: "unsupported"; figmaType: string }
 
 export type StrokeAlign = "inside" | "outside" | "center"
 

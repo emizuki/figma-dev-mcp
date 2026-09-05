@@ -588,6 +588,13 @@ function parseEffect(value: unknown, label: string): EffectValue {
         radius: finite(blur.radius, `${label}.radius`),
       }
     }
+    case "unsupported": {
+      const unsupported = exact(object, label, ["type", "figmaType"])
+      return {
+        type: "unsupported",
+        figmaType: string(unsupported.figmaType, `${label}.figmaType`),
+      }
+    }
     default:
       return fail(`${label}.type is not allowed`)
   }

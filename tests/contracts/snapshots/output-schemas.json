@@ -875,6 +875,23 @@
               "radius"
             ],
             "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "figmaType": {
+                "type": "string"
+              },
+              "type": {
+                "const": "unsupported",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "figmaType"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -4626,6 +4643,23 @@
               "radius"
             ],
             "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "figmaType": {
+                "type": "string"
+              },
+              "type": {
+                "const": "unsupported",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "figmaType"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -7941,6 +7975,23 @@
               "radius"
             ],
             "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "figmaType": {
+                "type": "string"
+              },
+              "type": {
+                "const": "unsupported",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "figmaType"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -9406,6 +9457,23 @@
             "required": [
               "type",
               "radius"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "figmaType": {
+                "type": "string"
+              },
+              "type": {
+                "const": "unsupported",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "figmaType"
             ],
             "type": "object"
           }

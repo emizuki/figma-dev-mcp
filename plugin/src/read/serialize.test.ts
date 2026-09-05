@@ -2273,6 +2273,27 @@ describe("new paint and effect shapes survive the wire validator", () => {
     const data = validatedFullData(base({ fills: [{ type: "VIDEO" }] }))
     expect(data?.paints).toEqual([{ type: "unsupported", figmaType: "VIDEO" }])
   })
+
+  test("an unsupported effect passes parseReadResult intact", () => {
+    const data = validatedFullData(base({ effects: [{ type: "NOISE" }] }))
+    expect(data?.effects).toEqual([{ type: "unsupported", figmaType: "NOISE" }])
+  })
+})
+
+describe("an effect the serializer cannot model is named, not erased", () => {
+  test("an unknown effect type becomes an unsupported marker", () => {
+    expect(effects([{ type: "NOISE", noiseSize: 4 }])).toEqual([
+      { type: "unsupported", figmaType: "NOISE" },
+    ])
+  })
+
+  test("a hidden unmodellable effect is dropped, not marked", () => {
+    expect(effects([{ type: "TEXTURE", visible: false }])).toEqual([])
+  })
+
+  test("an effect with no usable type produces nothing at all", () => {
+    expect(effects([{ type: "" }, { type: 7 }, {}])).toEqual([])
+  })
 })
 
 describe("angular and diamond gradients are modelled, not discarded", () => {
