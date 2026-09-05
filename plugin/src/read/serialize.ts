@@ -33,6 +33,7 @@ import type {
   TextDecoration,
   TextStyle,
   TextValue,
+  Transform2D,
   Truncation,
   VariableReference,
 } from "../shared/results"
@@ -151,9 +152,31 @@ export function toColor(value: unknown) {
   }
 }
 
+// Figma's Transform is [[m00,m01,m02],[m10,m11,m12]] — the same six numbers as
+// Transform2D, which geometry() already emits. gradientTransform carries the
+// gradient's direction, so without it a caller gets stops and no angle and
+// cannot write the CSS.
+function toTransform(value: unknown): Transform2D {
+  const rows = array(value)
+  const row0 = array(rows[0])
+  const row1 = array(rows[1])
+  return {
+    m00: finite(row0[0], 1),
+    m01: finite(row0[1]),
+    m02: finite(row0[2]),
+    m10: finite(row1[0]),
+    m11: finite(row1[1], 1),
+    m12: finite(row1[2]),
+  }
+}
+
 function toPaint(value: unknown): PaintValue | undefined {
   if (isMixed(value)) return { type: "mixed" }
   const paint = record(value)
+  // A paint switched off in Figma still sits in the host array. Dropping it here
+  // is what makes `paints` mean "what renders" — the wire carries no visibility
+  // flag, so an entry that survives this line is an entry that paints.
+  if (!boolean(paint.visible, true)) return undefined
   switch (paint.type) {
     case "SOLID":
       return {
@@ -162,7 +185,9 @@ function toPaint(value: unknown): PaintValue | undefined {
         opacity: finite(paint.opacity, 1),
       }
     case "GRADIENT_LINEAR":
-    case "GRADIENT_RADIAL": {
+    case "GRADIENT_RADIAL":
+    case "GRADIENT_ANGULAR":
+    case "GRADIENT_DIAMOND": {
       const stops = array(paint.gradientStops).map((stop) => {
         const source = record(stop)
         return {
@@ -171,11 +196,10 @@ function toPaint(value: unknown): PaintValue | undefined {
         }
       })
       return {
-        type:
-          paint.type === "GRADIENT_LINEAR"
-            ? "linearGradient"
-            : "radialGradient",
+        type: GRADIENT_TYPES[paint.type as keyof typeof GRADIENT_TYPES],
         stops,
+        gradientTransform: toTransform(paint.gradientTransform),
+        opacity: finite(paint.opacity, 1),
       }
     }
     case "IMAGE":
@@ -183,9 +207,18 @@ function toPaint(value: unknown): PaintValue | undefined {
         type: "image",
         imageRef: string(paint.imageHash),
         scaleMode: imageScaleMode(paint.scaleMode),
+        opacity: finite(paint.opacity, 1),
       }
-    default:
-      return undefined
+    default: {
+      // Name what we cannot model rather than deleting it: an empty paints array
+      // must mean "nothing is painted", never "there is a paint we could not
+      // describe". figmaType keeps Figma's own SCREAMING_SNAKE spelling because
+      // it is a foreign identifier, not a value in this protocol's vocabulary.
+      const figmaType = string(paint.type)
+      // A paint whose type is absent or not a string never claimed to be a paint,
+      // so a marker there would invent one.
+      return figmaType === "" ? undefined : { type: "unsupported", figmaType }
+    }
   }
 }
 
@@ -214,6 +247,10 @@ export function effects(value: unknown): EffectValue[] {
   const result: EffectValue[] = []
   for (const effect of array(value)) {
     const source = record(effect)
+    // Same rule as toPaint: an effect toggled off in Figma is still in
+    // node.effects, and reporting it is what produced false "missing shadow"
+    // findings against correct implementations.
+    if (!boolean(source.visible, true)) continue
     const offset = record(source.offset)
     switch (source.type) {
       case "DROP_SHADOW":
@@ -234,12 +271,27 @@ export function effects(value: unknown): EffectValue[] {
           radius: finite(source.radius),
         })
         break
-      default:
+      default: {
+        // Figma's NOISE and TEXTURE effects land here, as will anything added
+        // later. Same rule as toPaint: an empty effects array must mean "nothing
+        // renders", never "we could not describe what does".
+        const figmaType = string(source.type)
+        if (figmaType !== "") result.push({ type: "unsupported", figmaType })
         break
+      }
     }
   }
   return result
 }
+
+// All four Figma gradient types carry the same {gradientStops, gradientTransform}
+// shape, so they differ only in name.
+const GRADIENT_TYPES = {
+  GRADIENT_LINEAR: "linearGradient",
+  GRADIENT_RADIAL: "radialGradient",
+  GRADIENT_ANGULAR: "angularGradient",
+  GRADIENT_DIAMOND: "diamondGradient",
+} as const
 
 const STROKE_ALIGNS: Record<string, StrokeAlign> = {
   INSIDE: "inside",
@@ -251,11 +303,18 @@ const STROKE_ALIGNS: Record<string, StrokeAlign> = {
 function strokes(node: UnknownRecord): StrokeValue | undefined {
   const rawStrokes = hostGet(node, "strokes")
   // Gate on the raw stroke list (or a mixed marker), not the parsed paint count: a
-  // paint type toPaint() cannot model (e.g. GRADIENT_ANGULAR) parses to nothing,
+  // paint type toPaint() cannot model (e.g. VIDEO) parses to a marker or nothing,
   // but the node still has a visible border, so weight/align/dashPattern must
-  // still be reported with an empty paints array rather than the whole field
-  // disappearing.
-  if (!isMixed(rawStrokes) && array(rawStrokes).length === 0) return undefined
+  // still be reported rather than the whole field disappearing.
+  //
+  // Count only strokes that are switched on. Since hidden paints are dropped, a
+  // node whose every stroke is off would otherwise report a live weight and align
+  // beside an empty paints array — an assertion that a border exists when none
+  // does, which is the bug this gate now has to avoid rather than cause.
+  const liveStrokes = array(rawStrokes).filter((stroke) =>
+    boolean(record(stroke).visible, true),
+  )
+  if (!isMixed(rawStrokes) && liveStrokes.length === 0) return undefined
   const strokePaints = paints(rawStrokes)
   const value: StrokeValue = { paints: strokePaints }
   const weight = optionalFinite(hostGet(node, "strokeWeight"))
@@ -440,21 +499,11 @@ function getStyledRanges(node: UnknownRecord) {
 }
 
 function geometry(node: UnknownRecord) {
-  const transform = array(hostGet(node, "absoluteTransform"))
-  const row0 = array(transform[0])
-  const row1 = array(transform[1])
   const bounds = record(hostGet(node, "absoluteBoundingBox"))
   const result = {
     rotation: finite(hostGet(node, "rotation")),
     opacity: finite(hostGet(node, "opacity"), 1),
-    transform: {
-      m00: finite(row0[0], 1),
-      m01: finite(row0[1]),
-      m02: finite(row0[2]),
-      m10: finite(row1[0]),
-      m11: finite(row1[1], 1),
-      m12: finite(row1[2]),
-    },
+    transform: toTransform(hostGet(node, "absoluteTransform")),
   }
   if (own(bounds, "x") && own(bounds, "y")) {
     return {

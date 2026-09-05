@@ -506,15 +506,32 @@ function parsePaint(value: unknown, label: string): PaintValue {
       }
     }
     case "linearGradient":
-    case "radialGradient": {
-      const gradient = exact(object, label, ["type", "stops"])
+    case "radialGradient":
+    case "angularGradient":
+    case "diamondGradient": {
+      const gradient = exact(object, label, [
+        "type",
+        "stops",
+        "gradientTransform",
+        "opacity",
+      ])
       return {
         type: object.type,
         stops: arrayOf(gradient.stops, `${label}.stops`, parseGradientStop),
+        gradientTransform: parseTransform(
+          gradient.gradientTransform,
+          `${label}.gradientTransform`,
+        ),
+        opacity: finite(gradient.opacity, `${label}.opacity`),
       }
     }
     case "image": {
-      const image = exact(object, label, ["type", "imageRef", "scaleMode"])
+      const image = exact(object, label, [
+        "type",
+        "imageRef",
+        "scaleMode",
+        "opacity",
+      ])
       return {
         type: "image",
         imageRef: string(image.imageRef, `${label}.imageRef`),
@@ -523,11 +540,19 @@ function parsePaint(value: unknown, label: string): PaintValue {
           ["fill", "fit", "crop", "tile"],
           `${label}.scaleMode`,
         ),
+        opacity: finite(image.opacity, `${label}.opacity`),
       }
     }
     case "mixed":
       exact(object, label, ["type"])
       return { type: "mixed" }
+    case "unsupported": {
+      const unsupported = exact(object, label, ["type", "figmaType"])
+      return {
+        type: "unsupported",
+        figmaType: string(unsupported.figmaType, `${label}.figmaType`),
+      }
+    }
     default:
       return fail(`${label}.type is not allowed`)
   }
@@ -561,6 +586,13 @@ function parseEffect(value: unknown, label: string): EffectValue {
       return {
         type: object.type,
         radius: finite(blur.radius, `${label}.radius`),
+      }
+    }
+    case "unsupported": {
+      const unsupported = exact(object, label, ["type", "figmaType"])
+      return {
+        type: "unsupported",
+        figmaType: string(unsupported.figmaType, `${label}.figmaType`),
       }
     }
     default:

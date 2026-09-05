@@ -10,7 +10,7 @@ mod tools_catalog;
 use figma_dev_mcp_broker::PLUGIN_PROTOCOL_VERSION;
 use figma_dev_mcp_protocol::{
     domain::{
-        AxisAlign, ComponentValue, ConnectionId, CornerRadiusValue, DesignNode,
+        AxisAlign, ComponentValue, ConnectionId, CornerRadiusValue, DesignNode, EffectValue,
         GetDesignContextResult, GetDevModeDataResult, GetMotionResult, GetNodesResult,
         GetReactionsResult, GetSelectionResult, InstanceValue, ItemIdentifier, LayoutValue,
         LetterSpacingValue, LineHeightValue, MinimalNodeDetails, NodeForest, NodeId, NodeTypeList,
@@ -1046,7 +1046,7 @@ fn unknown_fields_are_rejected_at_nested_boundaries() {
 #[test]
 fn nested_enum_fields_are_camel_case_and_input_bounds_are_schema_backed() {
     let paint: PaintValue = serde_json::from_value(json!({
-        "type": "image", "imageRef": "image-1", "scaleMode": "fill"
+        "type": "image", "imageRef": "image-1", "scaleMode": "fill", "opacity": 1.0
     }))
     .unwrap();
     let paint = serde_json::to_value(paint).unwrap();
@@ -1474,7 +1474,96 @@ fn nested_returned_value_collections_reject_more_than_the_result_limit() {
     assert!(
         serde_json::from_value::<PaintValue>(json!({
             "type": "linearGradient",
-            "stops": vec![gradient_stop; MAX_RETURNED_NODES + 1]
+            "stops": vec![gradient_stop; MAX_RETURNED_NODES + 1],
+            "gradientTransform": {"m00": 1.0, "m01": 0.0, "m02": 0.0,
+                                  "m10": 0.0, "m11": 1.0, "m12": 0.0},
+            "opacity": 1.0
+        }))
+        .is_err()
+    );
+}
+
+#[test]
+fn gradient_and_image_paints_carry_opacity_and_direction() {
+    let gradient: PaintValue = serde_json::from_value(json!({
+        "type": "linearGradient",
+        "stops": [{"position": 0.0, "color": {"r": 1.0, "g": 0.0, "b": 0.0, "a": 1.0}}],
+        "gradientTransform": {"m00": 0.0, "m01": 1.0, "m02": 0.0,
+                              "m10": -1.0, "m11": 0.0, "m12": 1.0},
+        "opacity": 0.4
+    }))
+    .unwrap();
+    let encoded = serde_json::to_value(gradient).unwrap();
+    assert_eq!(encoded["opacity"], 0.4);
+    assert_eq!(encoded["gradientTransform"]["m01"], 1.0);
+
+    let image: PaintValue = serde_json::from_value(json!({
+        "type": "image", "imageRef": "image-1", "scaleMode": "fill", "opacity": 0.25
+    }))
+    .unwrap();
+    assert_eq!(serde_json::to_value(image).unwrap()["opacity"], 0.25);
+}
+
+#[test]
+fn angular_and_diamond_gradients_are_first_class_paints() {
+    let transform = json!({"m00": 1.0, "m01": 0.0, "m02": 0.0,
+                           "m10": 0.0, "m11": 1.0, "m12": 0.0});
+    let stops = json!([{"position": 0.0, "color": {"r": 1.0, "g": 1.0, "b": 1.0, "a": 1.0}}]);
+
+    for tag in ["angularGradient", "diamondGradient"] {
+        let paint: PaintValue = serde_json::from_value(json!({
+            "type": tag, "stops": stops, "gradientTransform": transform, "opacity": 1.0
+        }))
+        .unwrap();
+        assert_eq!(serde_json::to_value(paint).unwrap()["type"], tag);
+    }
+}
+
+#[test]
+fn a_gradient_without_its_direction_or_opacity_is_rejected() {
+    let stops = json!([{"position": 0.0, "color": {"r": 0.0, "g": 0.0, "b": 0.0, "a": 1.0}}]);
+    let transform = json!({"m00": 1.0, "m01": 0.0, "m02": 0.0,
+                           "m10": 0.0, "m11": 1.0, "m12": 0.0});
+    assert!(
+        serde_json::from_value::<PaintValue>(json!({
+            "type": "linearGradient", "stops": stops, "opacity": 1.0
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<PaintValue>(json!({
+            "type": "linearGradient", "stops": stops, "gradientTransform": transform
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<PaintValue>(json!({
+            "type": "image", "imageRef": "i", "scaleMode": "fill"
+        }))
+        .is_err()
+    );
+}
+
+#[test]
+fn a_gradient_transform_belongs_only_to_gradients() {
+    let transform = json!({"m00": 1.0, "m01": 0.0, "m02": 0.0,
+                           "m10": 0.0, "m11": 1.0, "m12": 0.0});
+    assert!(
+        serde_json::from_value::<PaintValue>(json!({
+            "type": "solid",
+            "color": {"r": 0.0, "g": 0.0, "b": 0.0, "a": 1.0},
+            "opacity": 1.0,
+            "gradientTransform": transform
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<PaintValue>(json!({
+            "type": "image",
+            "imageRef": "i",
+            "scaleMode": "fill",
+            "opacity": 1.0,
+            "gradientTransform": transform
         }))
         .is_err()
     );
@@ -2945,7 +3034,7 @@ const WIRE_SNAPSHOTS: [&str; 3] = [
 
 /// The fingerprint of `WIRE_SNAPSHOTS` at the current wire version, over
 /// LF-normalised bytes so it does not depend on the checkout's line endings.
-const EXPECTED_WIRE_FINGERPRINT: &str = "0xa1a8bc15be026c45";
+const EXPECTED_WIRE_FINGERPRINT: &str = "0xaebcb22af45c3699";
 
 /// FNV-1a, 64-bit, over the three snapshots in order, separated by a byte that
 /// cannot occur in UTF-8 so moving text between two files still changes it.
@@ -3035,5 +3124,88 @@ fn a_wire_snapshot_change_must_be_a_deliberate_version_decision() {
          together, then update EXPECTED_WIRE_FINGERPRINT.\n\
          If it is only a description or documentation edit, update \
          EXPECTED_WIRE_FINGERPRINT alone.\n"
+    );
+}
+
+#[test]
+fn an_unsupported_paint_names_its_figma_type() {
+    let paint: PaintValue = serde_json::from_value(json!({
+        "type": "unsupported", "figmaType": "VIDEO"
+    }))
+    .unwrap();
+    let encoded = serde_json::to_value(paint).unwrap();
+    assert_eq!(encoded["figmaType"], "VIDEO");
+
+    assert!(serde_json::from_value::<PaintValue>(json!({"type": "unsupported"})).is_err());
+    assert!(
+        serde_json::from_value::<PaintValue>(json!({
+            "type": "unsupported", "figmaType": "VIDEO", "opacity": 1.0
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<PaintValue>(json!({
+            "type": "solid",
+            "color": {"r": 0.0, "g": 0.0, "b": 0.0, "a": 1.0},
+            "opacity": 1.0,
+            "figmaType": "VIDEO"
+        }))
+        .is_err()
+    );
+}
+
+#[test]
+fn an_unsupported_effect_names_its_figma_type_and_needs_no_radius() {
+    // Regression guard: visit_map used to require `radius` for every effect
+    // variant before it looked at the tag, so an unsupported effect would have
+    // been rejected for a field it does not have.
+    let effect: EffectValue = serde_json::from_value(json!({
+        "type": "unsupported", "figmaType": "NOISE"
+    }))
+    .unwrap();
+    assert_eq!(serde_json::to_value(effect).unwrap()["figmaType"], "NOISE");
+
+    assert!(serde_json::from_value::<EffectValue>(json!({"type": "unsupported"})).is_err());
+    assert!(
+        serde_json::from_value::<EffectValue>(json!({
+            "type": "unsupported", "figmaType": "NOISE", "radius": 4.0
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<EffectValue>(json!({
+            "type": "layerBlur", "radius": 4.0, "figmaType": "NOISE"
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<EffectValue>(json!({
+            "type": "unsupported",
+            "figmaType": "NOISE",
+            "color": {"r": 0.0, "g": 0.0, "b": 0.0, "a": 1.0}
+        }))
+        .is_err()
+    );
+}
+
+#[test]
+fn modelled_effects_still_require_their_own_fields() {
+    assert!(serde_json::from_value::<EffectValue>(json!({"type": "layerBlur"})).is_err());
+    assert!(
+        serde_json::from_value::<EffectValue>(json!({
+            "type": "dropShadow",
+            "color": {"r": 0.0, "g": 0.0, "b": 0.0, "a": 1.0},
+            "offsetX": 0.0, "offsetY": 2.0, "spread": 0.0
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<EffectValue>(json!({
+            "type": "dropShadow",
+            "color": {"r": 0.0, "g": 0.0, "b": 0.0, "a": 1.0},
+            "offsetX": 0.0, "offsetY": 2.0, "radius": 4.0, "spread": 0.0,
+            "figmaType": "NOISE"
+        }))
+        .is_err()
     );
 }

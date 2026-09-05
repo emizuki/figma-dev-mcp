@@ -844,25 +844,46 @@ pub enum PaintValue {
     },
     LinearGradient {
         stops: ReturnedList<GradientStop>,
+        gradient_transform: Transform2D,
+        opacity: f64,
     },
     RadialGradient {
         stops: ReturnedList<GradientStop>,
+        gradient_transform: Transform2D,
+        opacity: f64,
+    },
+    AngularGradient {
+        stops: ReturnedList<GradientStop>,
+        gradient_transform: Transform2D,
+        opacity: f64,
+    },
+    DiamondGradient {
+        stops: ReturnedList<GradientStop>,
+        gradient_transform: Transform2D,
+        opacity: f64,
     },
     Image {
         image_ref: String,
         scale_mode: ImageScaleMode,
+        opacity: f64,
     },
     Mixed,
+    Unsupported {
+        figma_type: String,
+    },
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone, Copy)]
 #[serde(rename_all = "camelCase")]
 enum PaintTag {
     Solid,
     LinearGradient,
     RadialGradient,
+    AngularGradient,
+    DiamondGradient,
     Image,
     Mixed,
+    Unsupported,
 }
 
 #[derive(Deserialize)]
@@ -872,8 +893,10 @@ enum PaintField {
     Color,
     Opacity,
     Stops,
+    GradientTransform,
     ImageRef,
     ScaleMode,
+    FigmaType,
 }
 
 impl<'de> Deserialize<'de> for PaintValue {
@@ -902,8 +925,10 @@ impl<'de> Visitor<'de> for PaintVisitor {
         let mut color = None;
         let mut opacity = None;
         let mut stops = None;
+        let mut gradient_transform = None;
         let mut image_ref = None;
         let mut scale_mode = None;
+        let mut figma_type = None;
         while let Some(field) = map.next_key::<PaintField>()? {
             match field {
                 PaintField::Type => {
@@ -920,6 +945,11 @@ impl<'de> Visitor<'de> for PaintVisitor {
                     map.next_value::<ReturnedList<GradientStop>>()?,
                     "stops",
                 )?,
+                PaintField::GradientTransform => set_field_once(
+                    &mut gradient_transform,
+                    map.next_value::<Transform2D>()?,
+                    "gradientTransform",
+                )?,
                 PaintField::ImageRef => {
                     set_field_once(&mut image_ref, map.next_value::<String>()?, "imageRef")?
                 }
@@ -928,11 +958,20 @@ impl<'de> Visitor<'de> for PaintVisitor {
                     map.next_value::<ImageScaleMode>()?,
                     "scaleMode",
                 )?,
+                PaintField::FigmaType => {
+                    set_field_once(&mut figma_type, map.next_value::<String>()?, "figmaType")?
+                }
             }
         }
-        match tag.ok_or_else(|| A::Error::missing_field("type"))? {
+        let tag = tag.ok_or_else(|| A::Error::missing_field("type"))?;
+        match tag {
             PaintTag::Solid => {
-                if stops.is_some() || image_ref.is_some() || scale_mode.is_some() {
+                if stops.is_some()
+                    || gradient_transform.is_some()
+                    || image_ref.is_some()
+                    || scale_mode.is_some()
+                    || figma_type.is_some()
+                {
                     return Err(A::Error::custom("solid paint contains variant-only fields"));
                 }
                 Ok(PaintValue::Solid {
@@ -940,54 +979,96 @@ impl<'de> Visitor<'de> for PaintVisitor {
                     opacity: opacity.ok_or_else(|| A::Error::missing_field("opacity"))?,
                 })
             }
-            PaintTag::LinearGradient => {
+            PaintTag::LinearGradient
+            | PaintTag::RadialGradient
+            | PaintTag::AngularGradient
+            | PaintTag::DiamondGradient => {
                 if color.is_some()
-                    || opacity.is_some()
                     || image_ref.is_some()
                     || scale_mode.is_some()
+                    || figma_type.is_some()
                 {
                     return Err(A::Error::custom(
                         "gradient paint contains variant-only fields",
                     ));
                 }
                 let stops = stops.ok_or_else(|| A::Error::missing_field("stops"))?;
-                Ok(PaintValue::LinearGradient { stops })
-            }
-            PaintTag::RadialGradient => {
-                if color.is_some()
-                    || opacity.is_some()
-                    || image_ref.is_some()
-                    || scale_mode.is_some()
-                {
-                    return Err(A::Error::custom(
-                        "gradient paint contains variant-only fields",
-                    ));
-                }
-                Ok(PaintValue::RadialGradient {
-                    stops: stops.ok_or_else(|| A::Error::missing_field("stops"))?,
+                let gradient_transform = gradient_transform
+                    .ok_or_else(|| A::Error::missing_field("gradientTransform"))?;
+                let opacity = opacity.ok_or_else(|| A::Error::missing_field("opacity"))?;
+                // Name every gradient tag. A wildcard here compiles just as well
+                // and is how a future fifth gradient type silently decodes as a
+                // diamond: adding it to the outer pattern above would be enough to
+                // build. `unreachable!` is only for the non-gradient tags the outer
+                // match already excluded.
+                Ok(match tag {
+                    PaintTag::LinearGradient => PaintValue::LinearGradient {
+                        stops,
+                        gradient_transform,
+                        opacity,
+                    },
+                    PaintTag::RadialGradient => PaintValue::RadialGradient {
+                        stops,
+                        gradient_transform,
+                        opacity,
+                    },
+                    PaintTag::AngularGradient => PaintValue::AngularGradient {
+                        stops,
+                        gradient_transform,
+                        opacity,
+                    },
+                    PaintTag::DiamondGradient => PaintValue::DiamondGradient {
+                        stops,
+                        gradient_transform,
+                        opacity,
+                    },
+                    _ => unreachable!("outer match narrowed tag to gradients"),
                 })
             }
             PaintTag::Image => {
-                if color.is_some() || opacity.is_some() || stops.is_some() {
+                if color.is_some()
+                    || stops.is_some()
+                    || gradient_transform.is_some()
+                    || figma_type.is_some()
+                {
                     return Err(A::Error::custom("image paint contains variant-only fields"));
                 }
                 Ok(PaintValue::Image {
                     image_ref: image_ref.ok_or_else(|| A::Error::missing_field("imageRef"))?,
                     scale_mode: scale_mode.ok_or_else(|| A::Error::missing_field("scaleMode"))?,
+                    opacity: opacity.ok_or_else(|| A::Error::missing_field("opacity"))?,
                 })
             }
             PaintTag::Mixed => {
                 if color.is_some()
                     || opacity.is_some()
                     || stops.is_some()
+                    || gradient_transform.is_some()
                     || image_ref.is_some()
                     || scale_mode.is_some()
+                    || figma_type.is_some()
                 {
                     return Err(A::Error::custom(
                         "mixed paint cannot contain payload fields",
                     ));
                 }
                 Ok(PaintValue::Mixed)
+            }
+            PaintTag::Unsupported => {
+                if color.is_some()
+                    || opacity.is_some()
+                    || stops.is_some()
+                    || gradient_transform.is_some()
+                    || image_ref.is_some()
+                    || scale_mode.is_some()
+                {
+                    return Err(A::Error::custom(
+                        "unsupported paint cannot contain payload fields",
+                    ));
+                }
+                Ok(PaintValue::Unsupported {
+                    figma_type: figma_type.ok_or_else(|| A::Error::missing_field("figmaType"))?,
+                })
             }
         }
     }
@@ -1049,15 +1130,19 @@ pub enum EffectValue {
     BackgroundBlur {
         radius: f64,
     },
+    Unsupported {
+        figma_type: String,
+    },
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone, Copy)]
 #[serde(rename_all = "camelCase")]
 enum EffectTag {
     DropShadow,
     InnerShadow,
     LayerBlur,
     BackgroundBlur,
+    Unsupported,
 }
 
 #[derive(Deserialize)]
@@ -1069,6 +1154,7 @@ enum EffectField {
     OffsetY,
     Radius,
     Spread,
+    FigmaType,
 }
 
 impl<'de> Deserialize<'de> for EffectValue {
@@ -1099,6 +1185,7 @@ impl<'de> Visitor<'de> for EffectVisitor {
         let mut offset_y = None;
         let mut radius = None;
         let mut spread = None;
+        let mut figma_type = None;
         while let Some(field) = map.next_key::<EffectField>()? {
             match field {
                 EffectField::Type => {
@@ -1119,47 +1206,99 @@ impl<'de> Visitor<'de> for EffectVisitor {
                 EffectField::Spread => {
                     set_field_once(&mut spread, map.next_value::<f64>()?, "spread")?
                 }
+                EffectField::FigmaType => {
+                    set_field_once(&mut figma_type, map.next_value::<String>()?, "figmaType")?
+                }
             }
         }
-        let radius = radius.ok_or_else(|| A::Error::missing_field("radius"))?;
-        match tag.ok_or_else(|| A::Error::missing_field("type"))? {
-            EffectTag::DropShadow => Ok(EffectValue::DropShadow {
-                color: color.ok_or_else(|| A::Error::missing_field("color"))?,
-                offset_x: offset_x.ok_or_else(|| A::Error::missing_field("offsetX"))?,
-                offset_y: offset_y.ok_or_else(|| A::Error::missing_field("offsetY"))?,
-                radius,
-                spread: spread.ok_or_else(|| A::Error::missing_field("spread"))?,
-            }),
-            EffectTag::InnerShadow => Ok(EffectValue::InnerShadow {
-                color: color.ok_or_else(|| A::Error::missing_field("color"))?,
-                offset_x: offset_x.ok_or_else(|| A::Error::missing_field("offsetX"))?,
-                offset_y: offset_y.ok_or_else(|| A::Error::missing_field("offsetY"))?,
-                radius,
-                spread: spread.ok_or_else(|| A::Error::missing_field("spread"))?,
-            }),
-            EffectTag::LayerBlur => {
-                reject_shadow_fields::<A::Error>(color, offset_x, offset_y, spread)?;
-                Ok(EffectValue::LayerBlur { radius })
+        let tag = tag.ok_or_else(|| A::Error::missing_field("type"))?;
+        match tag {
+            EffectTag::DropShadow | EffectTag::InnerShadow => {
+                if figma_type.is_some() {
+                    return Err(A::Error::custom("shadow effect cannot name a figma type"));
+                }
+                let color = color.ok_or_else(|| A::Error::missing_field("color"))?;
+                let offset_x = offset_x.ok_or_else(|| A::Error::missing_field("offsetX"))?;
+                let offset_y = offset_y.ok_or_else(|| A::Error::missing_field("offsetY"))?;
+                let radius = radius.ok_or_else(|| A::Error::missing_field("radius"))?;
+                let spread = spread.ok_or_else(|| A::Error::missing_field("spread"))?;
+                // Name every shadow tag. A wildcard here compiles just as well and
+                // is how a future third shadow tag silently decodes as an inner
+                // shadow: adding it to the outer pattern above would be enough to
+                // build. `unreachable!` is only for the non-shadow tags the outer
+                // match already excluded.
+                Ok(match tag {
+                    EffectTag::DropShadow => EffectValue::DropShadow {
+                        color,
+                        offset_x,
+                        offset_y,
+                        radius,
+                        spread,
+                    },
+                    EffectTag::InnerShadow => EffectValue::InnerShadow {
+                        color,
+                        offset_x,
+                        offset_y,
+                        radius,
+                        spread,
+                    },
+                    _ => unreachable!("outer match narrowed tag to shadows"),
+                })
             }
-            EffectTag::BackgroundBlur => {
-                reject_shadow_fields::<A::Error>(color, offset_x, offset_y, spread)?;
-                Ok(EffectValue::BackgroundBlur { radius })
+            EffectTag::LayerBlur | EffectTag::BackgroundBlur => {
+                reject_fields_the_variant_does_not_carry::<A::Error>(
+                    color, offset_x, offset_y, spread, figma_type,
+                )?;
+                let radius = radius.ok_or_else(|| A::Error::missing_field("radius"))?;
+                // Name every blur tag. A wildcard here compiles just as well and
+                // is how a future third blur tag silently decodes as a background
+                // blur: adding it to the outer pattern above would be enough to
+                // build. `unreachable!` is only for the non-blur tags the outer
+                // match already excluded.
+                Ok(match tag {
+                    EffectTag::LayerBlur => EffectValue::LayerBlur { radius },
+                    EffectTag::BackgroundBlur => EffectValue::BackgroundBlur { radius },
+                    _ => unreachable!("outer match narrowed tag to blurs"),
+                })
+            }
+            EffectTag::Unsupported => {
+                if color.is_some()
+                    || offset_x.is_some()
+                    || offset_y.is_some()
+                    || radius.is_some()
+                    || spread.is_some()
+                {
+                    return Err(A::Error::custom(
+                        "unsupported effect cannot contain payload fields",
+                    ));
+                }
+                Ok(EffectValue::Unsupported {
+                    figma_type: figma_type.ok_or_else(|| A::Error::missing_field("figmaType"))?,
+                })
             }
         }
     }
 }
 
-fn reject_shadow_fields<E>(
+fn reject_fields_the_variant_does_not_carry<E>(
     color: Option<Color>,
     offset_x: Option<f64>,
     offset_y: Option<f64>,
     spread: Option<f64>,
+    figma_type: Option<String>,
 ) -> Result<(), E>
 where
     E: serde::de::Error,
 {
-    if color.is_some() || offset_x.is_some() || offset_y.is_some() || spread.is_some() {
-        return Err(E::custom("blur effect cannot contain shadow-only fields"));
+    if color.is_some()
+        || offset_x.is_some()
+        || offset_y.is_some()
+        || spread.is_some()
+        || figma_type.is_some()
+    {
+        return Err(E::custom(
+            "effect contains fields its variant does not carry",
+        ));
     }
     Ok(())
 }

@@ -1,6 +1,6 @@
 {
   "type": "hello",
-  "protocolVersion": "2",
+  "protocolVersion": "3",
   "connectionId": "123e4567-e89b-42d3-a456-426614174000",
   "displayName": "Quynh's Figma",
   "fileKey": "example-file-key",

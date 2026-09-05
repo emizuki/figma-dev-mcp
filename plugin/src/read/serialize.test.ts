@@ -8,9 +8,12 @@ import {
   collectInstanceIdentities,
   collectStyleNames,
   collectVariableNames,
+  effects,
   namedComponentProperties,
+  paints,
   serializeNodeForest,
   TEXT_CLAMP_LIMIT,
+  textStyle,
   walkNodeForest,
 } from "./serialize"
 
@@ -748,9 +751,9 @@ describe("bounded node serializer", () => {
     expect(Object.hasOwn(data, "strokes")).toBe(false)
   })
 
-  test("an unmodelled stroke paint type still reports weight, align, and an empty paints array", () => {
+  test("an unmodelled stroke paint type still reports weight, align, and an unsupported paint marker", () => {
     const node = base({
-      strokes: [{ type: "GRADIENT_ANGULAR", gradientStops: [] }],
+      strokes: [{ type: "VIDEO", gradientStops: [] }],
       strokeWeight: 3,
       strokeAlign: "OUTSIDE",
     })
@@ -763,7 +766,11 @@ describe("bounded node serializer", () => {
       }).nodes[0]?.data as { strokes?: Record<string, unknown> }
     ).strokes
 
-    expect(strokes).toMatchObject({ paints: [], weight: 3, align: "outside" })
+    expect(strokes).toMatchObject({
+      paints: [{ type: "unsupported", figmaType: "VIDEO" }],
+      weight: 3,
+      align: "outside",
+    })
   })
 
   test("throwing stroke getters leave the node serializable", () => {
@@ -2002,5 +2009,366 @@ describe("text clamp helper", () => {
         assertStyle(style)
       },
     )
+  })
+})
+
+describe("hidden effects and paints are not reported", () => {
+  test("drops an effect whose visible is false, keeping its live neighbour", () => {
+    const result = effects([
+      {
+        type: "DROP_SHADOW",
+        color: { r: 0, g: 0, b: 0, a: 0.5 },
+        offset: { x: 1, y: 2 },
+        radius: 4,
+        spread: 1,
+        visible: false,
+      },
+      {
+        type: "DROP_SHADOW",
+        color: { r: 0, g: 0, b: 0, a: 0.25 },
+        offset: { x: 0, y: 8 },
+        radius: 16,
+        spread: 2,
+        visible: true,
+      },
+    ])
+
+    expect(result).toEqual([
+      {
+        type: "dropShadow",
+        color: { r: 0, g: 0, b: 0, a: 0.25 },
+        offsetX: 0,
+        offsetY: 8,
+        radius: 16,
+        spread: 2,
+      },
+    ])
+  })
+
+  test("treats an absent visible as visible, matching the Figma default", () => {
+    const result = effects([{ type: "LAYER_BLUR", radius: 4 }])
+    expect(result).toEqual([{ type: "layerBlur", radius: 4 }])
+  })
+
+  test("drops a hidden fill and keeps a live one", () => {
+    const result = paints([
+      { type: "SOLID", color: { r: 1, g: 0, b: 0, a: 1 }, visible: false },
+      { type: "SOLID", color: { r: 0, g: 1, b: 0, a: 1 }, visible: true },
+    ])
+
+    expect(result).toEqual([
+      { type: "solid", color: { r: 0, g: 1, b: 0, a: 1 }, opacity: 1 },
+    ])
+  })
+
+  test("drops a hidden fill from a text style", () => {
+    const style = textStyle({
+      fontName: { family: "Inter", style: "Regular" },
+      fills: [
+        { type: "SOLID", color: { r: 1, g: 0, b: 0, a: 1 }, visible: false },
+      ],
+    })
+    expect(style.paints).toEqual([])
+  })
+})
+
+describe("stroke reporting follows stroke visibility", () => {
+  const nodeWithStrokes = (strokes: unknown[]) =>
+    base({
+      strokes,
+      strokeWeight: 1,
+      strokeAlign: "OUTSIDE",
+    })
+
+  const fullData = (node: Record<string, unknown>) =>
+    serializeNodeForest([node], {
+      detail: "full",
+      depth: 0,
+      dedupeComponents: false,
+    }).nodes[0]?.data as { strokes?: Record<string, unknown> } | undefined
+
+  test("omits strokes entirely when every stroke is hidden", () => {
+    const data = fullData(
+      nodeWithStrokes([
+        { type: "SOLID", color: { r: 0, g: 0, b: 0, a: 1 }, visible: false },
+      ]),
+    )
+    expect(data?.strokes).toBeUndefined()
+  })
+
+  test("keeps weight and align when only some strokes are hidden", () => {
+    const data = fullData(
+      nodeWithStrokes([
+        { type: "SOLID", color: { r: 1, g: 0, b: 0, a: 1 }, visible: false },
+        { type: "SOLID", color: { r: 0, g: 0, b: 1, a: 1 }, visible: true },
+      ]),
+    )
+    expect(data?.strokes).toEqual({
+      paints: [
+        { type: "solid", color: { r: 0, g: 0, b: 1, a: 1 }, opacity: 1 },
+      ],
+      weight: 1,
+      align: "outside",
+    })
+  })
+
+  test("still reports a visible stroke whose paint type cannot be modelled", () => {
+    const data = fullData(nodeWithStrokes([{ type: "VIDEO", visible: true }]))
+    expect(data?.strokes).toMatchObject({ weight: 1, align: "outside" })
+  })
+})
+
+describe("non-solid paints keep their opacity and direction", () => {
+  const gradientTransform = [
+    [0, 1, 0],
+    [-1, 0, 1],
+  ]
+
+  test("a linear gradient reports opacity and gradientTransform", () => {
+    expect(
+      paints([
+        {
+          type: "GRADIENT_LINEAR",
+          opacity: 0.4,
+          gradientTransform,
+          gradientStops: [
+            { position: 0, color: { r: 1, g: 0, b: 0, a: 1 } },
+            { position: 1, color: { r: 0, g: 0, b: 1, a: 1 } },
+          ],
+        },
+      ]),
+    ).toEqual([
+      {
+        type: "linearGradient",
+        opacity: 0.4,
+        gradientTransform: { m00: 0, m01: 1, m02: 0, m10: -1, m11: 0, m12: 1 },
+        stops: [
+          { position: 0, color: { r: 1, g: 0, b: 0, a: 1 } },
+          { position: 1, color: { r: 0, g: 0, b: 1, a: 1 } },
+        ],
+      },
+    ])
+  })
+
+  test("an image paint reports opacity", () => {
+    expect(
+      paints([
+        { type: "IMAGE", imageHash: "img-1", scaleMode: "FIT", opacity: 0.25 },
+      ]),
+    ).toEqual([
+      { type: "image", imageRef: "img-1", scaleMode: "fit", opacity: 0.25 },
+    ])
+  })
+
+  test("an absent opacity defaults to 1, as it already does for solid", () => {
+    const [gradient] = paints([
+      { type: "GRADIENT_RADIAL", gradientTransform, gradientStops: [] },
+    ])
+    expect(gradient).toMatchObject({ type: "radialGradient", opacity: 1 })
+  })
+
+  test("an absent gradientTransform falls back to identity", () => {
+    const [gradient] = paints([{ type: "GRADIENT_LINEAR", gradientStops: [] }])
+    expect(gradient).toMatchObject({
+      gradientTransform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+    })
+  })
+})
+
+describe("new paint and effect shapes survive the wire validator", () => {
+  const observation = {
+    startedAt: "2024-01-01T00:00:00.000Z",
+    completedAt: "2024-01-01T00:00:00.000Z",
+  }
+
+  // Shared by the tests below: serializes a node at full detail and runs the
+  // result through the wire validator.
+  const validatedFullData = (node: Record<string, unknown>) => {
+    const forest = serializeNodeForest([node], {
+      detail: "full",
+      depth: 0,
+      dedupeComponents: false,
+    })
+    const validated = parseReadResult({
+      operation: "get_selection",
+      result: {
+        detail: "full",
+        nodes: forest.nodes,
+        truncated: forest.truncated,
+        observation,
+      },
+    })
+    const result = validated.result as unknown as {
+      nodes: readonly { data: Record<string, unknown> }[]
+    }
+    return result.nodes[0]?.data
+  }
+
+  test("a gradient and image fill pass parseReadResult intact", () => {
+    const data = validatedFullData(
+      base({
+        fills: [
+          {
+            type: "GRADIENT_LINEAR",
+            opacity: 0.4,
+            gradientTransform: [
+              [0, 1, 0],
+              [-1, 0, 1],
+            ],
+            gradientStops: [{ position: 0, color: { r: 1, g: 0, b: 0, a: 1 } }],
+          },
+          {
+            type: "IMAGE",
+            imageHash: "img-1",
+            scaleMode: "FIT",
+            opacity: 0.25,
+          },
+        ],
+      }),
+    )
+    expect(data?.paints).toMatchObject([
+      { type: "linearGradient", opacity: 0.4 },
+      { type: "image", opacity: 0.25 },
+    ])
+  })
+
+  test("an angular gradient passes parseReadResult intact", () => {
+    const data = validatedFullData(
+      base({
+        fills: [
+          {
+            type: "GRADIENT_ANGULAR",
+            opacity: 1,
+            gradientTransform: [
+              [1, 0, 0],
+              [0, 1, 0],
+            ],
+            gradientStops: [{ position: 0, color: { r: 1, g: 1, b: 1, a: 1 } }],
+          },
+        ],
+      }),
+    )
+    expect(data?.paints).toMatchObject([{ type: "angularGradient" }])
+  })
+
+  test("a diamond gradient passes parseReadResult intact", () => {
+    const data = validatedFullData(
+      base({
+        fills: [
+          {
+            type: "GRADIENT_DIAMOND",
+            opacity: 1,
+            gradientTransform: [
+              [1, 0, 0],
+              [0, 1, 0],
+            ],
+            gradientStops: [{ position: 0, color: { r: 1, g: 1, b: 1, a: 1 } }],
+          },
+        ],
+      }),
+    )
+    expect(data?.paints).toMatchObject([{ type: "diamondGradient" }])
+  })
+
+  test("an unsupported paint passes parseReadResult intact", () => {
+    const data = validatedFullData(base({ fills: [{ type: "VIDEO" }] }))
+    expect(data?.paints).toEqual([{ type: "unsupported", figmaType: "VIDEO" }])
+  })
+
+  test("an unsupported effect passes parseReadResult intact", () => {
+    const data = validatedFullData(base({ effects: [{ type: "NOISE" }] }))
+    expect(data?.effects).toEqual([{ type: "unsupported", figmaType: "NOISE" }])
+  })
+})
+
+describe("an effect the serializer cannot model is named, not erased", () => {
+  test("an unknown effect type becomes an unsupported marker", () => {
+    expect(effects([{ type: "NOISE", noiseSize: 4 }])).toEqual([
+      { type: "unsupported", figmaType: "NOISE" },
+    ])
+  })
+
+  test("a hidden unmodellable effect is dropped, not marked", () => {
+    expect(effects([{ type: "TEXTURE", visible: false }])).toEqual([])
+  })
+
+  test("an effect with no usable type produces nothing at all", () => {
+    expect(effects([{ type: "" }, { type: 7 }, {}])).toEqual([])
+  })
+})
+
+describe("angular and diamond gradients are modelled, not discarded", () => {
+  const gradientTransform = [
+    [1, 0, 0],
+    [0, 1, 0],
+  ]
+  const gradientStops = [{ position: 0, color: { r: 1, g: 1, b: 1, a: 1 } }]
+
+  test("an angular gradient reports as angularGradient", () => {
+    expect(
+      paints([
+        {
+          type: "GRADIENT_ANGULAR",
+          gradientTransform,
+          gradientStops,
+          opacity: 1,
+        },
+      ]),
+    ).toEqual([
+      {
+        type: "angularGradient",
+        stops: [{ position: 0, color: { r: 1, g: 1, b: 1, a: 1 } }],
+        gradientTransform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+        opacity: 1,
+      },
+    ])
+  })
+
+  test("a diamond gradient reports as diamondGradient", () => {
+    const [paint] = paints([
+      {
+        type: "GRADIENT_DIAMOND",
+        gradientTransform,
+        gradientStops,
+        opacity: 0.5,
+      },
+    ])
+    expect(paint).toMatchObject({ type: "diamondGradient", opacity: 0.5 })
+  })
+
+  test("a node whose only fill is angular no longer reports an empty paints array", () => {
+    const node = base({
+      fills: [{ type: "GRADIENT_ANGULAR", gradientTransform, gradientStops }],
+    })
+    const data = serializeNodeForest([node], {
+      detail: "full",
+      depth: 0,
+      dedupeComponents: false,
+    }).nodes[0]?.data as { paints?: unknown[] }
+    expect(data?.paints).toHaveLength(1)
+  })
+})
+
+describe("a paint the serializer cannot model is named, not erased", () => {
+  test("an unknown paint type becomes an unsupported marker", () => {
+    expect(paints([{ type: "VIDEO", videoHash: "v-1" }])).toEqual([
+      { type: "unsupported", figmaType: "VIDEO" },
+    ])
+  })
+
+  test("the marker keeps Figma's raw spelling", () => {
+    const [paint] = paints([{ type: "SOME_FUTURE_PAINT" }])
+    expect(paint).toEqual({
+      type: "unsupported",
+      figmaType: "SOME_FUTURE_PAINT",
+    })
+  })
+
+  test("a hidden unmodellable paint is dropped, not marked", () => {
+    expect(paints([{ type: "VIDEO", visible: false }])).toEqual([])
+  })
+
+  test("a paint with no usable type produces nothing at all", () => {
+    expect(paints([{ type: "" }, { type: 7 }, {}])).toEqual([])
   })
 })

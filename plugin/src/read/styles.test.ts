@@ -592,4 +592,76 @@ describe("get_styles", () => {
       ),
     ).rejects.toThrow("Operation cancelled")
   })
+
+  test("drops a switched-off effect from an effect style", async () => {
+    installFigma({
+      currentPage: page("0:2", "Current"),
+      local: {
+        effect: [
+          {
+            id: "S:effect",
+            name: "Elevation",
+            type: "EFFECT",
+            description: "Elevation",
+            remote: false,
+            key: "effect-key",
+            effects: [
+              {
+                type: "DROP_SHADOW",
+                color: { r: 0, g: 0, b: 0, a: 0.4 },
+                offset: { x: 1, y: 2 },
+                radius: 4,
+                spread: 1,
+                visible: false,
+              },
+            ],
+          },
+        ],
+      },
+      forbidGetStyle: true,
+    })
+
+    const result = await getStyles({ source: "local" })
+
+    expect(result.styles[0]).toMatchObject({
+      styleType: "effect",
+      id: "S:effect",
+      effects: [],
+    })
+  })
+
+  test("drops a switched-off paint from a paint style", async () => {
+    installFigma({
+      currentPage: page("0:2", "Current"),
+      local: {
+        paint: [
+          {
+            id: "S:paint",
+            name: "Brand/Fill",
+            type: "PAINT",
+            description: "Brand fill",
+            remote: false,
+            key: "paint-key",
+            paints: [
+              {
+                type: "SOLID",
+                color: { r: 1, g: 0, b: 0, a: 1 },
+                opacity: 0.8,
+                visible: false,
+              },
+            ],
+          },
+        ],
+      },
+      forbidGetStyle: true,
+    })
+
+    const result = await getStyles({ source: "local" })
+
+    expect(result.styles[0]).toMatchObject({
+      styleType: "paint",
+      id: "S:paint",
+      paints: [],
+    })
+  })
 })
