@@ -1241,7 +1241,9 @@ impl<'de> Visitor<'de> for EffectVisitor {
                 })
             }
             EffectTag::LayerBlur | EffectTag::BackgroundBlur => {
-                reject_shadow_fields::<A::Error>(color, offset_x, offset_y, spread, figma_type)?;
+                reject_fields_the_variant_does_not_carry::<A::Error>(
+                    color, offset_x, offset_y, spread, figma_type,
+                )?;
                 let radius = radius.ok_or_else(|| A::Error::missing_field("radius"))?;
                 Ok(if matches!(tag, EffectTag::LayerBlur) {
                     EffectValue::LayerBlur { radius }
@@ -1250,12 +1252,16 @@ impl<'de> Visitor<'de> for EffectVisitor {
                 })
             }
             EffectTag::Unsupported => {
-                if radius.is_some() {
+                if color.is_some()
+                    || offset_x.is_some()
+                    || offset_y.is_some()
+                    || radius.is_some()
+                    || spread.is_some()
+                {
                     return Err(A::Error::custom(
                         "unsupported effect cannot contain payload fields",
                     ));
                 }
-                reject_shadow_fields::<A::Error>(color, offset_x, offset_y, spread, None)?;
                 Ok(EffectValue::Unsupported {
                     figma_type: figma_type.ok_or_else(|| A::Error::missing_field("figmaType"))?,
                 })
@@ -1264,7 +1270,7 @@ impl<'de> Visitor<'de> for EffectVisitor {
     }
 }
 
-fn reject_shadow_fields<E>(
+fn reject_fields_the_variant_does_not_carry<E>(
     color: Option<Color>,
     offset_x: Option<f64>,
     offset_y: Option<f64>,

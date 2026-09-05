@@ -1522,9 +1522,17 @@ fn angular_and_diamond_gradients_are_first_class_paints() {
 #[test]
 fn a_gradient_without_its_direction_or_opacity_is_rejected() {
     let stops = json!([{"position": 0.0, "color": {"r": 0.0, "g": 0.0, "b": 0.0, "a": 1.0}}]);
+    let transform = json!({"m00": 1.0, "m01": 0.0, "m02": 0.0,
+                           "m10": 0.0, "m11": 1.0, "m12": 0.0});
     assert!(
         serde_json::from_value::<PaintValue>(json!({
             "type": "linearGradient", "stops": stops, "opacity": 1.0
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<PaintValue>(json!({
+            "type": "linearGradient", "stops": stops, "gradientTransform": transform
         }))
         .is_err()
     );
@@ -3188,6 +3196,15 @@ fn modelled_effects_still_require_their_own_fields() {
             "type": "dropShadow",
             "color": {"r": 0.0, "g": 0.0, "b": 0.0, "a": 1.0},
             "offsetX": 0.0, "offsetY": 2.0, "spread": 0.0
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<EffectValue>(json!({
+            "type": "dropShadow",
+            "color": {"r": 0.0, "g": 0.0, "b": 0.0, "a": 1.0},
+            "offsetX": 0.0, "offsetY": 2.0, "radius": 4.0, "spread": 0.0,
+            "figmaType": "NOISE"
         }))
         .is_err()
     );

@@ -2181,7 +2181,8 @@ describe("new paint and effect shapes survive the wire validator", () => {
     completedAt: "2024-01-01T00:00:00.000Z",
   }
 
-  // Exported for reuse by the later paint and effect shape tasks.
+  // Shared by the tests below: serializes a node at full detail and runs the
+  // result through the wire validator.
   const validatedFullData = (node: Record<string, unknown>) => {
     const forest = serializeNodeForest([node], {
       detail: "full",
