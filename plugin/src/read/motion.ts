@@ -41,6 +41,7 @@ import {
   type ForestWalkOptions,
   type SerializerLimits,
 } from "./serialize"
+import { CANONICAL_MESSAGES } from "../shared/error-catalog"
 
 declare const figma: FigmaReadApi
 
@@ -113,7 +114,7 @@ function unsupportedItem(): ItemResult<NodeMotion> {
     status: "error",
     error: {
       code: "UNSUPPORTED_NODE",
-      message: "The requested node type is not supported.",
+      message: CANONICAL_MESSAGES.UNSUPPORTED_NODE,
       retryable: false,
     },
   }

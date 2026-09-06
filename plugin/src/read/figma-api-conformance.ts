@@ -23,14 +23,24 @@
 ///     pinned `@figma/plugin-typings` version and `tsc` reports exactly which
 ///     properties no longer exist.
 ///
-/// The list covers every name the read path reaches the host for, which is not
-/// the same as every literal argument to `hostGet`: `hostString`
-/// (`serialize.ts:136`) is a thin wrapper around it, and the `STYLE_ID_FIELDS`
-/// loop (`serialize.ts:611`) passes its key through a variable. An earlier
-/// version of this file was extracted by matching direct `hostGet` calls and
-/// silently missed fifteen names for exactly that reason. When a read starts
-/// reaching for a new property, add it here in the same commit — and check the
-/// wrappers, not just the direct calls.
+/// Two groups, and the difference matters when adding to them.
+///
+/// The first is every name reached through the `hostGet` family — including
+/// `hostString` (`serialize.ts:136`), which wraps it, and the
+/// `STYLE_ID_FIELDS` loop (`serialize.ts:611`), which passes its key through a
+/// variable. That group is mechanically enumerable, and it is complete.
+///
+/// The second is names read by direct property access on a `record(raw)`
+/// value, which bypasses `hostGet` entirely. That group is **not** mechanically
+/// enumerable: a direct read of a host property is syntactically identical to
+/// any other property access, so no grep distinguishes them. What is listed
+/// below was found by inspection and is a floor, not a proof.
+///
+/// This file has twice claimed a completeness it did not have — first by
+/// extracting only literal `hostGet` calls and missing fifteen names, then by
+/// describing the wrappers as the only other path. Stating the limit plainly
+/// is the honest version: adding a host read that no line here covers costs
+/// nothing today and is caught by nothing.
 /// Nothing imports this module: it erases entirely at build time and exists to
 /// be type-checked.
 
@@ -125,6 +135,32 @@ export type PropertiesThisServerReads = [
   Assert<IsFigmaProperty<"textAutoResize">>,
   Assert<IsFigmaProperty<"textDecoration">>,
   Assert<IsFigmaProperty<"textStyleId">>,
+]
+
+/// Reached by direct property access rather than through `hostGet`. Found by
+/// inspection; see the note above on why this group cannot be enumerated
+/// mechanically.
+///
+/// Eleven further direct reads are deliberately absent: `family`, `style`,
+/// `styleId`, `duration`, `timelineOffset`, `offset`, `radius`, `spread`,
+/// `position`, `ownerNodeId` and `inheritedFromNodeId`. They live on auxiliary
+/// shapes — `FontName`, `Effect`, `ColorStop`, animation and dev-resource
+/// types — that `FigmaSurface` does not include, and adding those types to
+/// make the assertions pass would weaken every assertion in this file: the
+/// union is what gives a wrong name somewhere to fail, and a union broad
+/// enough to contain `position`, `start` and `family` stops discriminating.
+/// Covering them properly means asserting each against its own type, which is
+/// the narrowing work this file exists to avoid.
+export type PropertiesReadByDirectAccess = [
+  Assert<IsFigmaProperty<"annotations">>,
+  Assert<IsFigmaProperty<"descriptionMarkdown">>,
+  Assert<IsFigmaProperty<"end">>,
+  Assert<IsFigmaProperty<"exportAsync">>,
+  Assert<IsFigmaProperty<"getDevResourcesAsync">>,
+  Assert<IsFigmaProperty<"id">>,
+  Assert<IsFigmaProperty<"loadAsync">>,
+  Assert<IsFigmaProperty<"reactions">>,
+  Assert<IsFigmaProperty<"start">>,
 ]
 
 /// `componentId` and `componentSetId` are read through `hostString`

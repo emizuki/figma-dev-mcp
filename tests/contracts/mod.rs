@@ -621,8 +621,11 @@ fn error_code_all_is_the_set_the_enum_declares() {
     // The plugin half of this pinning used to live here too, reading the
     // plugin's TypeScript and parsing its tables out of the source text. It
     // does not any more: `error_catalog.rs` generates the plugin's catalog
-    // from this same protocol, and every table that reaches the wire now
-    // imports from it.
+    // from this same protocol, and
+    // `production_plugin_source_spells_no_canonical_error_message` in
+    // tests/policy/read_only.rs holds the plugin to importing from it. That is
+    // a test rather than a claim here because the claim was made twice and was
+    // wrong both times.
     let mut listed: Vec<String> = ErrorCode::ALL
         .iter()
         .map(|code| error_code_tag(*code).to_owned())

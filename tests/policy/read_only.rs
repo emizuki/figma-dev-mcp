@@ -158,6 +158,60 @@ fn snapshots_lock_tools_annotations_prompts_and_wire_variants() {
     );
 }
 
+/// No production plugin file spells a canonical error message.
+///
+/// The messages are generated into `shared/error-catalog.ts` from the Rust
+/// protocol, and Rust refuses any frame whose message is not canonical for its
+/// code — so a hand-copied string that drifts does not produce a wrong field,
+/// it drops the session at decode time.
+///
+/// This is a test rather than a claim in a comment because the claim was made
+/// three times during this consolidation and was wrong each time: a copy
+/// survived in `ui/relay.ts`, then another in `read/motion.ts`, each found only
+/// by someone reading the diff. A grep is a poor tool for a general property,
+/// but it is a better one than a sentence nobody can check.
+#[test]
+fn production_plugin_source_spells_no_canonical_error_message() {
+    let generated = workspace_root().join("plugin/src/shared/error-catalog.ts");
+    let catalog = fs::read_to_string(&generated).expect("generated catalog is readable");
+    let messages: Vec<&str> = catalog
+        .lines()
+        .filter_map(|line| line.split_once(": \"")?.1.strip_suffix("\","))
+        .collect();
+    assert!(
+        messages.len() >= 17,
+        "expected the generated catalog to yield its messages, parsed {}",
+        messages.len()
+    );
+
+    let mut pending = vec![workspace_root().join("plugin/src")];
+    while let Some(path) = pending.pop() {
+        for entry in fs::read_dir(&path).expect("plugin source directory is readable") {
+            let path = entry.expect("plugin source entry is readable").path();
+            let name = path.to_string_lossy().to_string();
+            if path.is_dir() {
+                pending.push(path);
+                continue;
+            }
+            if path.extension().is_none_or(|extension| extension != "ts")
+                || name.ends_with(".test.ts")
+                || name.ends_with("environment.typecheck.ts")
+                || name.ends_with("shared/error-catalog.ts")
+            {
+                continue;
+            }
+            let source = fs::read_to_string(&path).expect("TypeScript source is readable");
+            for message in &messages {
+                assert!(
+                    !source.contains(message),
+                    "{name} spells the canonical message {message:?} instead of \
+                     importing CANONICAL_MESSAGES from shared/error-catalog"
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn plugin_source_denies_mutation_private_and_motion_write_apis() {
     let source = production_typescript(workspace_root().join("plugin/src"));
