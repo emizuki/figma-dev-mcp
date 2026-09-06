@@ -30,7 +30,7 @@ import {
   type SerializeNodeForestOptions,
 } from "./serialize"
 import { visibilityOf } from "./visibility"
-import { CANONICAL_MESSAGES } from "../shared/result-validation"
+import { CANONICAL_MESSAGES } from "../shared/error-catalog"
 
 function serializeOptions(
   options: Omit<SerializeNodeForestOptions, "signal">,
@@ -242,17 +242,14 @@ export async function readSelection(
 }
 
 // `nodeError` sources its messages from `CANONICAL_MESSAGES` rather than
-// hand-copying them here. The two `Record<ErrorCode, string>` literals that
-// do spell these strings — `CANONICAL_MESSAGES` in
-// `shared/result-validation.ts` and `MESSAGES` in `read/render.ts` — are
-// each pinned against the Rust canonical set by
-// `the_plugin_mirrors_every_error_code_and_its_canonical_message`
-// (`tests/contracts/mod.rs`), which parses each object out of the plugin
-// source text by name. A `switch` like the one this function used to be is
-// not a `Record` literal that test can find and parse, so a message
-// hand-copied into one would drift unnoticed — that, not a shortage of
-// places allowed to hold the text, is why this function must not hold a
-// literal of its own.
+// hand-copying them here. That table is generated from the Rust protocol
+// (`tests/contracts/error_catalog.rs`), which is what makes the two ends
+// agree by construction rather than by a test that compares them afterwards.
+//
+// The reason to import rather than spell the strings is not stylistic: Rust
+// refuses any frame whose message is not the canonical one for its code
+// (`crates/protocol/src/error.rs:178`), so a hand-copied message that drifts
+// does not produce a wrong field — it drops the session at decode time.
 function nodeError(
   code:
     | "NODE_NOT_FOUND"

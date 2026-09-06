@@ -15,6 +15,9 @@ import { progressFor } from "../main/progress"
 import { PluginReadError } from "./navigation"
 import { loadPageIfNeeded, type FigmaReadApi } from "./common"
 import { hostGet, isRecord, visibilityOf } from "./visibility"
+// The canonical texts are generated from the Rust protocol, so this file no
+// longer keeps a second copy of them.
+import { CANONICAL_MESSAGES } from "../shared/error-catalog"
 
 export const SCREENSHOT_VALIDATION_TIMEOUT_MS = 10_000
 
@@ -54,35 +57,6 @@ export interface ScreenshotCodec {
   encodeSvg(source: string): Promise<SvgEncodeResult>
 }
 
-// Every entry below must stay on one line (see the NODE_NOT_VISIBLE
-// prettier-ignore for why): the Rust mirror test in tests/contracts/mod.rs
-// (plugin_message_map) parses this object line by line — split on the
-// first colon, then the message pulled from the first quoted span on that
-// same line — so every entry has to stay on one line. The Rust side
-// panics by name on a line it cannot parse, so a wrapped entry fails with
-// this file and the offending line rather than as a bare list mismatch —
-// but it still fails, and this directive is what keeps it from happening.
-const MESSAGES: Record<ErrorCode, string> = {
-  NO_FIGMA_CONNECTION: "No Figma connection is available.",
-  AMBIGUOUS_CONNECTION: "More than one Figma connection matches the request.",
-  CONNECTION_NOT_FOUND: "The requested Figma connection was not found.",
-  CONNECTION_LOST: "The Figma connection was lost.",
-  PROTOCOL_MISMATCH: "The plugin protocol version is not supported.",
-  NODE_NOT_FOUND: "The requested node was not found.",
-  // prettier-ignore
-  NODE_NOT_VISIBLE: "The requested node exists but is switched off, so it renders nothing.",
-  PAGE_NOT_FOUND: "The requested page was not found.",
-  UNSUPPORTED_NODE: "The requested node type is not supported.",
-  EMPTY_NODE_BOUNDS: "The requested node renders nothing.",
-  CAPABILITY_UNAVAILABLE: "The required Figma capability is unavailable.",
-  UNSAFE_SVG: "The SVG was rejected by the safety policy.",
-  INVALID_CURSOR: "The search cursor is invalid or stale.",
-  LIMIT_EXCEEDED: "The operation exceeded a safety limit.",
-  TIMEOUT: "The operation timed out.",
-  CANCELLED: "The operation was cancelled.",
-  INTERNAL_ERROR: "The operation failed.",
-}
-
 function observation(startedAt: string) {
   return { startedAt, completedAt: new Date().toISOString() }
 }
@@ -90,7 +64,7 @@ function observation(startedAt: string) {
 function itemError(code: ErrorCode): ItemResult<ScreenshotAsset> {
   const error: ToolError = {
     code,
-    message: MESSAGES[code],
+    message: CANONICAL_MESSAGES[code],
     retryable: false,
   }
   return { status: "error", error }

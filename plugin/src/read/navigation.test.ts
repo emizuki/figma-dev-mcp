@@ -613,7 +613,7 @@ describe("node reader", () => {
       currentPage: page("0:1", "Page 1"),
       editorType: "dev",
       getNodeByIdAsync: async () => node,
-      getStyleByIdAsync: async (id: string) => {
+      getStyleByIdAsync: async (_id: string) => {
         calls += 1
         return { name: "Primary/500" }
       },
@@ -698,7 +698,7 @@ describe("node reader", () => {
       editorType: "dev",
       getNodeByIdAsync: async () => node,
       variables: {
-        getVariableByIdAsync: async (id: string) => {
+        getVariableByIdAsync: async (_id: string) => {
           calls += 1
           return { name: "text/primary" }
         },

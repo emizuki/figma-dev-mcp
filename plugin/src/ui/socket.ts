@@ -52,7 +52,7 @@ export function startSocketTransport(): () => void {
     brokerRequestId: string,
   ): readonly [string, RequestOwner] | undefined => {
     for (const entry of requestOwners) {
-      const [controllerRequestId, owner] = entry
+      const [, owner] = entry
       if (
         owner.generation === generation &&
         owner.brokerRequestId === brokerRequestId

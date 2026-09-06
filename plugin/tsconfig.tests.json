@@ -17,5 +17,5 @@
     "src/ui/hello.ts",
     "tests/**/*.ts"
   ],
-  "exclude": ["src/ui/**/*.test.ts"]
+  "exclude": ["src/ui/**/*.test.ts", "src/read/figma-api-conformance.ts"]
 }

@@ -9,14 +9,14 @@ Run these from the workspace root, in a clean process state (no leftover `figma-
 ```bash
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
+cargo test --workspace --all-features --no-fail-fast
 (cd plugin && bun install --frozen-lockfile)
 (cd plugin && bun run format:check && bun run typecheck && bun run build && bun run test)
 (cd conformance && bun install --frozen-lockfile)
 ./scripts/run-conformance.sh
 ```
 
-`cargo test --workspace --all-features` stays green from a clean source checkout. Rust policy tests scan `plugin/src` and do not require `plugin/dist`. After `bun run build`, plugin bundle policy tests scan `plugin/dist`.
+`cargo test --workspace --all-features --no-fail-fast` stays green from a clean source checkout. Rust policy tests scan `plugin/src` and do not require `plugin/dist`. After `bun run build`, plugin bundle policy tests scan `plugin/dist`.
 
 ## Evidence split
 

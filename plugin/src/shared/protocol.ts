@@ -177,45 +177,13 @@ export type ReadResult =
 /** `UNSAFE_SVG` is reserved and no longer emitted: SVG safety reports a verdict
  * on the asset rather than failing the item. The member stays because removing
  * a member of a closed enum is itself a wire change. */
-export const ERROR_CODES: readonly [
-  "NO_FIGMA_CONNECTION",
-  "AMBIGUOUS_CONNECTION",
-  "CONNECTION_NOT_FOUND",
-  "CONNECTION_LOST",
-  "PROTOCOL_MISMATCH",
-  "NODE_NOT_FOUND",
-  "NODE_NOT_VISIBLE",
-  "PAGE_NOT_FOUND",
-  "UNSUPPORTED_NODE",
-  "EMPTY_NODE_BOUNDS",
-  "CAPABILITY_UNAVAILABLE",
-  "UNSAFE_SVG",
-  "INVALID_CURSOR",
-  "LIMIT_EXCEEDED",
-  "TIMEOUT",
-  "CANCELLED",
-  "INTERNAL_ERROR",
-] = [
-  "NO_FIGMA_CONNECTION",
-  "AMBIGUOUS_CONNECTION",
-  "CONNECTION_NOT_FOUND",
-  "CONNECTION_LOST",
-  "PROTOCOL_MISMATCH",
-  "NODE_NOT_FOUND",
-  "NODE_NOT_VISIBLE",
-  "PAGE_NOT_FOUND",
-  "UNSUPPORTED_NODE",
-  "EMPTY_NODE_BOUNDS",
-  "CAPABILITY_UNAVAILABLE",
-  "UNSAFE_SVG",
-  "INVALID_CURSOR",
-  "LIMIT_EXCEEDED",
-  "TIMEOUT",
-  "CANCELLED",
-  "INTERNAL_ERROR",
-]
-
-export type ErrorCode = (typeof ERROR_CODES)[number]
+// The seventeen codes and their canonical messages are generated from the
+// Rust protocol into `./error-catalog`, so the two ends cannot disagree.
+// Re-exported here because this module is what the rest of the plugin
+// imports protocol shapes from.
+import type { ErrorCode } from "./error-catalog"
+export { ERROR_CODES } from "./error-catalog"
+export type { ErrorCode } from "./error-catalog"
 
 export interface PluginItemFailure {
   index: number

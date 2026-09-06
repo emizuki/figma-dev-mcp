@@ -132,7 +132,7 @@ It also assumes anything running as your operating-system user is trustworthy. S
 Pinned toolchain: Rust 1.95.0, Bun 1.3.14.
 
 ```bash
-cargo test --workspace --all-features
+cargo test --workspace --all-features --no-fail-fast
 (cd plugin && bun test)
 ```
 
