@@ -7,6 +7,7 @@ use super::{
     deserialize_optional_depth,
 };
 use crate::deferred::decode_raw;
+use crate::error::ToolError;
 use schemars::JsonSchema;
 use serde::{
     Deserialize, Deserializer, Serialize,
@@ -97,6 +98,19 @@ pub struct GetSelectionInput {
     pub depth: Option<u8>,
 }
 
+/// A node the visibility walk could not resolve, and why.
+///
+/// Only ever an unwalkable ancestor chain. A switched-off node is absent from
+/// the forest and absent from here: callers of this server are agents reading
+/// a design, and a list of every hidden layer would be noise in every
+/// response.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UnresolvedNode {
+    pub id: NodeId,
+    pub error: ToolError,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
 #[serde(
     tag = "detail",
@@ -107,6 +121,8 @@ pub struct GetSelectionInput {
 pub enum GetSelectionResult {
     Minimal {
         nodes: NodeForest<MinimalNodeDetails>,
+        #[serde(default, skip_serializing_if = "ReturnedList::is_empty")]
+        unresolved: ReturnedList<UnresolvedNode>,
         truncated: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         truncation: Option<Truncation>,
@@ -114,6 +130,8 @@ pub enum GetSelectionResult {
     },
     Compact {
         nodes: NodeForest<CompactNodeData>,
+        #[serde(default, skip_serializing_if = "ReturnedList::is_empty")]
+        unresolved: ReturnedList<UnresolvedNode>,
         truncated: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         truncation: Option<Truncation>,
@@ -121,6 +139,8 @@ pub enum GetSelectionResult {
     },
     Full {
         nodes: NodeForest<FullNodeData>,
+        #[serde(default, skip_serializing_if = "ReturnedList::is_empty")]
+        unresolved: ReturnedList<UnresolvedNode>,
         truncated: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         truncation: Option<Truncation>,
@@ -327,6 +347,8 @@ pub struct GetDesignContextInput {
 pub enum GetDesignContextResult {
     Minimal {
         roots: NodeForest<MinimalNodeDetails>,
+        #[serde(default, skip_serializing_if = "ReturnedList::is_empty")]
+        unresolved: ReturnedList<UnresolvedNode>,
         truncated: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         truncation: Option<Truncation>,
@@ -334,6 +356,8 @@ pub enum GetDesignContextResult {
     },
     Compact {
         roots: NodeForest<CompactNodeData>,
+        #[serde(default, skip_serializing_if = "ReturnedList::is_empty")]
+        unresolved: ReturnedList<UnresolvedNode>,
         truncated: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         truncation: Option<Truncation>,
@@ -341,6 +365,8 @@ pub enum GetDesignContextResult {
     },
     Full {
         roots: NodeForest<FullNodeData>,
+        #[serde(default, skip_serializing_if = "ReturnedList::is_empty")]
+        unresolved: ReturnedList<UnresolvedNode>,
         truncated: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         truncation: Option<Truncation>,
@@ -449,6 +475,121 @@ macro_rules! impl_detail_result_deserialize {
             }
         }
     };
+    // `get_nodes` stays on the rule above. It reports a per-item failure inside
+    // its own batch, so it can never populate `unresolved`, and a field a
+    // result can never send has no business on the wire.
+    ($result:ident, $visitor:ident, $field:ident, $payload_variant:ident, $payload_field:ident, $payload_json:literal, with_unresolved) => {
+        #[derive(Deserialize)]
+        #[serde(field_identifier, rename_all = "camelCase")]
+        enum $field {
+            Detail,
+            $payload_variant,
+            Truncated,
+            Truncation,
+            Observation,
+            Unresolved,
+        }
+
+        impl<'de> Deserialize<'de> for $result {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                deserializer.deserialize_map($visitor)
+            }
+        }
+
+        struct $visitor;
+
+        impl<'de> Visitor<'de> for $visitor {
+            type Value = $result;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a closed detail-discriminated result")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut detail = None;
+                let mut payload = None;
+                let mut truncated = None;
+                let mut truncation = None;
+                let mut observation = None;
+                let mut unresolved = None;
+                while let Some(field) = map.next_key::<$field>()? {
+                    match field {
+                        $field::Detail => {
+                            if detail.is_some() {
+                                return Err(A::Error::duplicate_field("detail"));
+                            }
+                            detail = Some(map.next_value::<DetailLevel>()?);
+                        }
+                        $field::$payload_variant => {
+                            if payload.is_some() {
+                                return Err(A::Error::duplicate_field($payload_json));
+                            }
+                            payload = Some(map.next_value::<Box<RawValue>>()?);
+                        }
+                        $field::Truncated => {
+                            if truncated.is_some() {
+                                return Err(A::Error::duplicate_field("truncated"));
+                            }
+                            truncated = Some(map.next_value::<bool>()?);
+                        }
+                        $field::Truncation => {
+                            if truncation.is_some() {
+                                return Err(A::Error::duplicate_field("truncation"));
+                            }
+                            truncation = Some(map.next_value::<Option<Truncation>>()?);
+                        }
+                        $field::Observation => {
+                            if observation.is_some() {
+                                return Err(A::Error::duplicate_field("observation"));
+                            }
+                            observation = Some(map.next_value::<ObservationWindow>()?);
+                        }
+                        $field::Unresolved => {
+                            if unresolved.is_some() {
+                                return Err(A::Error::duplicate_field("unresolved"));
+                            }
+                            unresolved = Some(map.next_value::<ReturnedList<UnresolvedNode>>()?);
+                        }
+                    }
+                }
+                let payload = payload.ok_or_else(|| A::Error::missing_field($payload_json))?;
+                let truncated = truncated.ok_or_else(|| A::Error::missing_field("truncated"))?;
+                let truncation = truncation.unwrap_or(None);
+                let unresolved = unresolved.unwrap_or_default();
+                let observation =
+                    observation.ok_or_else(|| A::Error::missing_field("observation"))?;
+                match detail.ok_or_else(|| A::Error::missing_field("detail"))? {
+                    DetailLevel::Minimal => Ok($result::Minimal {
+                        $payload_field: decode_raw(&payload)?,
+                        unresolved,
+                        truncated,
+                        truncation,
+                        observation,
+                    }),
+                    DetailLevel::Compact => Ok($result::Compact {
+                        $payload_field: decode_raw(&payload)?,
+                        unresolved,
+                        truncated,
+                        truncation,
+                        observation,
+                    }),
+                    DetailLevel::Full => Ok($result::Full {
+                        $payload_field: decode_raw(&payload)?,
+                        unresolved,
+                        truncated,
+                        truncation,
+                        observation,
+                    }),
+                }
+            }
+        }
+    };
 }
 
 impl_detail_result_deserialize!(
@@ -457,7 +598,8 @@ impl_detail_result_deserialize!(
     GetSelectionResultField,
     Nodes,
     nodes,
-    "nodes"
+    "nodes",
+    with_unresolved
 );
 impl_detail_result_deserialize!(
     GetNodesResult,
@@ -473,5 +615,6 @@ impl_detail_result_deserialize!(
     GetDesignContextResultField,
     Roots,
     roots,
-    "roots"
+    "roots",
+    with_unresolved
 );

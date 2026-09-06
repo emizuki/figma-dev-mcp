@@ -1,4 +1,4 @@
-import type { CapabilitySet, ErrorCode } from "./protocol"
+import type { CapabilitySet, ErrorCode, UnresolvedNode } from "./protocol"
 
 export type TruncationReason = "depthLimit" | "nodeLimit" | "byteLimit"
 
@@ -404,6 +404,9 @@ export type GetDesignContextResult =
   | CommonDetailResult<"compact", "roots", CompactNodeData>
   | CommonDetailResult<"full", "roots", FullNodeData>
 
+/** The two forest results. `unresolved` is theirs alone: `get_nodes` reports a
+ * per-item failure inside its own batch, so `CommonBatchDetailResult` has no
+ * such field and rejects one. */
 export type CommonDetailResult<
   Detail extends string,
   Field extends "nodes" | "roots",
@@ -413,6 +416,7 @@ export type CommonDetailResult<
   truncated: boolean
   truncation?: Truncation
   observation: ObservationWindow
+  unresolved?: UnresolvedNode[]
 } & { [Key in Field]: DesignNode<Data>[] }
 
 export interface CommonBatchDetailResult<Detail extends string, Data> {

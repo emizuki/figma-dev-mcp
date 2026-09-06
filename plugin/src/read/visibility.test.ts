@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
-import { rendersVisibly } from "./visibility"
+import { rendersVisibly, visibilityOf } from "./visibility"
 
 const node = (
   visible: boolean,
@@ -58,5 +58,40 @@ describe("rendersVisibly", () => {
       current = { visible: true, parent: current }
     }
     expect(rendersVisibly(current)).toBe(false)
+  })
+})
+
+describe("visibilityOf", () => {
+  test("a live chain reports renders", () => {
+    expect(visibilityOf({ visible: true, parent: { visible: true } })).toBe(
+      "renders",
+    )
+  })
+
+  test("a switched-off ancestor reports hidden, not undetermined", () => {
+    expect(visibilityOf({ visible: true, parent: { visible: false } })).toBe(
+      "hidden",
+    )
+  })
+
+  test("a cyclic chain reports undetermined, not hidden", () => {
+    const looped: Record<string, unknown> = { visible: true }
+    looped.parent = looped
+    expect(visibilityOf(looped)).toBe("undetermined")
+  })
+
+  test("a chain past the walk limit reports undetermined", () => {
+    let current: Record<string, unknown> = { visible: true }
+    for (let step = 0; step < 1100; step += 1) {
+      current = { visible: true, parent: current }
+    }
+    expect(visibilityOf(current)).toBe("undetermined")
+  })
+
+  test("rendersVisibly answers false for both hidden and undetermined", () => {
+    const looped: Record<string, unknown> = { visible: true }
+    looped.parent = looped
+    expect(rendersVisibly({ visible: false })).toBe(false)
+    expect(rendersVisibly(looped)).toBe(false)
   })
 })

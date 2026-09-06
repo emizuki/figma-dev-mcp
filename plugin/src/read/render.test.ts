@@ -581,8 +581,10 @@ describe("get_screenshot export selection", () => {
 
   test("a cyclic parent chain terminates as refused rather than spinning", async () => {
     // rendersVisibly bounds its ancestor walk, so an unresolvable chain (a
-    // cycle included) is treated as not rendering rather than hanging the
-    // read. That now surfaces as NODE_NOT_VISIBLE instead of a real export.
+    // cycle included) is refused rather than hanging the read. It surfaces as
+    // LIMIT_EXCEEDED, not NODE_NOT_VISIBLE: the walk could not establish
+    // whether this node renders, and saying "switched off" would be a
+    // specific claim that happens to be false.
     const node: Record<string, unknown> = {
       id: "12:9",
       type: "FRAME",
@@ -599,7 +601,7 @@ describe("get_screenshot export selection", () => {
     )
     expect(result.assets[0]).toMatchObject({
       status: "error",
-      error: { code: "NODE_NOT_VISIBLE" },
+      error: { code: "LIMIT_EXCEEDED", retryable: false },
     })
   })
 

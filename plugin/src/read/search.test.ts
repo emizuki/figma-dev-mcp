@@ -399,6 +399,31 @@ describe("search_nodes handler", () => {
     ).rejects.toMatchObject({ code: "NODE_NOT_VISIBLE" })
   })
 
+  test("a scope whose ancestor chain cannot be walked is refused as a limit", async () => {
+    const current = page("0:2", "Current")
+    const looped: Record<string, unknown> = {
+      id: "1:3",
+      name: "Looped",
+      type: "FRAME",
+      visible: true,
+    }
+    looped.parent = looped
+    installFigma({
+      currentPage: current,
+      pages: [current],
+      nodes: new Map<string, unknown>([["1:3", looped]]),
+    })
+
+    await expect(
+      searchNodes({
+        scope: { nodeId: "1:3" },
+        query: "a",
+        match: "contains",
+        limit: 50,
+      }),
+    ).rejects.toMatchObject({ code: "LIMIT_EXCEEDED", retryable: false })
+  })
+
   test("fails when node lookup is unavailable", async () => {
     ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
       root: { name: "Checkout flow", children: [] },

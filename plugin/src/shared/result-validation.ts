@@ -1,4 +1,9 @@
-import { ERROR_CODES, type ErrorCode, type ReadResult } from "./protocol"
+import {
+  ERROR_CODES,
+  type ErrorCode,
+  type ReadResult,
+  type UnresolvedNode,
+} from "./protocol"
 import type {
   AnimationBinding,
   AnimationTrack,
@@ -1265,6 +1270,50 @@ function parseNodeForest<Data>(
   return result
 }
 
+function parseUnresolved(value: unknown, label: string): UnresolvedNode[] {
+  return arrayOf(value, label, (entry, entryLabel) => {
+    const object = exact(entry, entryLabel, ["id", "error"])
+    const error = parseToolError(object.error, `${entryLabel}.error`)
+    if (error.items !== undefined)
+      return fail(`${entryLabel}.error must not carry items`)
+    return {
+      id: identifier(object.id, `${entryLabel}.id`),
+      error: {
+        code: error.code,
+        message: error.message,
+        retryable: error.retryable,
+      },
+    }
+  })
+}
+
+/** `withResultMetadata` plus the `unresolved` list the two forest results carry.
+ *
+ * `get_nodes` uses the bare metadata helper instead: it reports a per-item
+ * failure inside its own batch, so `unresolved` is an unknown field there and
+ * `exact` rejects it.
+ *
+ * An absent list stays absent rather than becoming an empty array. Rust omits
+ * the field entirely when it is empty, so a round trip that grew a key would no
+ * longer match what was sent. */
+function withForestMetadata<T extends object>(
+  object: Record<string, unknown>,
+  value: T,
+  label: string,
+): T & {
+  truncated: boolean
+  truncation?: Truncation
+  observation: ObservationWindow
+  unresolved?: UnresolvedNode[]
+} {
+  const result = withResultMetadata(object, value, label)
+  if (!Object.hasOwn(object, "unresolved")) return result
+  return {
+    ...result,
+    unresolved: parseUnresolved(object.unresolved, `${label}.unresolved`),
+  }
+}
+
 function parseNodeBatch<Data>(
   value: unknown,
   label: string,
@@ -1293,11 +1342,11 @@ function parseSelectionResult(
     value,
     label,
     ["detail", "nodes", "truncated", "observation"],
-    ["truncation"],
+    ["truncation", "unresolved"],
   )
   switch (object.detail) {
     case "minimal":
-      return withResultMetadata(
+      return withForestMetadata(
         object,
         {
           detail: "minimal",
@@ -1310,7 +1359,7 @@ function parseSelectionResult(
         label,
       )
     case "compact":
-      return withResultMetadata(
+      return withForestMetadata(
         object,
         {
           detail: "compact",
@@ -1323,7 +1372,7 @@ function parseSelectionResult(
         label,
       )
     case "full":
-      return withResultMetadata(
+      return withForestMetadata(
         object,
         {
           detail: "full",
@@ -1392,11 +1441,11 @@ function parseDesignContextResult(
     value,
     label,
     ["detail", "roots", "truncated", "observation"],
-    ["truncation"],
+    ["truncation", "unresolved"],
   )
   switch (object.detail) {
     case "minimal":
-      return withResultMetadata(
+      return withForestMetadata(
         object,
         {
           detail: "minimal",
@@ -1409,7 +1458,7 @@ function parseDesignContextResult(
         label,
       )
     case "compact":
-      return withResultMetadata(
+      return withForestMetadata(
         object,
         {
           detail: "compact",
@@ -1422,7 +1471,7 @@ function parseDesignContextResult(
         label,
       )
     case "full":
-      return withResultMetadata(
+      return withForestMetadata(
         object,
         {
           detail: "full",
