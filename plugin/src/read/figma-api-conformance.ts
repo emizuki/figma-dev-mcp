@@ -23,8 +23,14 @@
 ///     pinned `@figma/plugin-typings` version and `tsc` reports exactly which
 ///     properties no longer exist.
 ///
-/// The list is every distinct name passed to `hostGet` across `src/read`. When
-/// a read starts reaching for a new property, add it here in the same commit.
+/// The list covers every name the read path reaches the host for, which is not
+/// the same as every literal argument to `hostGet`: `hostString`
+/// (`serialize.ts:136`) is a thin wrapper around it, and the `STYLE_ID_FIELDS`
+/// loop (`serialize.ts:611`) passes its key through a variable. An earlier
+/// version of this file was extracted by matching direct `hostGet` calls and
+/// silently missed fifteen names for exactly that reason. When a read starts
+/// reaching for a new property, add it here in the same commit — and check the
+/// wrappers, not just the direct calls.
 /// Nothing imports this module: it erases entirely at build time and exists to
 /// be type-checked.
 
@@ -106,4 +112,33 @@ export type PropertiesThisServerReads = [
   Assert<IsFigmaProperty<"variantProperties">>,
   Assert<IsFigmaProperty<"vertical">>,
   Assert<IsFigmaProperty<"visible">>,
+  Assert<IsFigmaProperty<"blendMode">>,
+  Assert<IsFigmaProperty<"counterAxisAlignItems">>,
+  Assert<IsFigmaProperty<"effectStyleId">>,
+  Assert<IsFigmaProperty<"fillStyleId">>,
+  Assert<IsFigmaProperty<"gridStyleId">>,
+  Assert<IsFigmaProperty<"primaryAxisAlignItems">>,
+  Assert<IsFigmaProperty<"strokeAlign">>,
+  Assert<IsFigmaProperty<"strokeStyleId">>,
+  Assert<IsFigmaProperty<"textAlignHorizontal">>,
+  Assert<IsFigmaProperty<"textAlignVertical">>,
+  Assert<IsFigmaProperty<"textAutoResize">>,
+  Assert<IsFigmaProperty<"textDecoration">>,
+  Assert<IsFigmaProperty<"textStyleId">>,
 ]
+
+/// `componentId` and `componentSetId` are read through `hostString`
+/// (`serialize.ts:752`) but are deliberately NOT asserted above: neither is a
+/// key of any type `@figma/plugin-typings` declares, so an assertion for them
+/// would fail the build.
+///
+/// They are best-effort reads by design. Figma exposes an instance's main
+/// component through `getMainComponentAsync`, which the serializer falls back
+/// to (`serialize.ts:1344`); the direct property is tried first because it
+/// avoids an await when the host happens to carry it. A read that returns the
+/// empty-string fallback is expected, not a defect.
+///
+/// Recorded here so the next person who notices them missing finds the reason
+/// rather than adding the assertion and getting a red build with no
+/// explanation.
+export type DeliberatelyUnasserted = ["componentId", "componentSetId"]

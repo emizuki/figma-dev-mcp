@@ -8,6 +8,7 @@ import type { ScreenshotAsset } from "../shared/results"
 import { parseControllerOutboundMessage } from "../shared/validation"
 import { encodeValidatedRaster, type RasterFormat } from "./raster"
 import { validateSvgSource } from "./svg"
+import { CANONICAL_MESSAGES } from "../shared/error-catalog"
 
 type ControllerMessage =
   | ControllerBoundMessage
@@ -20,10 +21,6 @@ type ControllerMessage =
 
 // SVG safety no longer produces an error of any kind, so `UNSAFE_SVG` is not
 // reachable from here.
-const ERROR_MESSAGES: Record<"LIMIT_EXCEEDED" | "INTERNAL_ERROR", string> = {
-  LIMIT_EXCEEDED: "The operation exceeded a safety limit.",
-  INTERNAL_ERROR: "The operation failed.",
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null
@@ -53,7 +50,7 @@ function itemError(code: "LIMIT_EXCEEDED" | "INTERNAL_ERROR"): {
     status: "error",
     error: {
       code,
-      message: ERROR_MESSAGES[code],
+      message: CANONICAL_MESSAGES[code],
       retryable: false as const,
     },
   }

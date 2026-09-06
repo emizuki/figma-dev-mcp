@@ -29,6 +29,17 @@ fn plugin_root() -> std::path::PathBuf {
         .to_path_buf()
 }
 
+/// A canonical message as a double-quoted TypeScript string literal.
+///
+/// No message contains a quote or a backslash today, so this changes nothing
+/// yet. It exists because the failure it prevents is disproportionate: a
+/// message quoting a field name would make `UPDATE_SNAPSHOTS=1` write a file
+/// that does not parse, and the error would point at generated TypeScript
+/// rather than at the Rust string that caused it.
+fn escape_for_typescript(message: &str) -> String {
+    message.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
 /// The file exactly as it should exist on disk.
 ///
 /// Written by hand rather than through a templating crate because the output
@@ -67,7 +78,7 @@ fn render_catalog() -> String {
         out.push_str(&format!(
             "  {}: \"{}\",\n",
             error_code_tag(code),
-            canonical_message(code)
+            escape_for_typescript(canonical_message(code))
         ));
     }
     out.push_str("}\n");
@@ -111,7 +122,7 @@ fn the_generated_catalog_pairs_each_code_with_its_canonical_message() {
         let entry = format!(
             "  {}: \"{}\",",
             error_code_tag(code),
-            canonical_message(code)
+            escape_for_typescript(canonical_message(code))
         );
         assert!(
             rendered.contains(&entry),

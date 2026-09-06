@@ -16,7 +16,7 @@ cargo test --workspace --all-features --no-fail-fast
 ./scripts/run-conformance.sh
 ```
 
-`cargo test --workspace --all-features` stays green from a clean source checkout. Rust policy tests scan `plugin/src` and do not require `plugin/dist`. After `bun run build`, plugin bundle policy tests scan `plugin/dist`.
+`cargo test --workspace --all-features --no-fail-fast` stays green from a clean source checkout. Rust policy tests scan `plugin/src` and do not require `plugin/dist`. After `bun run build`, plugin bundle policy tests scan `plugin/dist`.
 
 ## Evidence split
 
