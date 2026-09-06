@@ -49,12 +49,18 @@ const MAX_ANCESTOR_WALK = 1024
 /// document's nesting so the common path allocates nothing.
 const CYCLE_WATCH_AFTER = 64
 
-/// Whether this node and every ancestor are switched on.
+/// What the ancestor walk could establish about a node.
 ///
+/// `hidden` and `undetermined` both mean "do not return this node", but they
+/// are not the same fact and must not be reported as one: a caller told
+/// `NODE_NOT_VISIBLE` about a chain the walk simply could not follow has been
+/// told something false about a node that may well render.
+export type VisibilityVerdict = "renders" | "hidden" | "undetermined"
+
 /// A node's own `visible` is not enough: a switched-on node inside a
 /// switched-off frame draws nothing, and reporting it would be the same
 /// confidently-wrong shape as reporting a disabled drop shadow.
-export function rendersVisibly(node: unknown): boolean {
+export function visibilityOf(node: unknown): VisibilityVerdict {
   let current: unknown = node
   // Allocated only if a chain runs long enough to be suspicious. Every real
   // chain finishes in the low tens, so the common path never builds a set;
@@ -65,17 +71,25 @@ export function rendersVisibly(node: unknown): boolean {
   let seen: Set<unknown> | undefined
   for (let step = 0; step < MAX_ANCESTOR_WALK; step += 1) {
     // Past the root: nothing in the chain was switched off.
-    if (!isRecord(current)) return true
-    if (hostGet(current, "visible") === false) return false
+    if (!isRecord(current)) return "renders"
+    if (hostGet(current, "visible") === false) return "hidden"
     if (step >= CYCLE_WATCH_AFTER) {
       seen ??= new Set()
       // Revisiting a node means the chain loops and has no root, so no
       // answer about it can be established. Same verdict as exhausting the
       // bound, reached in a fraction of the steps.
-      if (seen.has(current)) return false
+      if (seen.has(current)) return "undetermined"
       seen.add(current)
     }
     current = hostGet(current, "parent")
   }
-  return false
+  return "undetermined"
+}
+
+/// Whether this node and every ancestor are switched on.
+///
+/// The answer the child filters want: they have no per-node channel at any
+/// depth, so `hidden` and `undetermined` are both simply excluded.
+export function rendersVisibly(node: unknown): boolean {
+  return visibilityOf(node) === "renders"
 }
