@@ -13,7 +13,6 @@
     "src/main/cancellation.ts",
     "src/main/dispatch.ts",
     "src/main/progress.ts",
-    "src/main/traversal-gate.ts",
     "src/read/**/*.ts",
     "src/ui/hello.ts",
     "tests/**/*.ts"

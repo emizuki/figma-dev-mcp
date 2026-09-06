@@ -1,4 +1,4 @@
-//! Read-only policy proof over source, catalog, wire, and traversal gates.
+//! Read-only policy proof over source, catalog, and wire shapes.
 
 use std::{fs, path::PathBuf};
 
@@ -293,30 +293,25 @@ fn origin_socket_and_rpc_boundaries_stay_raw_tcp_and_null_origin() {
 }
 
 #[test]
-fn every_node_scoped_operation_acquires_the_traversal_gate() {
+fn the_read_dispatcher_mutates_no_process_global_host_state() {
+    // The traversal gate used to flip `skipInvisibleInstanceChildren` off for
+    // the exclusive `includeHidden` path and back on afterward. With that flag
+    // gone there is no exclusive mode left to protect, so the dispatcher has
+    // no reason to touch that switch — or any other Figma write API — at all.
     let dispatch =
         fs::read_to_string(workspace_root().join("plugin/src/main/dispatch.ts")).unwrap();
-    for required in [
-        "get_selection: \"read\"",
-        "get_nodes: \"read\"",
-        "search_nodes: \"read\"",
-        "get_design_context: \"read\"",
-        "get_styles: \"read\"",
-        "get_variables: \"read\"",
-        "get_components: \"read\"",
-        "get_fonts: \"read\"",
-        "get_dev_mode_data: \"read\"",
-        "get_reactions: \"read\"",
-        "get_motion: \"read\"",
-        "get_screenshot: \"read\"",
-        "get_metadata: \"none\"",
-    ] {
+    assert!(
+        code_lines(&dispatch).all(|line| {
+            !line.contains(".skipInvisibleInstanceChildren =") || line.contains("==")
+        }),
+        "dispatch.ts must not assign skipInvisibleInstanceChildren"
+    );
+    for forbidden in MUTATION_DENYLIST {
         assert!(
-            dispatch.contains(required),
-            "TRAVERSAL_POLICY must include {required}"
+            !dispatch.contains(forbidden),
+            "dispatch.ts contains forbidden write surface {forbidden}"
         );
     }
-    assert!(dispatch.contains("gate.read") || dispatch.contains("return gate.read"));
 }
 
 const OPERATOR_DOCS: &[&str] = &[

@@ -8,7 +8,6 @@ import {
   assertNever,
   type ControllerBoundMessage,
   type ControllerOutboundMessage,
-  type OperationName,
   type PluginFailure,
   type ReadOperation,
   type ReadResult,
@@ -37,44 +36,6 @@ import {
 } from "./progress"
 
 const sharedRegistry = new CancellationRegistry()
-
-/**
- * Every read operation runs shared: there is no exclusive traversal mode left
- * to protect against, so `read` is a plain pass-through kept only as the seam
- * `get_metadata` (the one operation that never touches node traversal) opts
- * out of.
- */
-export interface TraversalGate {
-  read<T>(run: () => Promise<T>, signal?: CancellationSignal): Promise<T>
-}
-
-let sharedTraversalGate: TraversalGate | undefined
-
-type TraversalPolicy = "none" | "read"
-
-const TRAVERSAL_POLICY: Readonly<Record<OperationName, TraversalPolicy>> = {
-  get_metadata: "none",
-  get_selection: "read",
-  get_nodes: "read",
-  search_nodes: "read",
-  get_design_context: "read",
-  get_styles: "read",
-  get_variables: "read",
-  get_components: "read",
-  get_fonts: "read",
-  get_dev_mode_data: "read",
-  get_reactions: "read",
-  get_motion: "read",
-  get_screenshot: "read",
-}
-
-function traversalGate(): TraversalGate {
-  if (sharedTraversalGate !== undefined) return sharedTraversalGate
-  sharedTraversalGate = {
-    read: async <T>(run: () => Promise<T>): Promise<T> => run(),
-  }
-  return sharedTraversalGate
-}
 
 function pluginUi(): { postMessage(message: unknown): void } | undefined {
   return (
@@ -119,82 +80,74 @@ function createControllerProgress(
 async function dispatchRead(
   operation: ReadOperation,
   signal: CancellationSignal,
-  gate: TraversalGate,
 ): Promise<ReadResult> {
   if (signal.aborted) throw new PluginReadError("CANCELLED", false)
-  const execute = async (): Promise<ReadResult> => {
-    if (signal.aborted) throw new PluginReadError("CANCELLED", false)
-    switch (operation.operation) {
-      case "get_metadata":
-        return { operation: "get_metadata", result: readMetadata() }
-      case "get_selection":
-        return {
-          operation: "get_selection",
-          result: await readSelection(operation.input, signal),
-        }
-      case "get_nodes":
-        return {
-          operation: "get_nodes",
-          result: await readNodes(operation.input, signal),
-        }
-      case "search_nodes":
-        return {
-          operation: "search_nodes",
-          result: await searchNodes(operation.input, signal),
-        }
-      case "get_design_context":
-        return {
-          operation: "get_design_context",
-          result: await readDesignContext(operation.input, signal),
-        }
-      case "get_styles":
-        return {
-          operation: "get_styles",
-          result: await getStyles(operation.input, signal),
-        }
-      case "get_variables":
-        return {
-          operation: "get_variables",
-          result: await getVariables(operation.input, signal),
-        }
-      case "get_components":
-        return {
-          operation: "get_components",
-          result: await getComponents(operation.input, signal),
-        }
-      case "get_fonts":
-        return {
-          operation: "get_fonts",
-          result: await getFonts(operation.input, signal),
-        }
-      case "get_dev_mode_data":
-        return {
-          operation: "get_dev_mode_data",
-          result: await getDevModeData(operation.input, signal),
-        }
-      case "get_reactions":
-        return {
-          operation: "get_reactions",
-          result: await getReactions(operation.input, signal),
-        }
-      case "get_motion":
-        return {
-          operation: "get_motion",
-          result: await getMotion(operation.input, signal),
-        }
-      case "get_screenshot":
-        return {
-          operation: "get_screenshot",
-          result: await getScreenshot(operation.input, signal),
-        }
-      default:
-        return assertNever(operation)
-    }
+  switch (operation.operation) {
+    case "get_metadata":
+      return { operation: "get_metadata", result: readMetadata() }
+    case "get_selection":
+      return {
+        operation: "get_selection",
+        result: await readSelection(operation.input, signal),
+      }
+    case "get_nodes":
+      return {
+        operation: "get_nodes",
+        result: await readNodes(operation.input, signal),
+      }
+    case "search_nodes":
+      return {
+        operation: "search_nodes",
+        result: await searchNodes(operation.input, signal),
+      }
+    case "get_design_context":
+      return {
+        operation: "get_design_context",
+        result: await readDesignContext(operation.input, signal),
+      }
+    case "get_styles":
+      return {
+        operation: "get_styles",
+        result: await getStyles(operation.input, signal),
+      }
+    case "get_variables":
+      return {
+        operation: "get_variables",
+        result: await getVariables(operation.input, signal),
+      }
+    case "get_components":
+      return {
+        operation: "get_components",
+        result: await getComponents(operation.input, signal),
+      }
+    case "get_fonts":
+      return {
+        operation: "get_fonts",
+        result: await getFonts(operation.input, signal),
+      }
+    case "get_dev_mode_data":
+      return {
+        operation: "get_dev_mode_data",
+        result: await getDevModeData(operation.input, signal),
+      }
+    case "get_reactions":
+      return {
+        operation: "get_reactions",
+        result: await getReactions(operation.input, signal),
+      }
+    case "get_motion":
+      return {
+        operation: "get_motion",
+        result: await getMotion(operation.input, signal),
+      }
+    case "get_screenshot":
+      return {
+        operation: "get_screenshot",
+        result: await getScreenshot(operation.input, signal),
+      }
+    default:
+      return assertNever(operation)
   }
-
-  const policy = TRAVERSAL_POLICY[operation.operation]
-  if (policy === "none") return execute()
-  return gate.read(execute, signal)
 }
 
 export function requestBoundaryFailure(error: unknown): PluginFailure {
@@ -210,7 +163,6 @@ export function requestBoundaryFailure(error: unknown): PluginFailure {
 export async function dispatchControllerMessage(
   message: ControllerBoundMessage,
   registry = sharedRegistry,
-  gate = traversalGate(),
 ): Promise<ControllerOutboundMessage | null> {
   switch (message.type) {
     case "cancel":
@@ -227,11 +179,7 @@ export async function dispatchControllerMessage(
         )
         bindProgress(controller.signal, progress)
         progress.startHeartbeat("reading")
-        const result = await dispatchRead(
-          message.operation,
-          controller.signal,
-          gate,
-        )
+        const result = await dispatchRead(message.operation, controller.signal)
         return {
           type: "response",
           controllerRequestId: message.controllerRequestId,

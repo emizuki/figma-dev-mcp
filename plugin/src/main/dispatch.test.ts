@@ -4,11 +4,7 @@ import {
   CancellationRegistry,
   LocalCancellationController,
 } from "./cancellation"
-import {
-  dispatchControllerMessage,
-  requestBoundaryFailure,
-  type TraversalGate,
-} from "./dispatch"
+import { dispatchControllerMessage, requestBoundaryFailure } from "./dispatch"
 import {
   OPERATION_NAMES,
   parseControllerBoundMessage,
@@ -80,37 +76,6 @@ describe("closed read dispatcher", () => {
         error: { code: "CAPABILITY_UNAVAILABLE", retryable: false },
       })
     }
-  })
-
-  test("every read-shaped operation runs through the shared gate, get_metadata does not", async () => {
-    const leases: string[] = []
-    const gate: TraversalGate = {
-      read: async <T>(run: () => Promise<T>): Promise<T> => {
-        leases.push("read")
-        return run()
-      },
-    }
-    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
-      root: { name: "Checkout flow", children: [] },
-      currentPage: { id: "0:1", name: "Page 1", selection: [] },
-      editorType: "dev",
-      getNodeByIdAsync: async () => null,
-    }
-
-    for (const [index, operation] of OPERATION_NAMES.entries()) {
-      const request = parseControllerBoundMessage({
-        type: "request",
-        controllerRequestId: controllerRequestId(200 + index),
-        requestId: `policy-${index}`,
-        deadlineMs: 1,
-        target: {},
-        operation: { operation, input: EMPTY_INPUTS[operation] },
-      })
-      if (request.type !== "request") throw new Error("request did not decode")
-      await dispatchControllerMessage(request, new CancellationRegistry(), gate)
-    }
-
-    expect(leases).toEqual(new Array(OPERATION_NAMES.length - 1).fill("read"))
   })
 
   test("get_metadata returns bounded file and page metadata", async () => {
