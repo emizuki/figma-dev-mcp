@@ -18,7 +18,7 @@ import {
 import { PluginReadError } from "./navigation"
 import { loadPageIfNeeded, type FigmaReadApi } from "./common"
 import { byteLength, type SerializerLimits } from "./serialize"
-import { rendersVisibly } from "./visibility"
+import { rendersVisibly, visibilityOf } from "./visibility"
 
 export type NodeType = string
 export type MatchReason = "name" | "nodeType" | "text"
@@ -93,8 +93,12 @@ async function resolveSearchRoot(
   const node = await lookupNode(scope.nodeId)
   if (node === null || node === undefined)
     throw new PluginReadError("NODE_NOT_FOUND", false)
-  if (!rendersVisibly(node))
-    throw new PluginReadError("NODE_NOT_VISIBLE", false)
+  const verdict = visibilityOf(node)
+  if (verdict !== "renders")
+    throw new PluginReadError(
+      verdict === "hidden" ? "NODE_NOT_VISIBLE" : "LIMIT_EXCEEDED",
+      false,
+    )
   return loadPageIfNeeded(node)
 }
 

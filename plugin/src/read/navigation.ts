@@ -28,7 +28,7 @@ import {
   serializeNodeForest,
   type SerializeNodeForestOptions,
 } from "./serialize"
-import { rendersVisibly } from "./visibility"
+import { rendersVisibly, visibilityOf } from "./visibility"
 import { CANONICAL_MESSAGES } from "../shared/result-validation"
 
 function serializeOptions(
@@ -231,6 +231,7 @@ function nodeError(
   code:
     | "NODE_NOT_FOUND"
     | "NODE_NOT_VISIBLE"
+    | "LIMIT_EXCEEDED"
     | "CAPABILITY_UNAVAILABLE"
     | "INTERNAL_ERROR",
 ) {
@@ -264,8 +265,14 @@ export async function readNodes(
         items.push({ status: "error", error: nodeError("NODE_NOT_FOUND") })
         continue
       }
-      if (!rendersVisibly(node)) {
-        items.push({ status: "error", error: nodeError("NODE_NOT_VISIBLE") })
+      const verdict = visibilityOf(node)
+      if (verdict !== "renders") {
+        items.push({
+          status: "error",
+          error: nodeError(
+            verdict === "hidden" ? "NODE_NOT_VISIBLE" : "LIMIT_EXCEEDED",
+          ),
+        })
         continue
       }
       const serialized = await serializePreparedForest(

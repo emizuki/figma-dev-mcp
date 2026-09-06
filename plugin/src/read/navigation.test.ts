@@ -726,6 +726,46 @@ describe("node reader", () => {
       },
     })
   })
+
+  test("get_nodes tells a switched-off node apart from an unwalkable one", async () => {
+    const hidden = {
+      id: "1:2",
+      name: "Hidden",
+      type: "FRAME",
+      visible: false,
+      children: [],
+    }
+    const looped: Record<string, unknown> = {
+      id: "1:3",
+      name: "Looped",
+      type: "FRAME",
+      visible: true,
+      children: [],
+    }
+    looped.parent = looped
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [] },
+      currentPage: page("0:1", "Page 1"),
+      editorType: "dev",
+      getNodeByIdAsync: async (id: string) =>
+        id === "1:2" ? hidden : id === "1:3" ? looped : null,
+    }
+
+    const result = await readNodes({
+      nodeIds: ["1:2", "1:3"],
+      detail: "minimal",
+      depth: 0,
+    })
+
+    expect(result.items[0]).toMatchObject({
+      status: "error",
+      error: { code: "NODE_NOT_VISIBLE", retryable: false },
+    })
+    expect(result.items[1]).toMatchObject({
+      status: "error",
+      error: { code: "LIMIT_EXCEEDED", retryable: false },
+    })
+  })
 })
 
 describe("design context reader", () => {

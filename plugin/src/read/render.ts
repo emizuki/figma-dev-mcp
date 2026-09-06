@@ -14,7 +14,7 @@ import {
 import { progressFor } from "../main/progress"
 import { PluginReadError } from "./navigation"
 import { loadPageIfNeeded, type FigmaReadApi } from "./common"
-import { hostGet, isRecord, rendersVisibly } from "./visibility"
+import { hostGet, isRecord, rendersVisibly, visibilityOf } from "./visibility"
 
 export const SCREENSHOT_VALIDATION_TIMEOUT_MS = 10_000
 
@@ -397,8 +397,11 @@ export async function getScreenshot(
     // Before the empty-bounds test on purpose: a switched-off node has no
     // render bounds either, so asking `rendersNothing` first would report
     // EMPTY_NODE_BOUNDS for a node that may well have ink on it.
-    if (!rendersVisibly(node)) {
-      assets.push(itemError("NODE_NOT_VISIBLE"))
+    const verdict = visibilityOf(node)
+    if (verdict !== "renders") {
+      assets.push(
+        itemError(verdict === "hidden" ? "NODE_NOT_VISIBLE" : "LIMIT_EXCEEDED"),
+      )
       continue
     }
     // Asked before the host exporter runs, and for every format: a node that
