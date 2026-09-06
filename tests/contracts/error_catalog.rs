@@ -100,10 +100,34 @@ fn the_plugin_error_catalog_is_generated_from_the_protocol() {
     }
     let committed = std::fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("{GENERATED} must exist: {error}"));
-    assert_eq!(
-        committed.replace("\r\n", "\n"),
-        rendered,
-        "\n{GENERATED} is not what this protocol generates.\n\
+    let committed = committed.replace("\r\n", "\n");
+    if committed == rendered {
+        return;
+    }
+    // Report the first differing line rather than two whole files. This test
+    // exists to be read at the moment it fires, and a pair of two-kilobyte
+    // escaped blobs is the least useful shape that information can take.
+    let mismatch = committed
+        .lines()
+        .zip(rendered.lines())
+        .enumerate()
+        .find(|(_, (left, right))| left != right)
+        .map(|(index, (left, right))| {
+            format!(
+                "line {}:\n  on disk:   {left}\n  generated: {right}",
+                index + 1
+            )
+        })
+        .unwrap_or_else(|| {
+            format!(
+                "the files agree line by line but differ in length: \
+                 on disk {} lines, generated {}",
+                committed.lines().count(),
+                rendered.lines().count()
+            )
+        });
+    panic!(
+        "\n{GENERATED} is not what this protocol generates.\n\n{mismatch}\n\n\
          Regenerate it:\n\
          \n  UPDATE_SNAPSHOTS=1 cargo test -p figma-dev-mcp-tests --test contracts\n"
     );
