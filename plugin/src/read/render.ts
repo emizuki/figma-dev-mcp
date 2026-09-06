@@ -14,7 +14,7 @@ import {
 import { progressFor } from "../main/progress"
 import { PluginReadError } from "./navigation"
 import { loadPageIfNeeded, type FigmaReadApi } from "./common"
-import { hostGet, isRecord, rendersVisibly, visibilityOf } from "./visibility"
+import { hostGet, isRecord, visibilityOf } from "./visibility"
 
 export const SCREENSHOT_VALIDATION_TIMEOUT_MS = 10_000
 
