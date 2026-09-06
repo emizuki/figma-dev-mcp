@@ -49,7 +49,10 @@ jobs:
         with:
           shared-key: rust-tests-${{ hashFiles('Cargo.lock') }}
       - name: cargo test
-        run: cargo test --workspace --all-features
+        # --no-fail-fast: without it cargo stops at the first failing test
+        # binary, so a run reports only that binary's counts and every later
+        # crate goes unreported. A red build then understates how much is red.
+        run: cargo test --workspace --all-features --no-fail-fast
 
   plugin:
     name: plugin
@@ -108,7 +111,7 @@ jobs:
           bun install --frozen-lockfile
           bun run build
       - name: Policy test target
-        run: cargo test -p figma-dev-mcp-tests --test policy
+        run: cargo test -p figma-dev-mcp-tests --test policy --no-fail-fast
 
   conformance:
     name: conformance

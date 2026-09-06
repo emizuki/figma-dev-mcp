@@ -9,7 +9,7 @@ Run these from the workspace root, in a clean process state (no leftover `figma-
 ```bash
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
+cargo test --workspace --all-features --no-fail-fast
 (cd plugin && bun install --frozen-lockfile)
 (cd plugin && bun run format:check && bun run typecheck && bun run build && bun run test)
 (cd conformance && bun install --frozen-lockfile)

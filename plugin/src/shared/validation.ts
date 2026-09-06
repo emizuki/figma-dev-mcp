@@ -1,7 +1,6 @@
 import {
   ERROR_CODES,
   OPERATION_NAMES,
-  assertNever,
   type BrokerToPlugin,
   type CapabilitySet,
   type ControllerBoundMessage,
