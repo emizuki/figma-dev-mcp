@@ -1428,6 +1428,219 @@ fn the_forest_results_decode_an_unresolved_entry_and_keep_it() {
     );
 }
 
+/// One decode attempt, reduced to something comparable across the three result
+/// types: the payload key is renamed so `items`, `nodes` and `roots` do not
+/// count as a difference, and an error keeps only its message.
+///
+/// The position suffix is dropped rather than compared. All three payload keys
+/// happen to be five characters, so the columns would line up today, but a test
+/// about decoder behaviour should not also be a test about column arithmetic.
+fn shared_field_outcome<T>(json: &str, payload_key: &str) -> Result<Value, String>
+where
+    T: DeserializeOwned + Serialize,
+{
+    match serde_json::from_str::<T>(json) {
+        Ok(value) => {
+            let mut value = serde_json::to_value(value).expect("a result re-serializes");
+            let object = value.as_object_mut().expect("a result is an object");
+            let payload = object
+                .remove(payload_key)
+                .expect("a decoded result carries its payload");
+            object.insert("payload".to_owned(), payload);
+            Ok(value)
+        }
+        Err(error) => {
+            let text = error.to_string();
+            let message = match text.find(" at line ") {
+                Some(index) => text[..index].to_owned(),
+                None => text,
+            };
+            // `unknown field` names every field the arm accepts, and the whole
+            // point of the second arm is that it accepts one more. That is the
+            // sanctioned difference, so it is normalised away here rather than
+            // reported as drift — the acceptance it reflects is pinned by
+            // `the_forest_results_decode_an_unresolved_entry_and_keep_it`.
+            Err(message
+                .replace(payload_key, "payload")
+                .replace(", `unresolved`", ""))
+        }
+    }
+}
+
+/// The two arms of `impl_detail_result_deserialize!` must stay one decoder.
+///
+/// The `with_unresolved` arm is a copy of the original differing by a single
+/// field, and nothing compared them. A change to the duplicate-key guards, the
+/// missing-field errors or the `DetailLevel` dispatch in one arm does not reach
+/// the other, and the divergence would surface as `get_nodes` decoding
+/// differently from the other two results for a reason nobody chose.
+///
+/// Merging the arms is not the fix — `get_nodes` reports a failure per item and
+/// must stay free of a field it can never populate — so the shared behaviour is
+/// pinned instead. Every case below touches only fields both arms have, and is
+/// driven through a result built by each rule: `GetNodesResult` on the original,
+/// `GetSelectionResult` and `GetDesignContextResult` on `with_unresolved`.
+#[test]
+fn both_detail_result_macro_arms_agree_on_every_shared_field() {
+    let observation = serde_json::to_string(&observation_fixture()).unwrap();
+
+    // Assembled as text rather than with `json!`, because five of these cases
+    // are duplicate keys and a `serde_json::Map` cannot hold one.
+    let object = |fields: &[(&str, String)]| -> String {
+        let body = fields
+            .iter()
+            .map(|(name, value)| format!("\"{name}\":{value}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        format!("{{{body}}}")
+    };
+
+    // `Ok` names the detail level the decode must echo back, proving which
+    // variant it dispatched to; `Err` names a fragment the refusal must carry.
+    let expectations: [(&str, Result<&str, &str>); 16] = [
+        ("minimal dispatches", Ok("minimal")),
+        ("compact dispatches", Ok("compact")),
+        ("full dispatches", Ok("full")),
+        ("a null truncation is accepted", Ok("minimal")),
+        ("a truncation object is preserved", Ok("minimal")),
+        ("an unknown detail level is refused", Err("unknown variant")),
+        ("duplicate detail", Err("duplicate field `detail`")),
+        ("duplicate payload", Err("duplicate field `payload`")),
+        ("duplicate truncated", Err("duplicate field `truncated`")),
+        ("duplicate truncation", Err("duplicate field `truncation`")),
+        (
+            "duplicate observation",
+            Err("duplicate field `observation`"),
+        ),
+        ("missing detail", Err("missing field `detail`")),
+        ("missing payload", Err("missing field `payload`")),
+        ("missing truncated", Err("missing field `truncated`")),
+        ("missing observation", Err("missing field `observation`")),
+        (
+            "an unknown field is refused",
+            Err("unknown field `nonsense`"),
+        ),
+    ];
+
+    let cases = |key: &str| -> Vec<String> {
+        let detail = |level: &str| ("detail", format!("\"{level}\""));
+        let payload = || (key, "[]".to_owned());
+        let truncated = || ("truncated", "false".to_owned());
+        let observed = || ("observation", observation.clone());
+        let truncation = |value: &str| ("truncation", value.to_owned());
+        vec![
+            object(&[detail("minimal"), payload(), truncated(), observed()]),
+            object(&[detail("compact"), payload(), truncated(), observed()]),
+            object(&[detail("full"), payload(), truncated(), observed()]),
+            object(&[
+                detail("minimal"),
+                payload(),
+                truncated(),
+                truncation("null"),
+                observed(),
+            ]),
+            object(&[
+                detail("minimal"),
+                payload(),
+                truncated(),
+                truncation(r#"{"reason":"nodeLimit","visitedNodes":5}"#),
+                observed(),
+            ]),
+            object(&[detail("sketch"), payload(), truncated(), observed()]),
+            object(&[
+                detail("minimal"),
+                detail("minimal"),
+                payload(),
+                truncated(),
+                observed(),
+            ]),
+            object(&[
+                detail("minimal"),
+                payload(),
+                payload(),
+                truncated(),
+                observed(),
+            ]),
+            object(&[
+                detail("minimal"),
+                payload(),
+                truncated(),
+                truncated(),
+                observed(),
+            ]),
+            object(&[
+                detail("minimal"),
+                payload(),
+                truncated(),
+                truncation("null"),
+                truncation("null"),
+                observed(),
+            ]),
+            object(&[
+                detail("minimal"),
+                payload(),
+                truncated(),
+                observed(),
+                observed(),
+            ]),
+            object(&[payload(), truncated(), observed()]),
+            object(&[detail("minimal"), truncated(), observed()]),
+            object(&[detail("minimal"), payload(), observed()]),
+            object(&[detail("minimal"), payload(), truncated()]),
+            object(&[
+                detail("minimal"),
+                payload(),
+                truncated(),
+                observed(),
+                ("nonsense", "true".to_owned()),
+            ]),
+        ]
+    };
+
+    let batch = cases("items");
+    let selection = cases("nodes");
+    let context = cases("roots");
+    assert_eq!(batch.len(), expectations.len());
+
+    for (index, (name, expected)) in expectations.iter().enumerate() {
+        let from_original = shared_field_outcome::<GetNodesResult>(&batch[index], "items");
+        let from_unresolved_rule =
+            shared_field_outcome::<GetSelectionResult>(&selection[index], "nodes");
+        let from_unresolved_rule_again =
+            shared_field_outcome::<GetDesignContextResult>(&context[index], "roots");
+
+        match expected {
+            Ok(level) => {
+                let value = from_original
+                    .as_ref()
+                    .unwrap_or_else(|error| panic!("{name}: expected a decode, got {error}"));
+                assert_eq!(
+                    value["detail"], **level,
+                    "{name}: dispatched to the wrong variant"
+                );
+            }
+            Err(fragment) => {
+                let error = from_original
+                    .as_ref()
+                    .expect_err(&format!("{name}: expected a refusal"));
+                assert!(
+                    error.contains(fragment),
+                    "{name}: expected a refusal naming {fragment}, got {error}"
+                );
+            }
+        }
+
+        assert_eq!(
+            from_original, from_unresolved_rule,
+            "{name}: the original rule and the with_unresolved rule have diverged"
+        );
+        assert_eq!(
+            from_unresolved_rule, from_unresolved_rule_again,
+            "{name}: the two with_unresolved results have diverged"
+        );
+    }
+}
+
 #[test]
 fn search_node_types_are_count_and_utf8_byte_bounded() {
     let too_many = vec!["FRAME"; MAX_INPUT_IDS + 1];
