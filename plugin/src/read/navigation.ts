@@ -345,7 +345,12 @@ export async function resolveDesignRoots(
     for (const id of ids) {
       signal?.throwIfAborted()
       const node = await lookupNode(id)
-      if (node !== null && node !== undefined) roots.push(node)
+      // GetDesignContextResult carries no per-item error slot (it's a bare
+      // NodeForest, like GetSelectionResult), so a switched-off root is
+      // excluded rather than reported — same treatment as a lookup miss.
+      if (node !== null && node !== undefined && rendersVisibly(node)) {
+        roots.push(node)
+      }
     }
     return roots
   }
@@ -355,6 +360,9 @@ export async function resolveDesignRoots(
     if (node === null || node === undefined) {
       throw new PluginReadError("NODE_NOT_FOUND", false)
     }
+    // Excluded, not refused: NODE_NOT_FOUND would be wrong (the id resolved),
+    // and there is no per-item slot to carry a NODE_NOT_VISIBLE error in.
+    if (!rendersVisibly(node)) return []
     return [await loadPageIfNeeded(node)]
   }
   if ("nodeIds" in selector) {
@@ -365,7 +373,7 @@ export async function resolveDesignRoots(
       if (node === null || node === undefined) {
         throw new PluginReadError("NODE_NOT_FOUND", false)
       }
-      roots.push(await loadPageIfNeeded(node))
+      if (rendersVisibly(node)) roots.push(await loadPageIfNeeded(node))
     }
     return roots
   }

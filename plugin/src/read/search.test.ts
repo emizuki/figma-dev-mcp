@@ -518,6 +518,29 @@ describe("search_nodes handler", () => {
     expect(result.matches.map((item) => item.node.childIds)).toEqual([["1:8"]])
   })
 
+  test("a child inheriting invisibility from an ancestor above the searched subtree never matches", async () => {
+    // The entry root itself renders visibly (no hidden ancestor above it,
+    // so resolveSearchRoot's own guard does not fire), and the child's own
+    // `visible` is not false either. Only childrenOf's ancestor-walk, which
+    // follows the child's own `parent` reference past the searched subtree,
+    // catches this — a per-node `visible` check on the child would wrongly
+    // keep the match.
+    const hiddenAbove = { id: "0:0", visible: false }
+    const child = node("1:5", "Button", "FRAME")
+    ;(child as Record<string, unknown>).parent = hiddenAbove
+    const requested = page("0:1", "Requested", [child])
+    installFigma({ currentPage: requested, pages: [requested] })
+
+    const result = await searchNodes({
+      scope: { nodeId: requested.id },
+      query: "button",
+      match: "contains",
+      limit: 50,
+    })
+
+    expect(result.matches).toEqual([])
+  })
+
   test("a scope naming a node whose ancestor above it is switched off is refused, not silently empty", async () => {
     // The child and the search's entry root are both switched on — only a
     // node *above* the root, outside the searched subtree, is switched off.

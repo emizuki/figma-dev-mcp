@@ -948,4 +948,107 @@ describe("design context reader", () => {
       }),
     ).rejects.toMatchObject({ code: "PAGE_NOT_FOUND" })
   })
+
+  test("excludes a hidden root named by nodeId, rather than reporting or refusing it", async () => {
+    // GetDesignContextResult is a bare NodeForest with no per-item error
+    // slot, so a switched-off root is excluded, same as get_selection.
+    const hidden = {
+      id: "1:1",
+      name: "Hidden",
+      type: "FRAME",
+      visible: false,
+      children: [],
+    }
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [] },
+      currentPage: { id: "0:1", name: "Current", type: "PAGE", children: [] },
+      editorType: "dev",
+      getNodeByIdAsync: async (id: string) =>
+        id === hidden.id ? hidden : null,
+    }
+
+    await expect(
+      readDesignContext({
+        selector: { nodeId: hidden.id },
+        dedupeComponents: false,
+      }),
+    ).resolves.toMatchObject({ roots: [] })
+  })
+
+  test("excludes a hidden root from a selection, and its visible sibling still comes back", async () => {
+    const hidden = {
+      id: "1:2",
+      name: "Hidden",
+      type: "FRAME",
+      visible: false,
+      children: [],
+    }
+    const shown = {
+      id: "1:3",
+      name: "Shown",
+      type: "FRAME",
+      visible: true,
+      children: [],
+    }
+    const currentPage = {
+      id: "0:1",
+      name: "Current",
+      type: "PAGE",
+      children: [],
+      selection: [hidden, shown],
+    }
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [currentPage] },
+      currentPage,
+      editorType: "dev",
+      getNodeByIdAsync: async (id: string) =>
+        id === hidden.id ? hidden : id === shown.id ? shown : null,
+    }
+
+    const result = await readDesignContext({
+      selector: { selection: true },
+      dedupeComponents: false,
+    })
+
+    expect(result.roots.map((node) => node.summary.id)).toEqual([shown.id])
+  })
+
+  test("excludes a root whose ancestor is switched off, and keeps its visible sibling in nodeIds", async () => {
+    // Its own `visible` is true; only the ancestor walk catches this.
+    const hiddenParent = {
+      id: "1:4",
+      name: "Group",
+      type: "FRAME",
+      visible: false,
+    }
+    const deep = {
+      id: "1:5",
+      name: "Deep",
+      type: "FRAME",
+      visible: true,
+      children: [],
+      parent: hiddenParent,
+    }
+    const shown = {
+      id: "1:6",
+      name: "Shown",
+      type: "FRAME",
+      visible: true,
+      children: [],
+    }
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [] },
+      currentPage: { id: "0:1", name: "Current", type: "PAGE", children: [] },
+      editorType: "dev",
+      getNodeByIdAsync: async (id: string) =>
+        id === deep.id ? deep : id === shown.id ? shown : null,
+    }
+
+    const result = await readDesignContext({
+      selector: { nodeIds: [deep.id, shown.id] },
+      dedupeComponents: false,
+    })
+
+    expect(result.roots.map((node) => node.summary.id)).toEqual([shown.id])
+  })
 })

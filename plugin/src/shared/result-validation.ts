@@ -261,6 +261,13 @@ function oneOf<const Value extends string>(
   return fail(`${label} is not an allowed value`)
 }
 
+// Every entry below must stay on one line (see the NODE_NOT_VISIBLE
+// prettier-ignore for why): the Rust mirror test in tests/contracts/mod.rs
+// (plugin_message_map) parses this object line by line — split on the
+// first colon, then the message pulled from the first quoted span on that
+// same line — so a wrapped entry silently disappears from the parsed map
+// instead of failing loudly, and the mirror test then fails on a missing
+// code with no clue this file is the cause.
 const CANONICAL_MESSAGES: Record<ErrorCode, string> = {
   NO_FIGMA_CONNECTION: "No Figma connection is available.",
   AMBIGUOUS_CONNECTION: "More than one Figma connection matches the request.",

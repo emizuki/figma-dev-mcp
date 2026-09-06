@@ -54,6 +54,13 @@ export interface ScreenshotCodec {
   encodeSvg(source: string): Promise<SvgEncodeResult>
 }
 
+// Every entry below must stay on one line (see the NODE_NOT_VISIBLE
+// prettier-ignore for why): the Rust mirror test in tests/contracts/mod.rs
+// (plugin_message_map) parses this object line by line — split on the
+// first colon, then the message pulled from the first quoted span on that
+// same line — so a wrapped entry silently disappears from the parsed map
+// instead of failing loudly, and the mirror test then fails on a missing
+// code with no clue this file is the cause.
 const MESSAGES: Record<ErrorCode, string> = {
   NO_FIGMA_CONNECTION: "No Figma connection is available.",
   AMBIGUOUS_CONNECTION: "More than one Figma connection matches the request.",
@@ -129,11 +136,15 @@ function exportSettings(input: GetScreenshotInput): Record<string, unknown> {
  * would fire on precisely those nodes and on almost nothing else, since every
  * other type is clamped to at least 0.01.
  *
- * The visibility guard is the price of using it. The same API calls a node
- * invisible when an *ancestor* is switched off, and null-because-hidden says
- * nothing about whether the node has anything in it, so those fall through to
- * the exporter exactly as they do today. The guard can only make this rule fire
- * less often, never more.
+ * The same API calls a node invisible when an *ancestor* is switched off, and
+ * null-because-hidden says nothing about whether the node has anything in
+ * it — reporting EMPTY_NODE_BOUNDS for such a node would be as wrong as
+ * reporting it for one the host simply cannot measure. That case no longer
+ * reaches here at all: the caller refuses a switched-off node (by its own
+ * `visible` or an ancestor's) with NODE_NOT_VISIBLE before this function is
+ * ever called, so this rule only ever runs on a node already known to
+ * render. No visibility check is repeated here — the caller's guard is the
+ * only one, and this function trusts it rather than re-deriving it.
  *
  * `undefined` is not `null`: a property the host does not carry at all — a
  * `PAGE`, which has no layout — or one whose getter throws under
@@ -141,7 +152,6 @@ function exportSettings(input: GetScreenshotInput): Record<string, unknown> {
  * not an empty one. */
 function rendersNothing(node: unknown): boolean {
   if (!isRecord(node)) return false
-  if (!rendersVisibly(node)) return false
   return hostGet(node, "absoluteRenderBounds") === null
 }
 
