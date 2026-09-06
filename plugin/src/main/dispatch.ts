@@ -1,5 +1,7 @@
 import {
+  awaitWithSignal,
   CancellationRegistry,
+  ignoreSettlement,
   LocalCancellationError,
   type CancellationSignal,
   type LocalCancellationController,
@@ -179,7 +181,17 @@ export async function dispatchControllerMessage(
         )
         bindProgress(controller.signal, progress)
         progress.startHeartbeat("reading")
-        const result = await dispatchRead(message.operation, controller.signal)
+        // Raced at the request boundary rather than left to the read code to
+        // poll: most read code checks `signal` between steps, but a single
+        // `await` on a host API — most importantly `exportAsync` for a large
+        // screenshot — does not, and cancelling must still take effect
+        // immediately rather than waiting for that call to return on its
+        // own. `work` is not stopped by losing the race; it keeps running
+        // detached, so its eventual settlement is swallowed rather than left
+        // to surface as an unhandled rejection.
+        const work = dispatchRead(message.operation, controller.signal)
+        ignoreSettlement(work)
+        const result = await awaitWithSignal(work, controller.signal)
         return {
           type: "response",
           controllerRequestId: message.controllerRequestId,

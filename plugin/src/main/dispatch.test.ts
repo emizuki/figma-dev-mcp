@@ -13,6 +13,38 @@ import {
 const controllerRequestId = (index: number): string =>
   `123e4567-e89b-42d3-a456-${String(index).padStart(12, "0")}`
 
+// A host `exportAsync` that never settles, standing in for a large export the
+// operator cancels partway through. Read code has no obligation to poll
+// `signal` mid-await, so this is the case that can only be cancelled at the
+// request boundary, not inside the read.
+function installHangingScreenshot(): void {
+  const node = {
+    id: "4:1",
+    type: "FRAME",
+    exportAsync: () => new Promise(() => {}),
+  }
+  ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+    root: { name: "Checkout flow", children: [{ id: "0:1", name: "Page 1" }] },
+    currentPage: { id: "0:1", name: "Page 1" },
+    editorType: "dev",
+    getNodeByIdAsync: async (id: string) => (id === "4:1" ? node : null),
+  }
+}
+
+// Settles a promise or a bounded timeout, whichever comes first, so a test
+// can assert "resolved promptly" without hanging the suite when it does not.
+function raceAgainstTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+): Promise<{ settled: true; value: T } | { settled: false }> {
+  return Promise.race([
+    promise.then((value) => ({ settled: true as const, value })),
+    new Promise<{ settled: false }>((resolve) =>
+      setTimeout(() => resolve({ settled: false }), timeoutMs),
+    ),
+  ])
+}
+
 const EMPTY_INPUTS: Record<
   (typeof OPERATION_NAMES)[number],
   Record<string, unknown>
@@ -227,6 +259,50 @@ describe("closed read dispatcher", () => {
     expect(requestBoundaryFailure(new Error("private details"))).toEqual({
       code: "INTERNAL_ERROR",
       retryable: false,
+    })
+  })
+
+  test("cancelling a read that never resolves settles the dispatch as CANCELLED promptly", async () => {
+    installHangingScreenshot()
+    const registry = new CancellationRegistry()
+    const correlationId = controllerRequestId(200)
+    const request = parseControllerBoundMessage({
+      type: "request",
+      controllerRequestId: correlationId,
+      requestId: "plugin-hang",
+      deadlineMs: 1,
+      target: {},
+      operation: {
+        operation: "get_screenshot",
+        input: { format: "png", selector: { nodeId: "4:1" } },
+      },
+    })
+    if (request.type !== "request")
+      throw new Error("test request did not decode")
+
+    const dispatched = dispatchControllerMessage(request, registry)
+    // Give dispatchRead a turn to actually call the hanging exportAsync
+    // before cancelling, so this exercises cancelling mid-export rather than
+    // cancelling before the read has started.
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+    registry.cancel(correlationId)
+
+    const settled = await raceAgainstTimeout(dispatched, 200)
+
+    // Without the fix this never settles within the timeout: dispatchRead
+    // only awaits the hanging exportAsync call directly, and nothing in that
+    // path polls the signal, so the dispatch promise hangs until the export
+    // itself resolves — which, for this test's exporter, is never.
+    expect(settled).toEqual({
+      settled: true,
+      value: {
+        type: "error",
+        controllerRequestId: correlationId,
+        requestId: "plugin-hang",
+        error: { code: "CANCELLED", retryable: false },
+      },
     })
   })
 })
