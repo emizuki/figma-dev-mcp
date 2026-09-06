@@ -380,6 +380,14 @@
         ],
         "type": "string"
       },
+      "CanonicalErrorMessage": {
+        "description": "code-owned canonical error message; bounded by UTF-8 encoded byte length",
+        "maxLength": 1024,
+        "minLength": 1,
+        "readOnly": true,
+        "type": "string",
+        "x-maxUtf8Bytes": 1024
+      },
       "Color": {
         "additionalProperties": false,
         "properties": {
@@ -895,6 +903,44 @@
           }
         ]
       },
+      "ErrorCode": {
+        "oneOf": [
+          {
+            "enum": [
+              "NO_FIGMA_CONNECTION",
+              "AMBIGUOUS_CONNECTION",
+              "CONNECTION_NOT_FOUND",
+              "CONNECTION_LOST",
+              "PROTOCOL_MISMATCH",
+              "NODE_NOT_FOUND",
+              "PAGE_NOT_FOUND",
+              "UNSUPPORTED_NODE",
+              "CAPABILITY_UNAVAILABLE",
+              "INVALID_CURSOR",
+              "LIMIT_EXCEEDED",
+              "TIMEOUT",
+              "CANCELLED",
+              "INTERNAL_ERROR"
+            ],
+            "type": "string"
+          },
+          {
+            "const": "NODE_NOT_VISIBLE",
+            "description": "The node is in the document but does not render, by its own `visible`\nor an ancestor's. Distinct from `NODE_NOT_FOUND`, which means the id\nresolved to nothing: here the id is correct and the caller would waste\ntheir time re-checking it. The server returns only what Figma draws, so\na switched-off node is refused rather than returned with a flag.",
+            "type": "string"
+          },
+          {
+            "const": "EMPTY_NODE_BOUNDS",
+            "description": "The node puts no ink on the page, so there is no picture to return in\nany format. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Judged on the host's own render bounds,\nmeasured after strokes and effects, so a zero-height rule or divider\nstill renders and still succeeds.",
+            "type": "string"
+          },
+          {
+            "const": "UNSAFE_SVG",
+            "description": "Reserved and no longer emitted: SVG safety reports a verdict on the\nasset instead of failing the item. The member stays because removing a\nmember of a closed enum is itself a wire change.",
+            "type": "string"
+          }
+        ]
+      },
       "FullNodeData": {
         "additionalProperties": false,
         "properties": {
@@ -1105,6 +1151,49 @@
           "properties"
         ],
         "type": "object"
+      },
+      "ItemError": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "$ref": "#/$defs/ErrorCode"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ItemIdentifier"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "index": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "message": {
+            "$ref": "#/$defs/CanonicalErrorMessage"
+          },
+          "retryable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "index",
+          "code",
+          "message",
+          "retryable"
+        ],
+        "type": "object"
+      },
+      "ItemIdentifier": {
+        "description": "item identifier; bounded by UTF-8 encoded byte length",
+        "maxLength": 256,
+        "minLength": 1,
+        "type": "string",
+        "x-maxUtf8Bytes": 256
       },
       "LayoutConstraints": {
         "additionalProperties": false,
@@ -1996,6 +2085,36 @@
         ],
         "type": "object"
       },
+      "ToolError": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "$ref": "#/$defs/ErrorCode"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/$defs/ItemError"
+            },
+            "maxItems": 2000,
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "message": {
+            "$ref": "#/$defs/CanonicalErrorMessage"
+          },
+          "retryable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "retryable"
+        ],
+        "type": "object"
+      },
       "Transform2D": {
         "additionalProperties": false,
         "properties": {
@@ -2079,6 +2198,23 @@
         ],
         "type": "string"
       },
+      "UnresolvedNode": {
+        "additionalProperties": false,
+        "description": "A node the visibility walk could not resolve, and why.\n\nOnly ever an unwalkable ancestor chain. A switched-off node is absent from\nthe forest and absent from here: callers of this server are agents reading\na design, and a list of every hidden layer would be noise in every\nresponse.",
+        "properties": {
+          "error": {
+            "$ref": "#/$defs/ToolError"
+          },
+          "id": {
+            "$ref": "#/$defs/NodeId"
+          }
+        },
+        "required": [
+          "id",
+          "error"
+        ],
+        "type": "object"
+      },
       "VariableReference": {
         "additionalProperties": false,
         "properties": {
@@ -2125,6 +2261,12 @@
                 "type": "null"
               }
             ]
+          },
+          "unresolved": {
+            "items": {
+              "$ref": "#/$defs/UnresolvedNode"
+            },
+            "type": "array"
           }
         },
         "required": [
@@ -2160,6 +2302,12 @@
                 "type": "null"
               }
             ]
+          },
+          "unresolved": {
+            "items": {
+              "$ref": "#/$defs/UnresolvedNode"
+            },
+            "type": "array"
           }
         },
         "required": [
@@ -2195,6 +2343,12 @@
                 "type": "null"
               }
             ]
+          },
+          "unresolved": {
+            "items": {
+              "$ref": "#/$defs/UnresolvedNode"
+            },
+            "type": "array"
           }
         },
         "required": [
@@ -7497,6 +7651,14 @@
         ],
         "type": "string"
       },
+      "CanonicalErrorMessage": {
+        "description": "code-owned canonical error message; bounded by UTF-8 encoded byte length",
+        "maxLength": 1024,
+        "minLength": 1,
+        "readOnly": true,
+        "type": "string",
+        "x-maxUtf8Bytes": 1024
+      },
       "Color": {
         "additionalProperties": false,
         "properties": {
@@ -8012,6 +8174,44 @@
           }
         ]
       },
+      "ErrorCode": {
+        "oneOf": [
+          {
+            "enum": [
+              "NO_FIGMA_CONNECTION",
+              "AMBIGUOUS_CONNECTION",
+              "CONNECTION_NOT_FOUND",
+              "CONNECTION_LOST",
+              "PROTOCOL_MISMATCH",
+              "NODE_NOT_FOUND",
+              "PAGE_NOT_FOUND",
+              "UNSUPPORTED_NODE",
+              "CAPABILITY_UNAVAILABLE",
+              "INVALID_CURSOR",
+              "LIMIT_EXCEEDED",
+              "TIMEOUT",
+              "CANCELLED",
+              "INTERNAL_ERROR"
+            ],
+            "type": "string"
+          },
+          {
+            "const": "NODE_NOT_VISIBLE",
+            "description": "The node is in the document but does not render, by its own `visible`\nor an ancestor's. Distinct from `NODE_NOT_FOUND`, which means the id\nresolved to nothing: here the id is correct and the caller would waste\ntheir time re-checking it. The server returns only what Figma draws, so\na switched-off node is refused rather than returned with a flag.",
+            "type": "string"
+          },
+          {
+            "const": "EMPTY_NODE_BOUNDS",
+            "description": "The node puts no ink on the page, so there is no picture to return in\nany format. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Judged on the host's own render bounds,\nmeasured after strokes and effects, so a zero-height rule or divider\nstill renders and still succeeds.",
+            "type": "string"
+          },
+          {
+            "const": "UNSAFE_SVG",
+            "description": "Reserved and no longer emitted: SVG safety reports a verdict on the\nasset instead of failing the item. The member stays because removing a\nmember of a closed enum is itself a wire change.",
+            "type": "string"
+          }
+        ]
+      },
       "FullNodeData": {
         "additionalProperties": false,
         "properties": {
@@ -8222,6 +8422,49 @@
           "properties"
         ],
         "type": "object"
+      },
+      "ItemError": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "$ref": "#/$defs/ErrorCode"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ItemIdentifier"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "index": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "message": {
+            "$ref": "#/$defs/CanonicalErrorMessage"
+          },
+          "retryable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "index",
+          "code",
+          "message",
+          "retryable"
+        ],
+        "type": "object"
+      },
+      "ItemIdentifier": {
+        "description": "item identifier; bounded by UTF-8 encoded byte length",
+        "maxLength": 256,
+        "minLength": 1,
+        "type": "string",
+        "x-maxUtf8Bytes": 256
       },
       "LayoutConstraints": {
         "additionalProperties": false,
@@ -9113,6 +9356,36 @@
         ],
         "type": "object"
       },
+      "ToolError": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "$ref": "#/$defs/ErrorCode"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/$defs/ItemError"
+            },
+            "maxItems": 2000,
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "message": {
+            "$ref": "#/$defs/CanonicalErrorMessage"
+          },
+          "retryable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "retryable"
+        ],
+        "type": "object"
+      },
       "Transform2D": {
         "additionalProperties": false,
         "properties": {
@@ -9196,6 +9469,23 @@
         ],
         "type": "string"
       },
+      "UnresolvedNode": {
+        "additionalProperties": false,
+        "description": "A node the visibility walk could not resolve, and why.\n\nOnly ever an unwalkable ancestor chain. A switched-off node is absent from\nthe forest and absent from here: callers of this server are agents reading\na design, and a list of every hidden layer would be noise in every\nresponse.",
+        "properties": {
+          "error": {
+            "$ref": "#/$defs/ToolError"
+          },
+          "id": {
+            "$ref": "#/$defs/NodeId"
+          }
+        },
+        "required": [
+          "id",
+          "error"
+        ],
+        "type": "object"
+      },
       "VariableReference": {
         "additionalProperties": false,
         "properties": {
@@ -9242,6 +9532,12 @@
                 "type": "null"
               }
             ]
+          },
+          "unresolved": {
+            "items": {
+              "$ref": "#/$defs/UnresolvedNode"
+            },
+            "type": "array"
           }
         },
         "required": [
@@ -9277,6 +9573,12 @@
                 "type": "null"
               }
             ]
+          },
+          "unresolved": {
+            "items": {
+              "$ref": "#/$defs/UnresolvedNode"
+            },
+            "type": "array"
           }
         },
         "required": [
@@ -9312,6 +9614,12 @@
                 "type": "null"
               }
             ]
+          },
+          "unresolved": {
+            "items": {
+              "$ref": "#/$defs/UnresolvedNode"
+            },
+            "type": "array"
           }
         },
         "required": [

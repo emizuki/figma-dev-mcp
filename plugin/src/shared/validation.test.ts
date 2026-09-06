@@ -887,6 +887,78 @@ describe("closed plugin transport validation", () => {
     }
   })
 
+  test("the two forest results carry unresolved nodes; get_nodes does not", () => {
+    const unresolved = [
+      {
+        id: "1:2",
+        error: {
+          code: "LIMIT_EXCEEDED",
+          message: "The operation exceeded a safety limit.",
+          retryable: false,
+        },
+      },
+    ]
+
+    for (const [operation, field] of [
+      ["get_selection", "nodes"],
+      ["get_design_context", "roots"],
+    ] as const) {
+      const message = resultMessage(operation, {
+        detail: "minimal",
+        [field]: [designNode("1:1", {})],
+        truncated: false,
+        observation,
+        unresolved,
+      })
+      const parsed: unknown = parseControllerOutboundMessage(message)
+      expect(parsed).toEqual(message)
+    }
+
+    // Absent stays absent: Rust omits the field when it is empty, so a healthy
+    // response must round-trip without growing the key.
+    const healthy = resultMessage("get_selection", {
+      detail: "minimal",
+      nodes: [],
+      truncated: false,
+      observation,
+    })
+    const parsedHealthy: unknown = parseControllerOutboundMessage(healthy)
+    expect(parsedHealthy).toEqual(healthy)
+
+    // An entry's error must carry the canonical message for its code, because
+    // Rust's ToolError refuses to decode one that does not.
+    expect(() =>
+      parseControllerOutboundMessage(
+        resultMessage("get_selection", {
+          detail: "minimal",
+          nodes: [],
+          truncated: false,
+          observation,
+          unresolved: [
+            {
+              id: "1:2",
+              error: { code: "LIMIT_EXCEEDED", retryable: false },
+            },
+          ],
+        }),
+      ),
+    ).toThrow(/missing message/)
+  })
+
+  test("get_nodes rejects unresolved as an unknown field", () => {
+    expect(() =>
+      parseControllerOutboundMessage(
+        resultMessage("get_nodes", {
+          detail: "minimal",
+          items: [],
+          truncated: false,
+          observation,
+          unresolved: [],
+        }),
+      ),
+    ).toThrow(/unknown field unresolved/)
+  })
+
   test("rejects recursive results beyond depth and global node budgets", () => {
     let node: Record<string, unknown> = {
       summary: {

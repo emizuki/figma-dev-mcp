@@ -230,6 +230,17 @@ export interface PluginFailure {
   items?: PluginItemFailure[]
 }
 
+/** A node the visibility walk could not resolve, and why.
+ *
+ * Deliberately not a `PluginItemFailure`: that shape is positional, carrying an
+ * `index` into a batch, and these entries are not batch items. The error is a
+ * `ToolError` on the Rust side, whose hand-written codec both emits and demands
+ * the canonical `message` for the code, so `message` is not optional here. */
+export interface UnresolvedNode {
+  id: string
+  error: { code: ErrorCode; message: string; retryable: boolean }
+}
+
 export type BrokerToPlugin =
   | {
       type: "request"
