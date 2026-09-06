@@ -277,7 +277,7 @@ export async function getDevModeData(
     encodedBytes: limits?.encodedBytes ?? MAX_TEXT_BYTES,
   })
   const catalog = await loadCategories()
-  const roots = await resolveDesignRoots(input.selector, signal)
+  const { roots } = await resolveDesignRoots(input.selector, signal)
   const pending: unknown[] = []
   const walked = walkNodeForest(roots, walkOptions(signal, limits), (raw) => {
     pending.push(raw)

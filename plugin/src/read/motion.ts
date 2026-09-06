@@ -660,7 +660,7 @@ export async function getMotion(
     input.includeAvailableStyles === true
       ? availableStyles(motion.catalog())
       : []
-  const roots = await resolveDesignRoots(input.selector, signal)
+  const { roots } = await resolveDesignRoots(input.selector, signal)
   const pending: unknown[] = []
   const walked = walkNodeForest(roots, walkOptions(signal, limits), (raw) => {
     pending.push(raw)

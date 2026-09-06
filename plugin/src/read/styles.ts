@@ -273,7 +273,7 @@ async function emitReferenced(
   if (lookup === undefined) {
     throw new PluginReadError("CAPABILITY_UNAVAILABLE", false)
   }
-  const roots = await resolveDesignRoots(input.selector, signal)
+  const { roots } = await resolveDesignRoots(input.selector, signal)
   const pending: string[] = []
   const pendingSeen = new Set(emission.seen)
   const walked = walkNodeForest(roots, walkOptions(signal, limits), (raw) => {

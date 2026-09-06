@@ -8,6 +8,7 @@ import type {
   GetSelectionInput,
   GetSelectionResult,
   Selector,
+  UnresolvedNode,
 } from "../shared/protocol"
 import { assertNever } from "../shared/protocol"
 import { MAX_DEPTH, MAX_RETURNED_NODES } from "../shared/limits"
@@ -28,7 +29,7 @@ import {
   serializeNodeForest,
   type SerializeNodeForestOptions,
 } from "./serialize"
-import { rendersVisibly, visibilityOf } from "./visibility"
+import { visibilityOf } from "./visibility"
 import { CANONICAL_MESSAGES } from "../shared/result-validation"
 
 function serializeOptions(
@@ -183,6 +184,7 @@ export async function readSelection(
   const detail = defaultDetail(input)
   const depth = defaultDepth(input.depth)
   const roots: unknown[] = []
+  const unresolved: UnresolvedNode[] = []
   if (ids.length > 0 && figma.getNodeByIdAsync === undefined) {
     throw new PluginReadError("CAPABILITY_UNAVAILABLE", false)
   }
@@ -190,12 +192,15 @@ export async function readSelection(
     for (const id of ids) {
       signal?.throwIfAborted()
       const node = await lookupNode(id)
-      // GetSelectionResult carries no per-item error slot, so a switched-off
-      // selected root is excluded rather than reported — same treatment as a
-      // lookup miss, and it must not sink the rest of the selection either.
-      if (node !== null && node !== undefined && rendersVisibly(node)) {
-        roots.push(node)
-      }
+      if (node === null || node === undefined) continue
+      const verdict = visibilityOf(node)
+      // A switched-off root stays silently absent: it is not an error and the
+      // caller does not need it enumerated. An unwalkable chain is an error
+      // that stopped a possibly-rendering node from being returned, so it is
+      // reported rather than swallowed.
+      if (verdict === "renders") roots.push(node)
+      else if (verdict === "undetermined")
+        unresolved.push({ id, error: nodeError("LIMIT_EXCEEDED") })
     }
   }
   const serialized = await serializePreparedForest(
@@ -210,6 +215,7 @@ export async function readSelection(
     ...(serialized.truncation === undefined
       ? {}
       : { truncation: serialized.truncation }),
+    ...(unresolved.length > 0 ? { unresolved } : {}),
     observation: observation(startedAt),
   }
   return result as GetSelectionResult
@@ -335,22 +341,28 @@ async function loadExplicitPage(
 export async function resolveDesignRoots(
   selector: Selector | undefined,
   signal?: CancellationSignal,
-): Promise<unknown[]> {
-  if (selector === undefined) return [figma.currentPage]
+): Promise<{ roots: unknown[]; unresolved: UnresolvedNode[] }> {
+  if (selector === undefined)
+    return { roots: [figma.currentPage], unresolved: [] }
   if ("selection" in selector) {
     const ids = capturedSelectionIds()
     const roots: unknown[] = []
+    const unresolved: UnresolvedNode[] = []
     for (const id of ids) {
       signal?.throwIfAborted()
       const node = await lookupNode(id)
+      if (node === null || node === undefined) continue
+      const verdict = visibilityOf(node)
       // GetDesignContextResult carries no per-item error slot (it's a bare
-      // NodeForest, like GetSelectionResult), so a switched-off root is
-      // excluded rather than reported — same treatment as a lookup miss.
-      if (node !== null && node !== undefined && rendersVisibly(node)) {
-        roots.push(node)
-      }
+      // NodeForest, like GetSelectionResult), so a switched-off root stays
+      // silently absent — same treatment as a lookup miss. An unwalkable
+      // chain is different: it is an error that stopped a possibly-rendering
+      // node from being returned, so it is reported.
+      if (verdict === "renders") roots.push(node)
+      else if (verdict === "undetermined")
+        unresolved.push({ id, error: nodeError("LIMIT_EXCEEDED") })
     }
-    return roots
+    return { roots, unresolved }
   }
   if ("nodeId" in selector) {
     signal?.throwIfAborted()
@@ -360,29 +372,44 @@ export async function resolveDesignRoots(
     }
     // Excluded, not refused: NODE_NOT_FOUND would be wrong (the id resolved),
     // and there is no per-item slot to carry a NODE_NOT_VISIBLE error in.
-    if (!rendersVisibly(node)) return []
-    return [await loadPageIfNeeded(node)]
+    const verdict = visibilityOf(node)
+    if (verdict === "hidden") return { roots: [], unresolved: [] }
+    if (verdict === "undetermined")
+      return {
+        roots: [],
+        unresolved: [
+          { id: selector.nodeId, error: nodeError("LIMIT_EXCEEDED") },
+        ],
+      }
+    return { roots: [await loadPageIfNeeded(node)], unresolved: [] }
   }
   if ("nodeIds" in selector) {
     const roots: unknown[] = []
+    const unresolved: UnresolvedNode[] = []
     for (const id of selector.nodeIds) {
       signal?.throwIfAborted()
       const node = await lookupNode(id)
       if (node === null || node === undefined) {
         throw new PluginReadError("NODE_NOT_FOUND", false)
       }
-      if (rendersVisibly(node)) roots.push(await loadPageIfNeeded(node))
+      const verdict = visibilityOf(node)
+      if (verdict === "renders") roots.push(await loadPageIfNeeded(node))
+      else if (verdict === "undetermined")
+        unresolved.push({ id, error: nodeError("LIMIT_EXCEEDED") })
     }
-    return roots
+    return { roots, unresolved }
   }
   if ("pageId" in selector)
-    return [await loadExplicitPage(selector.pageId, signal)]
+    return {
+      roots: [await loadExplicitPage(selector.pageId, signal)],
+      unresolved: [],
+    }
   if ("pageIds" in selector) {
     const roots: unknown[] = []
     for (const id of selector.pageIds) {
       roots.push(await loadExplicitPage(id, signal))
     }
-    return roots
+    return { roots, unresolved: [] }
   }
   return assertNever(selector)
 }
@@ -394,7 +421,7 @@ export async function readDesignContext(
   const startedAt = new Date().toISOString()
   const detail = defaultDetail(input)
   const depth = defaultDepth(input.depth)
-  const roots = await resolveDesignRoots(input.selector, signal)
+  const { roots, unresolved } = await resolveDesignRoots(input.selector, signal)
   const serialized = await serializePreparedForest(
     roots,
     {
@@ -411,6 +438,7 @@ export async function readDesignContext(
     ...(serialized.truncation === undefined
       ? {}
       : { truncation: serialized.truncation }),
+    ...(unresolved.length > 0 ? { unresolved } : {}),
     observation: observation(startedAt),
   }
   return result as GetDesignContextResult

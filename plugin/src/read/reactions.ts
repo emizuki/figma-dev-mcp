@@ -471,7 +471,7 @@ export async function getReactions(
     visitedNodes: limits?.visitedNodes ?? MAX_VISITED_NODES,
     encodedBytes: limits?.encodedBytes ?? MAX_TEXT_BYTES,
   })
-  const roots = await resolveDesignRoots(input.selector, signal)
+  const { roots } = await resolveDesignRoots(input.selector, signal)
   const pending: unknown[] = []
   const walked = walkNodeForest(roots, walkOptions(signal, limits), (raw) => {
     pending.push(raw)

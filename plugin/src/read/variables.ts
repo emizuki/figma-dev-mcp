@@ -435,7 +435,7 @@ export async function getVariables(
   // Local storage answers a different question: library variables are bound by
   // the thousand and stored locally by none, so enumerating locally returned a
   // set that provably did not intersect what the same scope actually binds.
-  const roots = await resolveDesignRoots(input.selector, signal)
+  const { roots } = await resolveDesignRoots(input.selector, signal)
   const pending: string[] = []
   const seen = new Set<string>()
   const walked = walkNodeForest(roots, walkOptions(signal, limits), (raw) => {

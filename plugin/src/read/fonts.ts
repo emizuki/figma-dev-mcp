@@ -223,7 +223,7 @@ export async function getFonts(
     visitedNodes: limits?.visitedNodes ?? MAX_VISITED_NODES,
     encodedBytes: limits?.encodedBytes ?? MAX_TEXT_BYTES,
   })
-  const roots = await resolveDesignRoots(input.selector, signal)
+  const { roots } = await resolveDesignRoots(input.selector, signal)
   const collected = new Map<string, CollectedFont>()
   let index = 0
   const walked = walkNodeForest(roots, walkOptions(signal, limits), (raw) => {

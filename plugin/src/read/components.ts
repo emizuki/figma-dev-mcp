@@ -232,7 +232,7 @@ export async function getComponents(
     visitedNodes: limits?.visitedNodes ?? MAX_VISITED_NODES,
     encodedBytes: limits?.encodedBytes ?? MAX_TEXT_BYTES,
   })
-  const roots = await resolveDesignRoots(input.selector, signal)
+  const { roots } = await resolveDesignRoots(input.selector, signal)
   const components = new Map<string, unknown>()
   const componentOrder: string[] = []
   const instances = new Map<string, unknown>()

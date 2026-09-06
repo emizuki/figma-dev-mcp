@@ -206,6 +206,73 @@ describe("selection reader", () => {
       truncated: false,
     })
   })
+
+  test("get_selection reports an unwalkable root and stays silent about a hidden one", async () => {
+    const hidden = {
+      id: "1:2",
+      name: "Hidden",
+      type: "FRAME",
+      visible: false,
+      children: [],
+    }
+    const looped: Record<string, unknown> = {
+      id: "1:3",
+      name: "Looped",
+      type: "FRAME",
+      visible: true,
+      children: [],
+    }
+    looped.parent = looped
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [] },
+      currentPage: {
+        id: "0:1",
+        name: "Page 1",
+        selection: [hidden, looped],
+      },
+      editorType: "dev",
+      getNodeByIdAsync: async (id: string) =>
+        id === hidden.id ? hidden : id === looped.id ? looped : null,
+    }
+
+    const result = await readSelection({}, undefined)
+
+    expect(result.nodes).toHaveLength(0)
+    expect(result.unresolved).toEqual([
+      {
+        id: "1:3",
+        error: {
+          code: "LIMIT_EXCEEDED",
+          message: "The operation exceeded a safety limit.",
+          retryable: false,
+        },
+      },
+    ])
+  })
+
+  test("a clean selection omits unresolved entirely", async () => {
+    const live = {
+      id: "1:2",
+      name: "Live",
+      type: "FRAME",
+      visible: true,
+      children: [],
+    }
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [] },
+      currentPage: {
+        id: "0:1",
+        name: "Page 1",
+        selection: [live],
+      },
+      editorType: "dev",
+      getNodeByIdAsync: async (id: string) => (id === live.id ? live : null),
+    }
+
+    const result = await readSelection({}, undefined)
+
+    expect(Object.hasOwn(result, "unresolved")).toBe(false)
+  })
 })
 
 describe("node reader", () => {
@@ -1026,6 +1093,41 @@ describe("design context reader", () => {
         dedupeComponents: false,
       }),
     ).resolves.toMatchObject({ roots: [] })
+  })
+
+  test("get_design_context reports an unwalkable selector root", async () => {
+    const looped: Record<string, unknown> = {
+      id: "1:3",
+      name: "Looped",
+      type: "FRAME",
+      visible: true,
+      children: [],
+    }
+    looped.parent = looped
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [] },
+      currentPage: { id: "0:1", name: "Current", type: "PAGE", children: [] },
+      editorType: "dev",
+      getNodeByIdAsync: async (id: string) =>
+        id === looped.id ? looped : null,
+    }
+
+    const result = await readDesignContext(
+      { selector: { nodeId: "1:3" }, dedupeComponents: false },
+      undefined,
+    )
+
+    expect(result.roots).toHaveLength(0)
+    expect(result.unresolved).toEqual([
+      {
+        id: "1:3",
+        error: {
+          code: "LIMIT_EXCEEDED",
+          message: "The operation exceeded a safety limit.",
+          retryable: false,
+        },
+      },
+    ])
   })
 
   test("excludes a hidden root from a selection, and its visible sibling still comes back", async () => {
