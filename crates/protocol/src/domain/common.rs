@@ -2075,7 +2075,6 @@ pub struct NodeSummary {
     pub id: NodeId,
     pub name: DisplayText,
     pub node_type: NodeTypeName,
-    pub visible: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_id: Option<NodeId>,
     #[serde(default, skip_serializing_if = "NodeIdList::is_empty")]

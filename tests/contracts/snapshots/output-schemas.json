@@ -1410,16 +1410,12 @@
                 "type": "null"
               }
             ]
-          },
-          "visible": {
-            "type": "boolean"
           }
         },
         "required": [
           "id",
           "name",
-          "nodeType",
-          "visible"
+          "nodeType"
         ],
         "type": "object"
       },
@@ -5383,16 +5379,12 @@
                 "type": "null"
               }
             ]
-          },
-          "visible": {
-            "type": "boolean"
           }
         },
         "required": [
           "id",
           "name",
-          "nodeType",
-          "visible"
+          "nodeType"
         ],
         "type": "object"
       },
@@ -8535,16 +8527,12 @@
                 "type": "null"
               }
             ]
-          },
-          "visible": {
-            "type": "boolean"
           }
         },
         "required": [
           "id",
           "name",
-          "nodeType",
-          "visible"
+          "nodeType"
         ],
         "type": "object"
       },
@@ -11076,16 +11064,12 @@
                 "type": "null"
               }
             ]
-          },
-          "visible": {
-            "type": "boolean"
           }
         },
         "required": [
           "id",
           "name",
-          "nodeType",
-          "visible"
+          "nodeType"
         ],
         "type": "object"
       },

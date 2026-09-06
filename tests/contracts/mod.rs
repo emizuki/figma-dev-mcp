@@ -2165,7 +2165,7 @@ fn observation_fixture() -> Value {
 
 fn node_summary_fixture() -> Value {
     json!({
-        "id": "1:2", "name": "Card", "nodeType": "FRAME", "visible": true,
+        "id": "1:2", "name": "Card", "nodeType": "FRAME",
         "parentId": "0:1", "childIds": ["1:3"],
         "bounds": {"x": 0.0, "y": 0.0, "width": 320.0, "height": 200.0}
     })
@@ -3037,7 +3037,7 @@ const WIRE_SNAPSHOTS: [&str; 3] = [
 
 /// The fingerprint of `WIRE_SNAPSHOTS` at the current wire version, over
 /// LF-normalised bytes so it does not depend on the checkout's line endings.
-const EXPECTED_WIRE_FINGERPRINT: &str = "0xa645b7c6f69cf323";
+const EXPECTED_WIRE_FINGERPRINT: &str = "0x0182233584571d7b";
 
 /// FNV-1a, 64-bit, over the three snapshots in order, separated by a byte that
 /// cannot occur in UTF-8 so moving text between two files still changes it.

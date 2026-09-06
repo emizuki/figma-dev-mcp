@@ -868,13 +868,11 @@ function summarize(node: UnknownRecord, children: readonly unknown[]) {
     id: string(node.id),
     name: string(node.name),
     nodeType: string(node.type),
-    visible: boolean(node.visible, true),
   }
   const result: {
     id: string
     name: string
     nodeType: string
-    visible: boolean
     parentId?: string
     childIds?: string[]
     bounds?: { x: number; y: number; width: number; height: number }
@@ -969,7 +967,6 @@ function serializeNode(
         id,
         name: string(node.name),
         nodeType: string(node.type),
-        visible: boolean(node.visible, true),
       },
       data: identityData(context.detail, id),
       children: [],

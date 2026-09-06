@@ -323,7 +323,6 @@ export interface NodeSummary {
   id: string
   name: string
   nodeType: string
-  visible: boolean
   parentId?: string
   childIds?: string[]
   bounds?: Rect

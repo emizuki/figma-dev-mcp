@@ -43,8 +43,7 @@ fn minimal_node(id: &str, name: &str) -> Value {
         "summary": {
             "id": id,
             "name": name,
-            "nodeType": "FRAME",
-            "visible": true
+            "nodeType": "FRAME"
         },
         "data": {},
         "children": [],

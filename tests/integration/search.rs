@@ -248,8 +248,7 @@ async fn search_nodes_without_connection_id_round_trips_and_rejects_invalid_scop
                                 "node": {
                                     "id": "1:2",
                                     "name": "Card",
-                                    "nodeType": "FRAME",
-                                    "visible": true
+                                    "nodeType": "FRAME"
                                 },
                                 "reasons": ["name"]
                             }],

@@ -112,7 +112,7 @@ fn actual_frame_decoder_stops_large_node_id_input_without_content_expansion() {
 
 #[test]
 fn actual_plugin_result_decoder_bounds_wide_and_deep_tag_last_payloads() {
-    let node = r#"{"summary":{"id":"1:2","name":"Card","nodeType":"FRAME","visible":true,"childIds":[]},"data":{},"children":[],"childrenTruncated":false}"#;
+    let node = r#"{"summary":{"id":"1:2","name":"Card","nodeType":"FRAME","childIds":[]},"data":{},"children":[],"childrenTruncated":false}"#;
     let nodes = std::iter::repeat_n(node, 5_000)
         .collect::<Vec<_>>()
         .join(",");
@@ -135,7 +135,7 @@ fn actual_plugin_result_decoder_bounds_wide_and_deep_tag_last_payloads() {
     let mut nested = node.to_owned();
     for _ in 0..50 {
         nested = format!(
-            r#"{{"summary":{{"id":"1:2","name":"Card","nodeType":"FRAME","visible":true,"childIds":[]}},"data":{{}},"children":[{nested}],"childrenTruncated":false}}"#
+            r#"{{"summary":{{"id":"1:2","name":"Card","nodeType":"FRAME","childIds":[]}},"data":{{}},"children":[{nested}],"childrenTruncated":false}}"#
         );
     }
     let deep = format!(
@@ -147,7 +147,7 @@ fn actual_plugin_result_decoder_bounds_wide_and_deep_tag_last_payloads() {
 #[test]
 fn outbound_validation_rejects_width_before_allocating_a_wide_auxiliary_stack() {
     let leaf_json = r#"{
-        "summary":{"id":"1:2","name":"Card","nodeType":"FRAME","visible":true,"childIds":[]},
+        "summary":{"id":"1:2","name":"Card","nodeType":"FRAME","childIds":[]},
         "data":{},"children":[],"childrenTruncated":false
     }"#;
     let leaf: DesignNode<MinimalNodeDetails> = serde_json::from_str(leaf_json).unwrap();

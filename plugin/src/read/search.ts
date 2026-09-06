@@ -61,10 +61,6 @@ function string(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback
 }
 
-function boolean(value: unknown, fallback = false): boolean {
-  return typeof value === "boolean" ? value : fallback
-}
-
 function finite(value: unknown, fallback = 0): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback
 }
@@ -187,7 +183,6 @@ function summarizeMatch(raw: unknown, includeChildren = true): NodeSummary {
     id: string(node.id),
     name: string(node.name),
     nodeType: string(node.type),
-    visible: boolean(node.visible, true),
   }
   if (typeof parent.id === "string") summary.parentId = parent.id
   if (childIds.length > 0) summary.childIds = childIds

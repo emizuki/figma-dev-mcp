@@ -1043,14 +1043,13 @@ function parseNodeSummary(value: unknown, label: string): NodeSummary {
   const object = exact(
     value,
     label,
-    ["id", "name", "nodeType", "visible"],
+    ["id", "name", "nodeType"],
     ["parentId", "childIds", "bounds"],
   )
   const result: NodeSummary = {
     id: identifier(object.id, `${label}.id`),
     name: displayText(object.name, `${label}.name`),
     nodeType: identifier(object.nodeType, `${label}.nodeType`),
-    visible: boolean(object.visible, `${label}.visible`),
   }
   const parentId = optionalString(object, "parentId", identifier)
   if (parentId !== undefined) result.parentId = parentId

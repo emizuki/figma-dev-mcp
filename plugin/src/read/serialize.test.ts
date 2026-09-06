@@ -46,7 +46,6 @@ describe("bounded node serializer", () => {
       id: "1:1",
       name: "Card",
       nodeType: "FRAME",
-      visible: true,
       parentId: "0:1",
       childIds: ["1:2"],
       bounds: { x: 10, y: 20, width: 300, height: 200 },
@@ -1064,7 +1063,6 @@ describe("bounded node serializer", () => {
       id: "C:1",
       name: "Button",
       nodeType: "COMPONENT",
-      visible: true,
     })
     expect(second?.data).toEqual({
       styleReferences: [],
@@ -2411,4 +2409,25 @@ describe("hidden nodes are never returned", () => {
     const result = forest(root)
     expect(result.nodes[0]?.children.map((c) => c.summary.id)).toEqual([])
   })
+})
+
+test("no node summary carries a visible field", () => {
+  // Assert absence, not `=== true`: a field that can only say one thing is
+  // the shape this change removes, so a test asserting its value would pass
+  // for exactly the wrong reason.
+  const root = base({ children: [base({ id: "1:3", visible: true })] })
+  const result = serializeNodeForest([root], {
+    detail: "minimal",
+    depth: 1,
+    dedupeComponents: false,
+  })
+
+  const summaries = [
+    result.nodes[0]?.summary,
+    result.nodes[0]?.children[0]?.summary,
+  ]
+  for (const summary of summaries) {
+    expect(summary).toBeDefined()
+    expect(Object.hasOwn(summary as object, "visible")).toBe(false)
+  }
 })

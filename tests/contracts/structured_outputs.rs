@@ -18,8 +18,7 @@ fn minimal_node(id: &str, name: &str) -> Value {
         "summary": {
             "id": id,
             "name": name,
-            "nodeType": "FRAME",
-            "visible": true
+            "nodeType": "FRAME"
         },
         "data": {},
         "children": [],
@@ -118,8 +117,7 @@ fn success_fixture(name: &str) -> Value {
                 "node": {
                     "id": "1:2",
                     "name": "Card",
-                    "nodeType": "FRAME",
-                    "visible": true
+                    "nodeType": "FRAME"
                 },
                 "reasons": ["name"]
             }],
