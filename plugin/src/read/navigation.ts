@@ -90,6 +90,27 @@ function capturedSelectionIds(): string[] {
   return (figma.currentPage.selection ?? []).map((node) => node.id)
 }
 
+/// Records an unresolved node, up to the same limit the forest is truncated at.
+///
+/// `parseUnresolved` bounds this list at `MAX_RETURNED_NODES` on the way out,
+/// and `relay.ts` discards an outbound message that fails validation rather
+/// than erroring it, so a 2001st entry would not fail the call loudly — it
+/// would hang it to its deadline. Dropping the overflow keeps the read
+/// succeeding, which is the entire point of this field: an unwalkable chain
+/// should cost one node, never the response.
+///
+/// Reaching the limit takes more than 2000 nodes selected at once, each of
+/// them either in a parent cycle or under a chain deeper than
+/// `MAX_ANCESTOR_WALK`, which a Figma scene graph cannot produce. This is the
+/// floor under that assumption rather than a case the product expects, so it
+/// truncates silently instead of spending the result's `truncated` flag —
+/// that flag describes the forest walk, and `resolveDesignRoots` has no
+/// channel to report on a list its seven other callers discard.
+function recordUnresolved(unresolved: UnresolvedNode[], id: string): void {
+  if (unresolved.length >= MAX_RETURNED_NODES) return
+  unresolved.push({ id, error: nodeError("LIMIT_EXCEEDED") })
+}
+
 async function lookupNode(id: string): Promise<unknown> {
   if (figma.getNodeByIdAsync === undefined) {
     throw new PluginReadError("CAPABILITY_UNAVAILABLE", false)
@@ -199,8 +220,7 @@ export async function readSelection(
       // that stopped a possibly-rendering node from being returned, so it is
       // reported rather than swallowed.
       if (verdict === "renders") roots.push(node)
-      else if (verdict === "undetermined")
-        unresolved.push({ id, error: nodeError("LIMIT_EXCEEDED") })
+      else if (verdict === "undetermined") recordUnresolved(unresolved, id)
     }
   }
   const serialized = await serializePreparedForest(
@@ -359,8 +379,7 @@ export async function resolveDesignRoots(
       // chain is different: it is an error that stopped a possibly-rendering
       // node from being returned, so it is reported.
       if (verdict === "renders") roots.push(node)
-      else if (verdict === "undetermined")
-        unresolved.push({ id, error: nodeError("LIMIT_EXCEEDED") })
+      else if (verdict === "undetermined") recordUnresolved(unresolved, id)
     }
     return { roots, unresolved }
   }
@@ -394,8 +413,7 @@ export async function resolveDesignRoots(
       }
       const verdict = visibilityOf(node)
       if (verdict === "renders") roots.push(await loadPageIfNeeded(node))
-      else if (verdict === "undetermined")
-        unresolved.push({ id, error: nodeError("LIMIT_EXCEEDED") })
+      else if (verdict === "undetermined") recordUnresolved(unresolved, id)
     }
     return { roots, unresolved }
   }

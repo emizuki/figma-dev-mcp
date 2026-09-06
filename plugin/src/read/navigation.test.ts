@@ -250,6 +250,52 @@ describe("selection reader", () => {
     ])
   })
 
+  test("an oversized unresolved list is truncated, not thrown on", async () => {
+    // Every node here loops onto itself, so every one is `undetermined` and
+    // wants an `unresolved` entry. `parseUnresolved` bounds that list at
+    // MAX_RETURNED_NODES, so without a cap on the producing side the whole
+    // read — the one this field exists to keep alive — would fail validation.
+    const loopedSelection = (count: number): Record<string, unknown>[] =>
+      Array.from({ length: count }, (_, index) => {
+        const node: Record<string, unknown> = {
+          id: `1:${index + 1}`,
+          name: "Looped",
+          type: "FRAME",
+          visible: true,
+          children: [],
+        }
+        node.parent = node
+        return node
+      })
+
+    const install = (selection: Record<string, unknown>[]): void => {
+      const byId = new Map(
+        selection.map((node) => [node.id as string, node] as const),
+      )
+      ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+        root: { name: "Checkout flow", children: [] },
+        currentPage: { id: "0:1", name: "Page 1", selection },
+        editorType: "dev",
+        getNodeByIdAsync: async (id: string) => byId.get(id) ?? null,
+      }
+    }
+
+    install(loopedSelection(MAX_RETURNED_NODES))
+    const atLimit = await readSelection({}, undefined)
+    expect(atLimit.unresolved).toHaveLength(MAX_RETURNED_NODES)
+    expect(() =>
+      parseReadResult({ operation: "get_selection", result: atLimit }),
+    ).not.toThrow()
+
+    install(loopedSelection(MAX_RETURNED_NODES + 1))
+    const overLimit = await readSelection({}, undefined)
+    expect(overLimit.unresolved).toHaveLength(MAX_RETURNED_NODES)
+    // The point of the cap: the extra node costs its own entry, not the read.
+    expect(() =>
+      parseReadResult({ operation: "get_selection", result: overLimit }),
+    ).not.toThrow()
+  })
+
   test("a clean selection omits unresolved entirely", async () => {
     const live = {
       id: "1:2",
