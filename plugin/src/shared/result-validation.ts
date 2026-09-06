@@ -1304,6 +1304,7 @@ function withForestMetadata<T extends object>(
   truncated: boolean
   truncation?: Truncation
   observation: ObservationWindow
+  unresolved?: UnresolvedNode[]
 } {
   const result = withResultMetadata(object, value, label)
   if (!Object.hasOwn(object, "unresolved")) return result

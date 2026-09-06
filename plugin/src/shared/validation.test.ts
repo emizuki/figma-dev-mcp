@@ -915,18 +915,23 @@ describe("closed plugin transport validation", () => {
     }
 
     // Absent stays absent: Rust omits the field when it is empty, so a healthy
-    // response must round-trip without growing the key.
+    // response must round-trip without growing the key. `toEqual` alone cannot
+    // say this — it reads a key present with value `undefined` as absent — so
+    // the key itself is checked.
     const healthy = resultMessage("get_selection", {
       detail: "minimal",
       nodes: [],
       truncated: false,
       observation,
     })
-    const parsedHealthy: unknown = parseControllerOutboundMessage(healthy)
-    expect(parsedHealthy).toEqual(healthy)
+    const parsedHealthy = parseControllerOutboundMessage(healthy)
+    expect(parsedHealthy as unknown).toEqual(healthy)
+    if (parsedHealthy.type !== "response")
+      throw new Error("expected a response")
+    expect(Object.hasOwn(parsedHealthy.result.result, "unresolved")).toBe(false)
 
-    // An entry's error must carry the canonical message for its code, because
-    // Rust's ToolError refuses to decode one that does not.
+    // An entry's error must carry `message` at all: Rust's ToolError has no
+    // default for it.
     expect(() =>
       parseControllerOutboundMessage(
         resultMessage("get_selection", {
@@ -943,6 +948,32 @@ describe("closed plugin transport validation", () => {
         }),
       ),
     ).toThrow(/missing message/)
+
+    // And it must be the canonical message *for that code*, not merely some
+    // canonical message. This is the guard that forces an entry to be built
+    // from CANONICAL_MESSAGES rather than an inline literal: Rust's ToolError
+    // refuses to decode a message that does not match its code, so a plausible
+    // but wrong pairing would be accepted here and rejected on the wire.
+    expect(() =>
+      parseControllerOutboundMessage(
+        resultMessage("get_selection", {
+          detail: "minimal",
+          nodes: [],
+          truncated: false,
+          observation,
+          unresolved: [
+            {
+              id: "1:2",
+              error: {
+                code: "LIMIT_EXCEEDED",
+                message: "The requested node was not found.",
+                retryable: false,
+              },
+            },
+          ],
+        }),
+      ),
+    ).toThrow(/is not canonical/)
   })
 
   test("get_nodes rejects unresolved as an unknown field", () => {

@@ -121,8 +121,8 @@ pub struct UnresolvedNode {
 pub enum GetSelectionResult {
     Minimal {
         nodes: NodeForest<MinimalNodeDetails>,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        unresolved: Vec<UnresolvedNode>,
+        #[serde(default, skip_serializing_if = "ReturnedList::is_empty")]
+        unresolved: ReturnedList<UnresolvedNode>,
         truncated: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         truncation: Option<Truncation>,
@@ -130,8 +130,8 @@ pub enum GetSelectionResult {
     },
     Compact {
         nodes: NodeForest<CompactNodeData>,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        unresolved: Vec<UnresolvedNode>,
+        #[serde(default, skip_serializing_if = "ReturnedList::is_empty")]
+        unresolved: ReturnedList<UnresolvedNode>,
         truncated: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         truncation: Option<Truncation>,
@@ -139,8 +139,8 @@ pub enum GetSelectionResult {
     },
     Full {
         nodes: NodeForest<FullNodeData>,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        unresolved: Vec<UnresolvedNode>,
+        #[serde(default, skip_serializing_if = "ReturnedList::is_empty")]
+        unresolved: ReturnedList<UnresolvedNode>,
         truncated: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         truncation: Option<Truncation>,
@@ -347,8 +347,8 @@ pub struct GetDesignContextInput {
 pub enum GetDesignContextResult {
     Minimal {
         roots: NodeForest<MinimalNodeDetails>,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        unresolved: Vec<UnresolvedNode>,
+        #[serde(default, skip_serializing_if = "ReturnedList::is_empty")]
+        unresolved: ReturnedList<UnresolvedNode>,
         truncated: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         truncation: Option<Truncation>,
@@ -356,8 +356,8 @@ pub enum GetDesignContextResult {
     },
     Compact {
         roots: NodeForest<CompactNodeData>,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        unresolved: Vec<UnresolvedNode>,
+        #[serde(default, skip_serializing_if = "ReturnedList::is_empty")]
+        unresolved: ReturnedList<UnresolvedNode>,
         truncated: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         truncation: Option<Truncation>,
@@ -365,8 +365,8 @@ pub enum GetDesignContextResult {
     },
     Full {
         roots: NodeForest<FullNodeData>,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        unresolved: Vec<UnresolvedNode>,
+        #[serde(default, skip_serializing_if = "ReturnedList::is_empty")]
+        unresolved: ReturnedList<UnresolvedNode>,
         truncated: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         truncation: Option<Truncation>,
@@ -554,7 +554,7 @@ macro_rules! impl_detail_result_deserialize {
                             if unresolved.is_some() {
                                 return Err(A::Error::duplicate_field("unresolved"));
                             }
-                            unresolved = Some(map.next_value::<Vec<UnresolvedNode>>()?);
+                            unresolved = Some(map.next_value::<ReturnedList<UnresolvedNode>>()?);
                         }
                     }
                 }

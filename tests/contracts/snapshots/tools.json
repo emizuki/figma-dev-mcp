@@ -2143,6 +2143,14 @@
           "maxItems": 2000,
           "type": "array"
         },
+        "ReturnedList_of_UnresolvedNode": {
+          "description": "returned result collection; decoder stops at item 2001",
+          "items": {
+            "$ref": "#/$defs/UnresolvedNode"
+          },
+          "maxItems": 2000,
+          "type": "array"
+        },
         "ReturnedList_of_VariableReference": {
           "description": "returned result collection; decoder stops at item 2001",
           "items": {
@@ -2613,10 +2621,7 @@
               ]
             },
             "unresolved": {
-              "items": {
-                "$ref": "#/$defs/UnresolvedNode"
-              },
-              "type": "array"
+              "$ref": "#/$defs/ReturnedList_of_UnresolvedNode"
             }
           },
           "required": [
@@ -2654,10 +2659,7 @@
               ]
             },
             "unresolved": {
-              "items": {
-                "$ref": "#/$defs/UnresolvedNode"
-              },
-              "type": "array"
+              "$ref": "#/$defs/ReturnedList_of_UnresolvedNode"
             }
           },
           "required": [
@@ -2695,10 +2697,7 @@
               ]
             },
             "unresolved": {
-              "items": {
-                "$ref": "#/$defs/UnresolvedNode"
-              },
-              "type": "array"
+              "$ref": "#/$defs/ReturnedList_of_UnresolvedNode"
             }
           },
           "required": [
@@ -10392,6 +10391,14 @@
           "maxItems": 2000,
           "type": "array"
         },
+        "ReturnedList_of_UnresolvedNode": {
+          "description": "returned result collection; decoder stops at item 2001",
+          "items": {
+            "$ref": "#/$defs/UnresolvedNode"
+          },
+          "maxItems": 2000,
+          "type": "array"
+        },
         "ReturnedList_of_VariableReference": {
           "description": "returned result collection; decoder stops at item 2001",
           "items": {
@@ -10862,10 +10869,7 @@
               ]
             },
             "unresolved": {
-              "items": {
-                "$ref": "#/$defs/UnresolvedNode"
-              },
-              "type": "array"
+              "$ref": "#/$defs/ReturnedList_of_UnresolvedNode"
             }
           },
           "required": [
@@ -10903,10 +10907,7 @@
               ]
             },
             "unresolved": {
-              "items": {
-                "$ref": "#/$defs/UnresolvedNode"
-              },
-              "type": "array"
+              "$ref": "#/$defs/ReturnedList_of_UnresolvedNode"
             }
           },
           "required": [
@@ -10944,10 +10945,7 @@
               ]
             },
             "unresolved": {
-              "items": {
-                "$ref": "#/$defs/UnresolvedNode"
-              },
-              "type": "array"
+              "$ref": "#/$defs/ReturnedList_of_UnresolvedNode"
             }
           },
           "required": [
