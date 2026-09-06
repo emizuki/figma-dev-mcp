@@ -268,7 +268,7 @@ function oneOf<const Value extends string>(
 // same line — so a wrapped entry silently disappears from the parsed map
 // instead of failing loudly, and the mirror test then fails on a missing
 // code with no clue this file is the cause.
-const CANONICAL_MESSAGES: Record<ErrorCode, string> = {
+export const CANONICAL_MESSAGES: Record<ErrorCode, string> = {
   NO_FIGMA_CONNECTION: "No Figma connection is available.",
   AMBIGUOUS_CONNECTION: "More than one Figma connection matches the request.",
   CONNECTION_NOT_FOUND: "The requested Figma connection was not found.",

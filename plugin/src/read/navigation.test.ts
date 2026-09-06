@@ -672,9 +672,17 @@ describe("node reader", () => {
       depth: 0,
     })
 
+    // The message is asserted literally, not merely the code: `nodeError`
+    // sources it from `CANONICAL_MESSAGES` rather than a copy of its own, and
+    // this is the test that would catch the two drifting.
     expect(result.items[0]).toMatchObject({
       status: "error",
-      error: { code: "NODE_NOT_VISIBLE" },
+      error: {
+        code: "NODE_NOT_VISIBLE",
+        message:
+          "The requested node exists but is switched off, so it renders nothing.",
+        retryable: false,
+      },
     })
     expect(result.items[1]).toMatchObject({ status: "success" })
   })
@@ -710,7 +718,12 @@ describe("node reader", () => {
 
     expect(result.items[0]).toMatchObject({
       status: "error",
-      error: { code: "NODE_NOT_VISIBLE" },
+      error: {
+        code: "NODE_NOT_VISIBLE",
+        message:
+          "The requested node exists but is switched off, so it renders nothing.",
+        retryable: false,
+      },
     })
   })
 })

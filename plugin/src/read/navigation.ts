@@ -29,6 +29,7 @@ import {
   type SerializeNodeForestOptions,
 } from "./serialize"
 import { rendersVisibly } from "./visibility"
+import { CANONICAL_MESSAGES } from "../shared/result-validation"
 
 function serializeOptions(
   options: Omit<SerializeNodeForestOptions, "signal">,
@@ -214,6 +215,12 @@ export async function readSelection(
   return result as GetSelectionResult
 }
 
+// Sourced from `CANONICAL_MESSAGES` rather than hand-copied here: that map is
+// what `parseReadResult` checks every message against
+// (`shared/result-validation.ts`), and Rust refuses a non-canonical message
+// for a code at decode time. A literal here could drift from it silently —
+// nothing short of a live round trip would catch the mismatch — so there is
+// exactly one place in the plugin allowed to spell these strings.
 function nodeError(
   code:
     | "NODE_NOT_FOUND"
@@ -221,29 +228,7 @@ function nodeError(
     | "CAPABILITY_UNAVAILABLE"
     | "INTERNAL_ERROR",
 ) {
-  switch (code) {
-    case "NODE_NOT_FOUND":
-      return {
-        code,
-        message: "The requested node was not found.",
-        retryable: false,
-      }
-    case "NODE_NOT_VISIBLE":
-      return {
-        code,
-        message:
-          "The requested node exists but is switched off, so it renders nothing.",
-        retryable: false,
-      }
-    case "CAPABILITY_UNAVAILABLE":
-      return {
-        code,
-        message: "The required Figma capability is unavailable.",
-        retryable: false,
-      }
-    case "INTERNAL_ERROR":
-      return { code, message: "The operation failed.", retryable: false }
-  }
+  return { code, message: CANONICAL_MESSAGES[code], retryable: false }
 }
 
 export async function readNodes(
