@@ -559,3 +559,30 @@ impl JsonSchema for CanonicalMessageSchema {
         schema
     }
 }
+
+#[cfg(test)]
+mod error_code_all_tests {
+    use super::ErrorCode;
+
+    /// `ALL`'s completeness is pinned in `tests/contracts` against the set the
+    /// enum's schema declares, but that check lives in another crate and reads
+    /// the plugin source tree off disk. This one needs neither, so `cargo test
+    /// -p figma-dev-mcp-protocol` on its own still catches the mistake the
+    /// length check cannot see: a member written twice while another is
+    /// missing, which keeps the array 17 long and compiles.
+    #[test]
+    fn all_lists_each_member_once() {
+        let mut tags: Vec<String> = ErrorCode::ALL
+            .iter()
+            .map(|code| serde_json::to_string(code).expect("ErrorCode serializes"))
+            .collect();
+        let listed = tags.len();
+        tags.sort();
+        tags.dedup();
+        assert_eq!(
+            tags.len(),
+            listed,
+            "ErrorCode::ALL repeats a member, so some other member is missing from every sweep"
+        );
+    }
+}

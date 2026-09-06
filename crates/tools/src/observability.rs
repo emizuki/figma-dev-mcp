@@ -37,10 +37,15 @@ pub fn log_tool_completion(observation: &ToolObservation) {
 /// wildcarded: a new `ErrorCode` member fails to compile here until it is
 /// given a tag, rather than silently falling through to a wrong label the
 /// way string matching once did. Update this together with `ErrorCode`
-/// itself, `error_code_tag` in `tests/contracts/mod.rs`, and `error_code_name`
-/// in `service.rs` — all four enumerate the same closed set by hand because
-/// the enum has no `strum`-style iterator.
-const fn known_error_code_tag(code: ErrorCode) -> &'static str {
+/// itself and `error_code_tag` in `tests/contracts/mod.rs`. Both of those
+/// enumerate the same closed set by hand because the enum has no
+/// `strum`-style iterator; the members themselves are written once on
+/// `ErrorCode::ALL`, which is what every sweep walks and what
+/// `tests/contracts` pins against the enum's own schema.
+///
+/// `service.rs` used to hold a third copy of this table for the same log
+/// field, swept by nothing. It now calls this function.
+pub(crate) const fn known_error_code_tag(code: ErrorCode) -> &'static str {
     match code {
         ErrorCode::NoFigmaConnection => "NO_FIGMA_CONNECTION",
         ErrorCode::AmbiguousConnection => "AMBIGUOUS_CONNECTION",
