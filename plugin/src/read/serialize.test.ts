@@ -1435,6 +1435,31 @@ describe("style name resolution", () => {
     expect(names.get("S:fill")).toBe("Name/S:fill")
   })
 
+  test("a hidden subtree spends none of the style-name lookup budget", async () => {
+    // The pre-pass walks the tree to resolve style names, and the budget it
+    // spends is capped. Hidden content is never returned, so resolving its
+    // names is pure waste — and worse than waste, because the cap is shared:
+    // a switched-off subtree large enough to exhaust it would leave a visible
+    // sibling's name unresolved. The filter is invisible in the output, so
+    // only a lookup count can catch it being reverted.
+    const lookups: string[] = []
+    const lookup = async (id: string) => {
+      lookups.push(id)
+      return { name: `Name/${id}` }
+    }
+    const hidden = styled("1:2", {
+      visible: false,
+      fillStyleId: "S:hidden",
+      strokeStyleId: "S:hidden-stroke",
+    })
+    const roots = [styled("1:1", { children: [hidden, styled("1:3")] })]
+
+    const names = await collectStyleNames(roots, lookup)
+
+    expect(lookups.sort()).toEqual(["S:fill", "S:stroke"])
+    expect(names.has("S:hidden")).toBe(false)
+  })
+
   test("style references carry resolved names and the stroke kind", () => {
     const node = styled("1:1")
 
