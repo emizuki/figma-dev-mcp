@@ -9,7 +9,7 @@ export function buildHello(
 ): Extract<PluginToBroker, { type: "hello" }> {
   return {
     type: "hello",
-    protocolVersion: "3",
+    protocolVersion: "4",
     connectionId: parseUuid(uuidFactory()),
     displayName: ready.fileName,
     fileName: ready.fileName,

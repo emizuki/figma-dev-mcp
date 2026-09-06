@@ -662,7 +662,6 @@ async fn every_tool_and_prompt_round_trips_through_mcp_service() {
                 json!({
                     "selector": {"nodeId": "1:1"},
                     "detail": "minimal",
-                    "includeHidden": false,
                     "dedupeComponents": true
                 }),
             )),

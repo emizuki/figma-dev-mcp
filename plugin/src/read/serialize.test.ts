@@ -1075,9 +1075,7 @@ describe("bounded node serializer", () => {
     expect(second?.childrenTruncated).toBe(true)
   })
 
-  test("omits hidden children regardless of includeHidden", () => {
-    // includeHidden no longer changes the outcome: a node that does not
-    // render is never returned, whatever the flag says.
+  test("omits hidden children", () => {
     const hidden = base({ id: "1:2", name: "Hidden", visible: false })
     const shown = base({ id: "1:3", name: "Shown", visible: true })
     const root = base({ children: [hidden, shown] })
@@ -1086,30 +1084,10 @@ describe("bounded node serializer", () => {
       detail: "minimal",
       depth: 2,
       dedupeComponents: false,
-      includeHidden: false,
     })
     expect(filtered.nodes[0]?.summary.childIds).toEqual(["1:3"])
     expect(
       filtered.nodes[0]?.children.map((child) => child.summary.id),
-    ).toEqual(["1:3"])
-
-    const included = serializeNodeForest([root], {
-      detail: "minimal",
-      depth: 2,
-      dedupeComponents: false,
-      includeHidden: true,
-    })
-    expect(
-      included.nodes[0]?.children.map((child) => child.summary.id),
-    ).toEqual(["1:3"])
-
-    const unspecified = serializeNodeForest([root], {
-      detail: "minimal",
-      depth: 2,
-      dedupeComponents: false,
-    })
-    expect(
-      unspecified.nodes[0]?.children.map((child) => child.summary.id),
     ).toEqual(["1:3"])
   })
 

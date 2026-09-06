@@ -300,7 +300,7 @@ fn every_node_scoped_operation_acquires_the_traversal_gate() {
         "get_selection: \"read\"",
         "get_nodes: \"read\"",
         "search_nodes: \"read\"",
-        "get_design_context: \"includeHiddenWhenRequested\"",
+        "get_design_context: \"read\"",
         "get_styles: \"read\"",
         "get_variables: \"read\"",
         "get_components: \"read\"",
@@ -317,7 +317,6 @@ fn every_node_scoped_operation_acquires_the_traversal_gate() {
         );
     }
     assert!(dispatch.contains("gate.read") || dispatch.contains("return gate.read"));
-    assert!(dispatch.contains("gate.includeHidden"));
 }
 
 const OPERATOR_DOCS: &[&str] = &[

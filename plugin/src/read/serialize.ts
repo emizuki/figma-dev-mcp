@@ -58,7 +58,6 @@ export interface SerializeNodeForestOptions {
   readonly detail: DetailLevel
   readonly depth: number
   readonly dedupeComponents: boolean
-  readonly includeHidden?: boolean
   readonly instanceIdentities?: ReadonlyMap<string, InstanceValue>
   readonly styleNames?: ReadonlyMap<string, string>
   readonly variableNames?: ReadonlyMap<string, string>
@@ -77,7 +76,6 @@ interface SerializerContext {
   readonly detail: DetailLevel
   readonly depth: number
   readonly dedupeComponents: boolean
-  readonly includeHidden: boolean | undefined
   readonly instanceIdentities: ReadonlyMap<string, InstanceValue> | undefined
   readonly styleNames: ReadonlyMap<string, string> | undefined
   readonly variableNames: ReadonlyMap<string, string> | undefined
@@ -1064,7 +1062,6 @@ function serializeNode(
 }
 
 export interface ForestWalkOptions {
-  readonly includeHidden?: boolean
   readonly signal?: CancellationSignal
   readonly progress?: ProgressReporter
   readonly limits?: Partial<SerializerLimits>
@@ -1089,7 +1086,6 @@ function createWalkContext(options: ForestWalkOptions): SerializerContext {
     detail: "minimal",
     depth: Number.POSITIVE_INFINITY,
     dedupeComponents: false,
-    includeHidden: options.includeHidden,
     instanceIdentities: undefined,
     styleNames: undefined,
     variableNames: undefined,
@@ -1385,7 +1381,6 @@ export function serializeNodeForest(
     detail: options.detail,
     depth: Math.max(0, options.depth),
     dedupeComponents: options.dedupeComponents,
-    includeHidden: options.includeHidden,
     instanceIdentities: options.instanceIdentities,
     styleNames: options.styleNames,
     variableNames: options.variableNames,

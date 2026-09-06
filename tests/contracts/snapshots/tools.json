@@ -679,10 +679,6 @@
             }
           ]
         },
-        "includeHidden": {
-          "default": false,
-          "type": "boolean"
-        },
         "selector": {
           "anyOf": [
             {

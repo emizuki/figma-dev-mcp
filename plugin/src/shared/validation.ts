@@ -329,14 +329,10 @@ function parseGetDesignContextInput(value: unknown): GetDesignContextInput {
     "selector",
     "depth",
     "detail",
-    "includeHidden",
     "dedupeComponents",
   ])
   const result: GetDesignContextInput = {
     ...copyFileScope(object),
-    includeHidden: Object.hasOwn(object, "includeHidden")
-      ? boolean(object.includeHidden, "includeHidden")
-      : false,
     dedupeComponents: Object.hasOwn(object, "dedupeComponents")
       ? boolean(object.dedupeComponents, "dedupeComponents")
       : false,

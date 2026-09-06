@@ -628,7 +628,6 @@ describe("design context reader", () => {
       readDesignContext({
         detail: "minimal",
         depth: 0,
-        includeHidden: false,
         dedupeComponents: true,
       }),
     ).resolves.toMatchObject({
@@ -676,7 +675,6 @@ describe("design context reader", () => {
       readDesignContext({
         selector: { pageId: requestedPage.id },
         detail: "minimal",
-        includeHidden: false,
         dedupeComponents: false,
       }),
     ).resolves.toMatchObject({
@@ -725,7 +723,6 @@ describe("design context reader", () => {
       selector: { nodeId: requestedPage.id },
       detail: "minimal",
       depth: 1,
-      includeHidden: false,
       dedupeComponents: false,
     })
     expect(loaded).toBe(1)
@@ -781,19 +778,16 @@ describe("design context reader", () => {
     const selectionResult = await readDesignContext({
       selector: { selection: true },
       detail: "minimal",
-      includeHidden: false,
       dedupeComponents: false,
     })
     const nodeResult = await readDesignContext({
       selector: { nodeIds: [last.id, first.id] },
       detail: "minimal",
-      includeHidden: false,
       dedupeComponents: false,
     })
     const pageResult = await readDesignContext({
       selector: { pageIds: [lastPage.id, firstPage.id] },
       detail: "minimal",
-      includeHidden: false,
       dedupeComponents: false,
     })
 
@@ -828,21 +822,18 @@ describe("design context reader", () => {
     await expect(
       readDesignContext({
         selector: { nodeId: "missing" },
-        includeHidden: false,
         dedupeComponents: false,
       }),
     ).rejects.toMatchObject({ code: "NODE_NOT_FOUND" })
     await expect(
       readDesignContext({
         selector: { pageId: "missing" },
-        includeHidden: false,
         dedupeComponents: false,
       }),
     ).rejects.toMatchObject({ code: "PAGE_NOT_FOUND" })
     await expect(
       readDesignContext({
         selector: { pageId: nonPage.id },
-        includeHidden: false,
         dedupeComponents: false,
       }),
     ).rejects.toMatchObject({ code: "PAGE_NOT_FOUND" })

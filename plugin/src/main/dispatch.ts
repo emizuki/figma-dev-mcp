@@ -35,19 +35,29 @@ import {
   type ProgressFrame,
   type ProgressReporter,
 } from "./progress"
-import { createTraversalGate, type TraversalGate } from "./traversal-gate"
 
 const sharedRegistry = new CancellationRegistry()
+
+/**
+ * Every read operation runs shared: there is no exclusive traversal mode left
+ * to protect against, so `read` is a plain pass-through kept only as the seam
+ * `get_metadata` (the one operation that never touches node traversal) opts
+ * out of.
+ */
+export interface TraversalGate {
+  read<T>(run: () => Promise<T>, signal?: CancellationSignal): Promise<T>
+}
+
 let sharedTraversalGate: TraversalGate | undefined
 
-type TraversalPolicy = "none" | "read" | "includeHiddenWhenRequested"
+type TraversalPolicy = "none" | "read"
 
 const TRAVERSAL_POLICY: Readonly<Record<OperationName, TraversalPolicy>> = {
   get_metadata: "none",
   get_selection: "read",
   get_nodes: "read",
   search_nodes: "read",
-  get_design_context: "includeHiddenWhenRequested",
+  get_design_context: "read",
   get_styles: "read",
   get_variables: "read",
   get_components: "read",
@@ -56,6 +66,14 @@ const TRAVERSAL_POLICY: Readonly<Record<OperationName, TraversalPolicy>> = {
   get_reactions: "read",
   get_motion: "read",
   get_screenshot: "read",
+}
+
+function traversalGate(): TraversalGate {
+  if (sharedTraversalGate !== undefined) return sharedTraversalGate
+  sharedTraversalGate = {
+    read: async <T>(run: () => Promise<T>): Promise<T> => run(),
+  }
+  return sharedTraversalGate
 }
 
 function pluginUi(): { postMessage(message: unknown): void } | undefined {
@@ -96,24 +114,6 @@ function createControllerProgress(
     emit: (frame) =>
       postControllerProgress(controllerRequestId, requestId, frame),
   })
-}
-
-function traversalGate(): TraversalGate {
-  if (sharedTraversalGate !== undefined) return sharedTraversalGate
-  const api = (
-    globalThis as typeof globalThis & {
-      figma?: { skipInvisibleInstanceChildren: boolean }
-    }
-  ).figma
-  if (api === undefined) {
-    sharedTraversalGate = {
-      read: async <T>(run: () => Promise<T>): Promise<T> => run(),
-      includeHidden: async <T>(run: () => Promise<T>): Promise<T> => run(),
-    }
-  } else {
-    sharedTraversalGate = createTraversalGate(api)
-  }
-  return sharedTraversalGate
 }
 
 async function dispatchRead(
@@ -194,13 +194,6 @@ async function dispatchRead(
 
   const policy = TRAVERSAL_POLICY[operation.operation]
   if (policy === "none") return execute()
-  if (
-    policy === "includeHiddenWhenRequested" &&
-    operation.operation === "get_design_context" &&
-    operation.input.includeHidden
-  ) {
-    return gate.includeHidden(execute, signal)
-  }
   return gate.read(execute, signal)
 }
 

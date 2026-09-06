@@ -83,7 +83,6 @@ export interface SearchNodesInput extends FileScopedInput {
 export interface GetDesignContextInput extends ScopedInput {
   depth?: number
   detail?: DetailLevel
-  includeHidden: boolean
   dedupeComponents: boolean
 }
 

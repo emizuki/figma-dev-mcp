@@ -4,8 +4,11 @@ import {
   CancellationRegistry,
   LocalCancellationController,
 } from "./cancellation"
-import { dispatchControllerMessage, requestBoundaryFailure } from "./dispatch"
-import type { TraversalGate } from "./traversal-gate"
+import {
+  dispatchControllerMessage,
+  requestBoundaryFailure,
+  type TraversalGate,
+} from "./dispatch"
 import {
   OPERATION_NAMES,
   parseControllerBoundMessage,
@@ -79,15 +82,11 @@ describe("closed read dispatcher", () => {
     }
   })
 
-  test("routes every operation through its closed traversal policy", async () => {
+  test("every read-shaped operation runs through the shared gate, get_metadata does not", async () => {
     const leases: string[] = []
     const gate: TraversalGate = {
       read: async <T>(run: () => Promise<T>): Promise<T> => {
         leases.push("read")
-        return run()
-      },
-      includeHidden: async <T>(run: () => Promise<T>): Promise<T> => {
-        leases.push("includeHidden")
         return run()
       },
     }
@@ -99,36 +98,19 @@ describe("closed read dispatcher", () => {
     }
 
     for (const [index, operation] of OPERATION_NAMES.entries()) {
-      const input =
-        operation === "get_design_context"
-          ? { ...EMPTY_INPUTS[operation], includeHidden: true }
-          : EMPTY_INPUTS[operation]
       const request = parseControllerBoundMessage({
         type: "request",
         controllerRequestId: controllerRequestId(200 + index),
         requestId: `policy-${index}`,
         deadlineMs: 1,
         target: {},
-        operation: { operation, input },
+        operation: { operation, input: EMPTY_INPUTS[operation] },
       })
       if (request.type !== "request") throw new Error("request did not decode")
       await dispatchControllerMessage(request, new CancellationRegistry(), gate)
     }
 
-    expect(leases).toEqual([
-      "read",
-      "read",
-      "read",
-      "includeHidden",
-      "read",
-      "read",
-      "read",
-      "read",
-      "read",
-      "read",
-      "read",
-      "read",
-    ])
+    expect(leases).toEqual(new Array(OPERATION_NAMES.length - 1).fill("read"))
   })
 
   test("get_metadata returns bounded file and page metadata", async () => {

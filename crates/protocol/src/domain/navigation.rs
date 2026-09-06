@@ -314,8 +314,6 @@ pub struct GetDesignContextInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<DetailLevel>,
     #[serde(default)]
-    pub include_hidden: bool,
-    #[serde(default)]
     pub dedupe_components: bool,
 }
 

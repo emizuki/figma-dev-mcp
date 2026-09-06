@@ -374,7 +374,6 @@ export async function readDesignContext(
       detail,
       depth,
       dedupeComponents: input.dedupeComponents,
-      includeHidden: input.includeHidden,
     },
     signal,
   )
