@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+use figma_dev_mcp_protocol::error::ErrorCode;
 use rmcp::model::RequestId;
 
 #[derive(Debug, Clone)]
@@ -30,28 +31,56 @@ pub fn log_tool_completion(observation: &ToolObservation) {
     );
 }
 
+/// The operator log's own copy of the wire tag, kept in a `&'static str`
+/// rather than the borrowed JSON string so `tool_result_log_code` can return
+/// it without an allocation. Exhaustive by construction and deliberately not
+/// wildcarded: a new `ErrorCode` member fails to compile here until it is
+/// given a tag, rather than silently falling through to a wrong label the
+/// way string matching once did. Update this together with `ErrorCode`
+/// itself, `error_code_tag` in `tests/contracts/mod.rs`, and `error_code_name`
+/// in `service.rs` — all four enumerate the same closed set by hand because
+/// the enum has no `strum`-style iterator.
+const fn known_error_code_tag(code: ErrorCode) -> &'static str {
+    match code {
+        ErrorCode::NoFigmaConnection => "NO_FIGMA_CONNECTION",
+        ErrorCode::AmbiguousConnection => "AMBIGUOUS_CONNECTION",
+        ErrorCode::ConnectionNotFound => "CONNECTION_NOT_FOUND",
+        ErrorCode::ConnectionLost => "CONNECTION_LOST",
+        ErrorCode::ProtocolMismatch => "PROTOCOL_MISMATCH",
+        ErrorCode::NodeNotFound => "NODE_NOT_FOUND",
+        ErrorCode::NodeNotVisible => "NODE_NOT_VISIBLE",
+        ErrorCode::PageNotFound => "PAGE_NOT_FOUND",
+        ErrorCode::UnsupportedNode => "UNSUPPORTED_NODE",
+        ErrorCode::EmptyNodeBounds => "EMPTY_NODE_BOUNDS",
+        ErrorCode::CapabilityUnavailable => "CAPABILITY_UNAVAILABLE",
+        ErrorCode::UnsafeSvg => "UNSAFE_SVG",
+        ErrorCode::InvalidCursor => "INVALID_CURSOR",
+        ErrorCode::LimitExceeded => "LIMIT_EXCEEDED",
+        ErrorCode::Timeout => "TIMEOUT",
+        ErrorCode::Cancelled => "CANCELLED",
+        ErrorCode::InternalError => "INTERNAL_ERROR",
+    }
+}
+
 pub fn tool_result_log_code(is_error: Option<bool>, structured_code: Option<&str>) -> &'static str {
     if is_error != Some(true) {
         return "OK";
     }
-    match structured_code {
-        Some("NO_FIGMA_CONNECTION") => "NO_FIGMA_CONNECTION",
-        Some("AMBIGUOUS_CONNECTION") => "AMBIGUOUS_CONNECTION",
-        Some("CONNECTION_NOT_FOUND") => "CONNECTION_NOT_FOUND",
-        Some("CONNECTION_LOST") => "CONNECTION_LOST",
-        Some("PROTOCOL_MISMATCH") => "PROTOCOL_MISMATCH",
-        Some("NODE_NOT_FOUND") => "NODE_NOT_FOUND",
-        Some("PAGE_NOT_FOUND") => "PAGE_NOT_FOUND",
-        Some("UNSUPPORTED_NODE") => "UNSUPPORTED_NODE",
-        Some("EMPTY_NODE_BOUNDS") => "EMPTY_NODE_BOUNDS",
-        Some("CAPABILITY_UNAVAILABLE") => "CAPABILITY_UNAVAILABLE",
-        Some("UNSAFE_SVG") => "UNSAFE_SVG",
-        Some("LIMIT_EXCEEDED") => "LIMIT_EXCEEDED",
-        Some("TIMEOUT") => "TIMEOUT",
-        Some("CANCELLED") => "CANCELLED",
-        Some("INTERNAL_ERROR") => "INTERNAL_ERROR",
-        _ => "LIMIT_EXCEEDED",
+    // A `None` code means the failure never reached structured content at
+    // all (for example a schema rejection at the MCP layer), and an
+    // unparseable string means the "code" field held something that is not
+    // one of this protocol's error codes. Neither is the case this function
+    // exists to protect against, so both keep the pre-existing fallback
+    // rather than being folded into the exhaustive match below, which is
+    // reserved for codes the enum actually declares.
+    match structured_code.and_then(parse_error_code) {
+        Some(code) => known_error_code_tag(code),
+        None => "LIMIT_EXCEEDED",
     }
+}
+
+fn parse_error_code(code: &str) -> Option<ErrorCode> {
+    serde_json::from_value(serde_json::Value::String(code.to_owned())).ok()
 }
 
 pub fn log_debug_queue(
@@ -73,7 +102,7 @@ pub fn log_debug_queue(
 
 #[cfg(test)]
 mod tests {
-    use super::tool_result_log_code;
+    use super::{ErrorCode, tool_result_log_code};
 
     #[test]
     fn converted_error_results_are_not_logged_as_ok() {
@@ -83,5 +112,48 @@ mod tests {
         );
         assert_eq!(tool_result_log_code(Some(false), None), "OK");
         assert_eq!(tool_result_log_code(Some(true), None), "LIMIT_EXCEEDED");
+    }
+
+    /// Every code the protocol declares must log as itself, not as
+    /// `LIMIT_EXCEEDED` by accident. The expected tag comes from the enum's
+    /// own `Serialize` impl — the actual wire spelling — rather than from a
+    /// second hand-copied string, so this catches a typo in the log arm the
+    /// same way it would catch a missing one. A member missing its arm in
+    /// `known_error_code_tag` fails to compile before this test can even run,
+    /// which is the stronger half of the guarantee; this test additionally
+    /// pins that every arm answers with the *right* tag, and stands as the
+    /// regression test for `NODE_NOT_VISIBLE` and `INVALID_CURSOR`, which
+    /// both fell through to `LIMIT_EXCEEDED` before this fix.
+    #[test]
+    fn every_protocol_error_code_logs_as_itself() {
+        for code in [
+            ErrorCode::NoFigmaConnection,
+            ErrorCode::AmbiguousConnection,
+            ErrorCode::ConnectionNotFound,
+            ErrorCode::ConnectionLost,
+            ErrorCode::ProtocolMismatch,
+            ErrorCode::NodeNotFound,
+            ErrorCode::NodeNotVisible,
+            ErrorCode::PageNotFound,
+            ErrorCode::UnsupportedNode,
+            ErrorCode::EmptyNodeBounds,
+            ErrorCode::CapabilityUnavailable,
+            ErrorCode::UnsafeSvg,
+            ErrorCode::InvalidCursor,
+            ErrorCode::LimitExceeded,
+            ErrorCode::Timeout,
+            ErrorCode::Cancelled,
+            ErrorCode::InternalError,
+        ] {
+            let wire_tag = match serde_json::to_value(code).expect("ErrorCode always serializes") {
+                serde_json::Value::String(tag) => tag,
+                other => panic!("ErrorCode serialized to a non-string: {other:?}"),
+            };
+            assert_eq!(
+                tool_result_log_code(Some(true), Some(&wire_tag)),
+                wire_tag,
+                "log arm for {code:?} must echo its own wire tag, not fall through to a default"
+            );
+        }
     }
 }
