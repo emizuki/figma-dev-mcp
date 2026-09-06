@@ -21,14 +21,19 @@ pub enum ErrorCode {
     ConnectionLost,
     ProtocolMismatch,
     NodeNotFound,
+    /// The node is in the document but does not render, by its own `visible`
+    /// or an ancestor's. Distinct from `NODE_NOT_FOUND`, which means the id
+    /// resolved to nothing: here the id is correct and the caller would waste
+    /// their time re-checking it. The server returns only what Figma draws, so
+    /// a switched-off node is refused rather than returned with a flag.
+    NodeNotVisible,
     PageNotFound,
     UnsupportedNode,
     /// The node puts no ink on the page, so there is no picture to return in
     /// any format. Distinct from `INTERNAL_ERROR`, which means the cause is
     /// unknown; here it is known. Judged on the host's own render bounds,
     /// measured after strokes and effects, so a zero-height rule or divider
-    /// still renders and still succeeds. A node that is switched off, or whose
-    /// bounds the host will not report, is left to the exporter.
+    /// still renders and still succeeds.
     EmptyNodeBounds,
     CapabilityUnavailable,
     /// Reserved and no longer emitted: SVG safety reports a verdict on the
@@ -50,6 +55,9 @@ pub const fn canonical_message(code: ErrorCode) -> &'static str {
         ErrorCode::ConnectionLost => "The Figma connection was lost.",
         ErrorCode::ProtocolMismatch => "The plugin protocol version is not supported.",
         ErrorCode::NodeNotFound => "The requested node was not found.",
+        ErrorCode::NodeNotVisible => {
+            "The requested node exists but is switched off, so it renders nothing."
+        }
         ErrorCode::PageNotFound => "The requested page was not found.",
         ErrorCode::UnsupportedNode => "The requested node type is not supported.",
         ErrorCode::EmptyNodeBounds => "The requested node renders nothing.",

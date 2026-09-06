@@ -43,6 +43,7 @@ import {
   type CancellationSignal,
 } from "../main/cancellation"
 import { progressFor, type ProgressReporter } from "../main/progress"
+import { rendersVisibly } from "./visibility"
 
 type UnknownRecord = Record<string, unknown>
 type NodeData = MinimalNodeDetails | CompactNodeData | FullNodeData
@@ -57,7 +58,6 @@ export interface SerializeNodeForestOptions {
   readonly detail: DetailLevel
   readonly depth: number
   readonly dedupeComponents: boolean
-  readonly includeHidden?: boolean
   readonly instanceIdentities?: ReadonlyMap<string, InstanceValue>
   readonly styleNames?: ReadonlyMap<string, string>
   readonly variableNames?: ReadonlyMap<string, string>
@@ -76,7 +76,6 @@ interface SerializerContext {
   readonly detail: DetailLevel
   readonly depth: number
   readonly dedupeComponents: boolean
-  readonly includeHidden: boolean | undefined
   readonly instanceIdentities: ReadonlyMap<string, InstanceValue> | undefined
   readonly styleNames: ReadonlyMap<string, string> | undefined
   readonly variableNames: ReadonlyMap<string, string> | undefined
@@ -123,7 +122,7 @@ function own(value: UnknownRecord, key: string): boolean {
 // Under `documentAccess: dynamic-page` some node properties are write-only and
 // throw on read. Every property describing a node's *content* is read through
 // here, so one hostile getter costs that field and not the whole node.
-// Identity and hierarchy — id, name, type, visible, parent, children — are read
+// Identity and hierarchy — id, name, type, parent, children — are read
 // directly on purpose: if those throw there is no node left to serialize, and
 // swallowing the error would turn a crash into silent empty data.
 function hostGet(value: UnknownRecord, key: string): unknown {
@@ -849,13 +848,14 @@ function nodeData(
   return full
 }
 
-function visibleChildren(
-  node: UnknownRecord,
-  includeHidden: boolean | undefined,
-): readonly unknown[] {
-  const children = array(node.children)
-  if (includeHidden !== false) return children
-  return children.filter((child) => boolean(record(child).visible, true))
+// Every child is judged on the whole ancestor chain, not its own flag: a
+// switched-on child of a switched-off parent must still be dropped, and a
+// per-node check would miss exactly that case. (An explicitly requested root
+// itself is not checked here — a caller can name a hidden node directly, and
+// that entry point's own visibility is a separate concern from its
+// children's.)
+function visibleChildren(node: UnknownRecord): readonly unknown[] {
+  return array(node.children).filter((child) => rendersVisibly(child))
 }
 
 function summarize(node: UnknownRecord, children: readonly unknown[]) {
@@ -868,13 +868,11 @@ function summarize(node: UnknownRecord, children: readonly unknown[]) {
     id: string(node.id),
     name: string(node.name),
     nodeType: string(node.type),
-    visible: boolean(node.visible, true),
   }
   const result: {
     id: string
     name: string
     nodeType: string
-    visible: boolean
     parentId?: string
     childIds?: string[]
     bounds?: { x: number; y: number; width: number; height: number }
@@ -969,7 +967,6 @@ function serializeNode(
         id,
         name: string(node.name),
         nodeType: string(node.type),
-        visible: boolean(node.visible, true),
       },
       data: identityData(context.detail, id),
       children: [],
@@ -988,7 +985,7 @@ function serializeNode(
     return stub
   }
 
-  const children = visibleChildren(node, context.includeHidden)
+  const children = visibleChildren(node)
   const result: DesignNode<NodeData> = {
     summary: summarize(node, children),
     data: nodeData(
@@ -1062,7 +1059,6 @@ function serializeNode(
 }
 
 export interface ForestWalkOptions {
-  readonly includeHidden?: boolean
   readonly signal?: CancellationSignal
   readonly progress?: ProgressReporter
   readonly limits?: Partial<SerializerLimits>
@@ -1087,7 +1083,6 @@ function createWalkContext(options: ForestWalkOptions): SerializerContext {
     detail: "minimal",
     depth: Number.POSITIVE_INFINITY,
     dedupeComponents: false,
-    includeHidden: options.includeHidden,
     instanceIdentities: undefined,
     styleNames: undefined,
     variableNames: undefined,
@@ -1163,7 +1158,7 @@ function walkNode(
   const id = string(node.id)
   if (id.length > 0 && ancestors.has(id)) return
 
-  const children = visibleChildren(node, context.includeHidden)
+  const children = visibleChildren(node)
   const nextAncestors = new Set(ancestors)
   if (id.length > 0) nextAncestors.add(id)
   for (let index = 0; index < children.length; index += 1) {
@@ -1205,7 +1200,12 @@ export async function collectInstanceIdentities(
     const node = record(raw)
     if (node.type === "INSTANCE") instances.push(node)
     if (level >= depth) return
-    const children = array(hostGet(node, "children"))
+    // Filtered for the same reason the search guard is: an invisible
+    // subtree must not spend the style/variable/instance lookup budget on
+    // content that will never be returned.
+    const children = array(hostGet(node, "children")).filter((child) =>
+      rendersVisibly(child),
+    )
     for (let index = 0; index < children.length; index += 1) {
       throwIfAbortedAtBatch(signal, index, CANCEL_CHECK_BATCH)
       visit(children[index], level + 1)
@@ -1251,7 +1251,12 @@ export async function collectStyleNames(
       if (pending.length < MAX_STYLE_NAME_LOOKUPS) pending.push(id)
     }
     if (level >= depth) return
-    const children = array(hostGet(node, "children"))
+    // Filtered for the same reason the search guard is: an invisible
+    // subtree must not spend the style/variable/instance lookup budget on
+    // content that will never be returned.
+    const children = array(hostGet(node, "children")).filter((child) =>
+      rendersVisibly(child),
+    )
     for (let index = 0; index < children.length; index += 1) {
       throwIfAbortedAtBatch(signal, index, CANCEL_CHECK_BATCH)
       visit(children[index], level + 1)
@@ -1303,7 +1308,12 @@ export async function collectVariableNames(
       if (pending.length < MAX_VARIABLE_NAME_LOOKUPS) pending.push(id)
     }
     if (level >= depth) return
-    const children = array(hostGet(node, "children"))
+    // Filtered for the same reason the search guard is: an invisible
+    // subtree must not spend the style/variable/instance lookup budget on
+    // content that will never be returned.
+    const children = array(hostGet(node, "children")).filter((child) =>
+      rendersVisibly(child),
+    )
     for (let index = 0; index < children.length; index += 1) {
       throwIfAbortedAtBatch(signal, index, CANCEL_CHECK_BATCH)
       visit(children[index], level + 1)
@@ -1368,7 +1378,6 @@ export function serializeNodeForest(
     detail: options.detail,
     depth: Math.max(0, options.depth),
     dedupeComponents: options.dedupeComponents,
-    includeHidden: options.includeHidden,
     instanceIdentities: options.instanceIdentities,
     styleNames: options.styleNames,
     variableNames: options.variableNames,

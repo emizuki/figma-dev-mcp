@@ -377,6 +377,28 @@ describe("search_nodes handler", () => {
     expect(PluginReadError).toBeDefined()
   })
 
+  test("refuses a scope that explicitly names a switched-off node", async () => {
+    // NODE_NOT_FOUND would be a lie here: the id resolved, the node exists,
+    // it just does not render — same distinction as get_nodes and
+    // get_screenshot make for an explicitly named root.
+    const current = page("0:2", "Current")
+    const hiddenNode = node("1:1", "Hidden root", "FRAME", { visible: false })
+    installFigma({
+      currentPage: current,
+      pages: [current],
+      nodes: new Map<string, unknown>([[hiddenNode.id, hiddenNode]]),
+    })
+
+    await expect(
+      searchNodes({
+        scope: { nodeId: hiddenNode.id },
+        query: "Hidden",
+        match: "contains",
+        limit: 50,
+      }),
+    ).rejects.toMatchObject({ code: "NODE_NOT_VISIBLE" })
+  })
+
   test("fails when node lookup is unavailable", async () => {
     ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
       root: { name: "Checkout flow", children: [] },
@@ -454,5 +476,91 @@ describe("search_nodes handler", () => {
         cancellation.signal,
       ),
     ).rejects.toThrow("Operation cancelled")
+  })
+
+  test("a switched-off node never matches", async () => {
+    // Search walks the tree independently of the serializer, so it needs its
+    // own guard rather than inheriting one.
+    const hidden = node("1:2", "Button", "FRAME", { visible: false })
+    const shown = node("1:3", "Button", "FRAME")
+    const requested = page("0:1", "Requested", [hidden, shown])
+    installFigma({ currentPage: requested, pages: [requested] })
+
+    const result = await searchNodes({
+      scope: { nodeId: requested.id },
+      query: "button",
+      match: "contains",
+      limit: 50,
+    })
+
+    expect(result.matches.map((item) => item.node.id)).toEqual(["1:3"])
+  })
+
+  test("a match's childIds omit a hidden child", async () => {
+    // summarizeMatch must not read node.children directly: it disagrees
+    // with the serializer's own filtered view of the same node otherwise,
+    // and hands the caller an id that get_nodes will then refuse.
+    const hiddenChild = node("1:9", "Icon", "VECTOR", { visible: false })
+    const shownChild = node("1:8", "Icon", "VECTOR")
+    const frame = node("1:7", "Button", "FRAME", {
+      children: [hiddenChild, shownChild],
+    })
+    const requested = page("0:1", "Requested", [frame])
+    installFigma({ currentPage: requested, pages: [requested] })
+
+    const result = await searchNodes({
+      scope: { nodeId: requested.id },
+      query: "button",
+      match: "contains",
+      limit: 50,
+    })
+
+    expect(result.matches.map((item) => item.node.childIds)).toEqual([["1:8"]])
+  })
+
+  test("a child inheriting invisibility from an ancestor above the searched subtree never matches", async () => {
+    // The entry root itself renders visibly (no hidden ancestor above it,
+    // so resolveSearchRoot's own guard does not fire), and the child's own
+    // `visible` is not false either. Only childrenOf's ancestor-walk, which
+    // follows the child's own `parent` reference past the searched subtree,
+    // catches this — a per-node `visible` check on the child would wrongly
+    // keep the match.
+    const hiddenAbove = { id: "0:0", visible: false }
+    const child = node("1:5", "Button", "FRAME")
+    ;(child as Record<string, unknown>).parent = hiddenAbove
+    const requested = page("0:1", "Requested", [child])
+    installFigma({ currentPage: requested, pages: [requested] })
+
+    const result = await searchNodes({
+      scope: { nodeId: requested.id },
+      query: "button",
+      match: "contains",
+      limit: 50,
+    })
+
+    expect(result.matches).toEqual([])
+  })
+
+  test("a scope naming a node whose ancestor above it is switched off is refused, not silently empty", async () => {
+    // The child and the search's entry root are both switched on — only a
+    // node *above* the root, outside the searched subtree, is switched off.
+    // rendersVisibly walks `parent` past the root, so the root itself is
+    // caught as not rendering before the walk even starts: the call is
+    // refused rather than quietly returning zero matches.
+    const child = node("1:5", "Button", "FRAME")
+    const requested = page("0:1", "Requested", [child])
+    ;(child as Record<string, unknown>).parent = requested
+    const hiddenAncestor = { id: "0:0", visible: false }
+    ;(requested as Record<string, unknown>).parent = hiddenAncestor
+    installFigma({ currentPage: requested, pages: [requested] })
+
+    await expect(
+      searchNodes({
+        scope: { nodeId: requested.id },
+        query: "button",
+        match: "contains",
+        limit: 50,
+      }),
+    ).rejects.toMatchObject({ code: "NODE_NOT_VISIBLE" })
   })
 })

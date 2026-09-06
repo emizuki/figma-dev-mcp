@@ -110,3 +110,47 @@ export function throwIfAbortedAtBatch(
 ): void {
   if (index % batchSize === 0) signal?.throwIfAborted()
 }
+
+/// Races `work` against `signal` so a cancelled request settles the instant
+/// the signal fires, not whenever `work` next happens to poll it. Read code
+/// is expected to call `signal.throwIfAborted()` between steps, but it is not
+/// required to — and the one call that cannot poll mid-await, a host
+/// `exportAsync`, must still be cancellable at the request boundary. `work`
+/// itself is not stopped: there is no way to abort a promise already in
+/// flight, so it keeps running to whatever it was going to do and its result
+/// is discarded. Callers that create `work` are responsible for swallowing
+/// that later settlement themselves — see `ignoreSettlement` below — since
+/// this function does not retain a reference to `work` once it loses the
+/// race.
+export async function awaitWithSignal<T>(
+  work: Promise<T>,
+  signal: CancellationSignal | undefined,
+): Promise<T> {
+  if (signal === undefined) return work
+  if (signal.aborted) throw new LocalCancellationError()
+  let listener: CancellationListener | undefined
+  const aborted = new Promise<never>((_, reject) => {
+    listener = () => {
+      reject(new LocalCancellationError())
+    }
+    signal.addEventListener("abort", listener)
+  })
+  try {
+    return await Promise.race([work, aborted])
+  } finally {
+    if (listener !== undefined) signal.removeEventListener("abort", listener)
+  }
+}
+
+/// A promise abandoned by `awaitWithSignal` keeps running detached and will
+/// eventually settle on its own. Nothing else is listening for that by then,
+/// so an eventual rejection would otherwise surface as an unhandled
+/// rejection in the plugin sandbox rather than the cancellation the caller
+/// already received. Call this once, right when `work` is created, so it
+/// applies whichever way the race in `awaitWithSignal` goes.
+export function ignoreSettlement(work: Promise<unknown>): void {
+  void work.then(
+    () => undefined,
+    () => undefined,
+  )
+}

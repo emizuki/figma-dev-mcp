@@ -261,13 +261,22 @@ function oneOf<const Value extends string>(
   return fail(`${label} is not an allowed value`)
 }
 
-const CANONICAL_MESSAGES: Record<ErrorCode, string> = {
+// Every entry below must stay on one line (see the NODE_NOT_VISIBLE
+// prettier-ignore for why): the Rust mirror test in tests/contracts/mod.rs
+// (plugin_message_map) parses this object line by line — split on the
+// first colon, then the message pulled from the first quoted span on that
+// same line — so a wrapped entry silently disappears from the parsed map
+// instead of failing loudly, and the mirror test then fails on a missing
+// code with no clue this file is the cause.
+export const CANONICAL_MESSAGES: Record<ErrorCode, string> = {
   NO_FIGMA_CONNECTION: "No Figma connection is available.",
   AMBIGUOUS_CONNECTION: "More than one Figma connection matches the request.",
   CONNECTION_NOT_FOUND: "The requested Figma connection was not found.",
   CONNECTION_LOST: "The Figma connection was lost.",
   PROTOCOL_MISMATCH: "The plugin protocol version is not supported.",
   NODE_NOT_FOUND: "The requested node was not found.",
+  // prettier-ignore
+  NODE_NOT_VISIBLE: "The requested node exists but is switched off, so it renders nothing.",
   PAGE_NOT_FOUND: "The requested page was not found.",
   UNSUPPORTED_NODE: "The requested node type is not supported.",
   EMPTY_NODE_BOUNDS: "The requested node renders nothing.",
@@ -1034,14 +1043,13 @@ function parseNodeSummary(value: unknown, label: string): NodeSummary {
   const object = exact(
     value,
     label,
-    ["id", "name", "nodeType", "visible"],
+    ["id", "name", "nodeType"],
     ["parentId", "childIds", "bounds"],
   )
   const result: NodeSummary = {
     id: identifier(object.id, `${label}.id`),
     name: displayText(object.name, `${label}.name`),
     nodeType: identifier(object.nodeType, `${label}.nodeType`),
-    visible: boolean(object.visible, `${label}.visible`),
   }
   const parentId = optionalString(object, "parentId", identifier)
   if (parentId !== undefined) result.parentId = parentId

@@ -43,8 +43,7 @@ fn minimal_node(id: &str, name: &str) -> Value {
         "summary": {
             "id": id,
             "name": name,
-            "nodeType": "FRAME",
-            "visible": true
+            "nodeType": "FRAME"
         },
         "data": {},
         "children": [],
@@ -133,7 +132,6 @@ async fn navigation_tools_round_trip_through_server_broker_and_plugin() {
                         request["operation"]["input"]["selector"],
                         json!({"nodeId": "1:1"})
                     );
-                    assert_eq!(request["operation"]["input"]["includeHidden"], false);
                     assert_eq!(request["operation"]["input"]["dedupeComponents"], true);
                     json!({
                         "detail": "minimal",
@@ -210,7 +208,6 @@ async fn navigation_tools_round_trip_through_server_broker_and_plugin() {
                     connection,
                     ("selector".to_owned(), json!({"nodeId": "1:1"})),
                     ("detail".to_owned(), json!("minimal")),
-                    ("includeHidden".to_owned(), json!(false)),
                     ("dedupeComponents".to_owned(), json!(true)),
                 ]),
             ),

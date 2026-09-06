@@ -679,10 +679,6 @@
             }
           ]
         },
-        "includeHidden": {
-          "default": false,
-          "type": "boolean"
-        },
         "selector": {
           "anyOf": [
             {
@@ -1666,7 +1662,7 @@
         },
         "MinimalNodeDetails": {
           "additionalProperties": false,
-          "description": "Closed detail marker for a recursive minimal node.\n\nIdentity, visibility, hierarchy references, and basic bounds live in the\nnode's [`NodeSummary`]. The empty detail object prevents compact/full-only\nfields from appearing in a minimal result while retaining one recursive\ntree representation for all detail levels.",
+          "description": "Closed detail marker for a recursive minimal node.\n\nIdentity, hierarchy references, type, name, and basic bounds live in the\nnode's [`NodeSummary`]. The empty detail object prevents compact/full-only\nfields from appearing in a minimal result while retaining one recursive\ntree representation for all detail levels.",
           "type": "object"
         },
         "NamedComponentProperty": {
@@ -1764,16 +1760,12 @@
                   "type": "null"
                 }
               ]
-            },
-            "visible": {
-              "type": "boolean"
             }
           },
           "required": [
             "id",
             "name",
-            "nodeType",
-            "visible"
+            "nodeType"
           ],
           "type": "object"
         },
@@ -2878,8 +2870,13 @@
               "type": "string"
             },
             {
+              "const": "NODE_NOT_VISIBLE",
+              "description": "The node is in the document but does not render, by its own `visible`\nor an ancestor's. Distinct from `NODE_NOT_FOUND`, which means the id\nresolved to nothing: here the id is correct and the caller would waste\ntheir time re-checking it. The server returns only what Figma draws, so\na switched-off node is refused rather than returned with a flag.",
+              "type": "string"
+            },
+            {
               "const": "EMPTY_NODE_BOUNDS",
-              "description": "The node puts no ink on the page, so there is no picture to return in\nany format. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Judged on the host's own render bounds,\nmeasured after strokes and effects, so a zero-height rule or divider\nstill renders and still succeeds. A node that is switched off, or whose\nbounds the host will not report, is left to the exporter.",
+              "description": "The node puts no ink on the page, so there is no picture to return in\nany format. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Judged on the host's own render bounds,\nmeasured after strokes and effects, so a zero-height rule or divider\nstill renders and still succeeds.",
               "type": "string"
             },
             {
@@ -4209,8 +4206,13 @@
               "type": "string"
             },
             {
+              "const": "NODE_NOT_VISIBLE",
+              "description": "The node is in the document but does not render, by its own `visible`\nor an ancestor's. Distinct from `NODE_NOT_FOUND`, which means the id\nresolved to nothing: here the id is correct and the caller would waste\ntheir time re-checking it. The server returns only what Figma draws, so\na switched-off node is refused rather than returned with a flag.",
+              "type": "string"
+            },
+            {
               "const": "EMPTY_NODE_BOUNDS",
-              "description": "The node puts no ink on the page, so there is no picture to return in\nany format. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Judged on the host's own render bounds,\nmeasured after strokes and effects, so a zero-height rule or divider\nstill renders and still succeeds. A node that is switched off, or whose\nbounds the host will not report, is left to the exporter.",
+              "description": "The node puts no ink on the page, so there is no picture to return in\nany format. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Judged on the host's own render bounds,\nmeasured after strokes and effects, so a zero-height rule or divider\nstill renders and still succeeds.",
               "type": "string"
             },
             {
@@ -5645,8 +5647,13 @@
               "type": "string"
             },
             {
+              "const": "NODE_NOT_VISIBLE",
+              "description": "The node is in the document but does not render, by its own `visible`\nor an ancestor's. Distinct from `NODE_NOT_FOUND`, which means the id\nresolved to nothing: here the id is correct and the caller would waste\ntheir time re-checking it. The server returns only what Figma draws, so\na switched-off node is refused rather than returned with a flag.",
+              "type": "string"
+            },
+            {
               "const": "EMPTY_NODE_BOUNDS",
-              "description": "The node puts no ink on the page, so there is no picture to return in\nany format. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Judged on the host's own render bounds,\nmeasured after strokes and effects, so a zero-height rule or divider\nstill renders and still succeeds. A node that is switched off, or whose\nbounds the host will not report, is left to the exporter.",
+              "description": "The node puts no ink on the page, so there is no picture to return in\nany format. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Judged on the host's own render bounds,\nmeasured after strokes and effects, so a zero-height rule or divider\nstill renders and still succeeds.",
               "type": "string"
             },
             {
@@ -6230,7 +6237,7 @@
         },
         "MinimalNodeDetails": {
           "additionalProperties": false,
-          "description": "Closed detail marker for a recursive minimal node.\n\nIdentity, visibility, hierarchy references, and basic bounds live in the\nnode's [`NodeSummary`]. The empty detail object prevents compact/full-only\nfields from appearing in a minimal result while retaining one recursive\ntree representation for all detail levels.",
+          "description": "Closed detail marker for a recursive minimal node.\n\nIdentity, hierarchy references, type, name, and basic bounds live in the\nnode's [`NodeSummary`]. The empty detail object prevents compact/full-only\nfields from appearing in a minimal result while retaining one recursive\ntree representation for all detail levels.",
           "type": "object"
         },
         "NamedComponentProperty": {
@@ -6328,16 +6335,12 @@
                   "type": "null"
                 }
               ]
-            },
-            "visible": {
-              "type": "boolean"
             }
           },
           "required": [
             "id",
             "name",
-            "nodeType",
-            "visible"
+            "nodeType"
           ],
           "type": "object"
         },
@@ -7386,8 +7389,13 @@
               "type": "string"
             },
             {
+              "const": "NODE_NOT_VISIBLE",
+              "description": "The node is in the document but does not render, by its own `visible`\nor an ancestor's. Distinct from `NODE_NOT_FOUND`, which means the id\nresolved to nothing: here the id is correct and the caller would waste\ntheir time re-checking it. The server returns only what Figma draws, so\na switched-off node is refused rather than returned with a flag.",
+              "type": "string"
+            },
+            {
               "const": "EMPTY_NODE_BOUNDS",
-              "description": "The node puts no ink on the page, so there is no picture to return in\nany format. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Judged on the host's own render bounds,\nmeasured after strokes and effects, so a zero-height rule or divider\nstill renders and still succeeds. A node that is switched off, or whose\nbounds the host will not report, is left to the exporter.",
+              "description": "The node puts no ink on the page, so there is no picture to return in\nany format. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Judged on the host's own render bounds,\nmeasured after strokes and effects, so a zero-height rule or divider\nstill renders and still succeeds.",
               "type": "string"
             },
             {
@@ -8308,8 +8316,13 @@
               "type": "string"
             },
             {
+              "const": "NODE_NOT_VISIBLE",
+              "description": "The node is in the document but does not render, by its own `visible`\nor an ancestor's. Distinct from `NODE_NOT_FOUND`, which means the id\nresolved to nothing: here the id is correct and the caller would waste\ntheir time re-checking it. The server returns only what Figma draws, so\na switched-off node is refused rather than returned with a flag.",
+              "type": "string"
+            },
+            {
               "const": "EMPTY_NODE_BOUNDS",
-              "description": "The node puts no ink on the page, so there is no picture to return in\nany format. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Judged on the host's own render bounds,\nmeasured after strokes and effects, so a zero-height rule or divider\nstill renders and still succeeds. A node that is switched off, or whose\nbounds the host will not report, is left to the exporter.",
+              "description": "The node puts no ink on the page, so there is no picture to return in\nany format. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Judged on the host's own render bounds,\nmeasured after strokes and effects, so a zero-height rule or divider\nstill renders and still succeeds.",
               "type": "string"
             },
             {
@@ -9744,7 +9757,7 @@
         },
         "MinimalNodeDetails": {
           "additionalProperties": false,
-          "description": "Closed detail marker for a recursive minimal node.\n\nIdentity, visibility, hierarchy references, and basic bounds live in the\nnode's [`NodeSummary`]. The empty detail object prevents compact/full-only\nfields from appearing in a minimal result while retaining one recursive\ntree representation for all detail levels.",
+          "description": "Closed detail marker for a recursive minimal node.\n\nIdentity, hierarchy references, type, name, and basic bounds live in the\nnode's [`NodeSummary`]. The empty detail object prevents compact/full-only\nfields from appearing in a minimal result while retaining one recursive\ntree representation for all detail levels.",
           "type": "object"
         },
         "NamedComponentProperty": {
@@ -9842,16 +9855,12 @@
                   "type": "null"
                 }
               ]
-            },
-            "visible": {
-              "type": "boolean"
             }
           },
           "required": [
             "id",
             "name",
-            "nodeType",
-            "visible"
+            "nodeType"
           ],
           "type": "object"
         },
@@ -12053,8 +12062,13 @@
               "type": "string"
             },
             {
+              "const": "NODE_NOT_VISIBLE",
+              "description": "The node is in the document but does not render, by its own `visible`\nor an ancestor's. Distinct from `NODE_NOT_FOUND`, which means the id\nresolved to nothing: here the id is correct and the caller would waste\ntheir time re-checking it. The server returns only what Figma draws, so\na switched-off node is refused rather than returned with a flag.",
+              "type": "string"
+            },
+            {
               "const": "EMPTY_NODE_BOUNDS",
-              "description": "The node puts no ink on the page, so there is no picture to return in\nany format. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Judged on the host's own render bounds,\nmeasured after strokes and effects, so a zero-height rule or divider\nstill renders and still succeeds. A node that is switched off, or whose\nbounds the host will not report, is left to the exporter.",
+              "description": "The node puts no ink on the page, so there is no picture to return in\nany format. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Judged on the host's own render bounds,\nmeasured after strokes and effects, so a zero-height rule or divider\nstill renders and still succeeds.",
               "type": "string"
             },
             {
@@ -12889,16 +12903,12 @@
                   "type": "null"
                 }
               ]
-            },
-            "visible": {
-              "type": "boolean"
             }
           },
           "required": [
             "id",
             "name",
-            "nodeType",
-            "visible"
+            "nodeType"
           ],
           "type": "object"
         },

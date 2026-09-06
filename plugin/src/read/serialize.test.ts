@@ -46,7 +46,6 @@ describe("bounded node serializer", () => {
       id: "1:1",
       name: "Card",
       nodeType: "FRAME",
-      visible: true,
       parentId: "0:1",
       childIds: ["1:2"],
       bounds: { x: 10, y: 20, width: 300, height: 200 },
@@ -1064,7 +1063,6 @@ describe("bounded node serializer", () => {
       id: "C:1",
       name: "Button",
       nodeType: "COMPONENT",
-      visible: true,
     })
     expect(second?.data).toEqual({
       styleReferences: [],
@@ -1075,7 +1073,7 @@ describe("bounded node serializer", () => {
     expect(second?.childrenTruncated).toBe(true)
   })
 
-  test("omits hidden children only when includeHidden is false", () => {
+  test("omits hidden children", () => {
     const hidden = base({ id: "1:2", name: "Hidden", visible: false })
     const shown = base({ id: "1:3", name: "Shown", visible: true })
     const root = base({ children: [hidden, shown] })
@@ -1084,31 +1082,11 @@ describe("bounded node serializer", () => {
       detail: "minimal",
       depth: 2,
       dedupeComponents: false,
-      includeHidden: false,
     })
     expect(filtered.nodes[0]?.summary.childIds).toEqual(["1:3"])
     expect(
       filtered.nodes[0]?.children.map((child) => child.summary.id),
     ).toEqual(["1:3"])
-
-    const included = serializeNodeForest([root], {
-      detail: "minimal",
-      depth: 2,
-      dedupeComponents: false,
-      includeHidden: true,
-    })
-    expect(
-      included.nodes[0]?.children.map((child) => child.summary.id),
-    ).toEqual(["1:2", "1:3"])
-
-    const unspecified = serializeNodeForest([root], {
-      detail: "minimal",
-      depth: 2,
-      dedupeComponents: false,
-    })
-    expect(
-      unspecified.nodes[0]?.children.map((child) => child.summary.id),
-    ).toEqual(["1:2", "1:3"])
   })
 
   test("checks cancellation between child batches", () => {
@@ -1409,6 +1387,40 @@ describe("instance component properties", () => {
         ?.properties,
     ).toEqual([{ name: "Label#0:1", value: { kind: "text", value: "Cancel" } }])
   })
+
+  test("a hidden subtree spends none of the instance-identity lookup budget", async () => {
+    // The pre-pass walks the tree to find INSTANCE nodes so their identity can
+    // be resolved. Hidden content is never returned, so resolving its instance
+    // identity is pure waste — and worse than waste, because a
+    // getMainComponentAsync lookup is shared work: a switched-off subtree
+    // large enough to make many of them would slow resolution of a visible
+    // sibling's identity for no return. The filter is invisible in the
+    // output, so only a lookup count can catch it being reverted.
+    let lookups = 0
+    const hidden = base({
+      id: "4:2",
+      type: "INSTANCE",
+      visible: false,
+      getMainComponentAsync: async () => {
+        lookups += 1
+        return { id: "2:9", type: "COMPONENT" }
+      },
+    })
+    const visible = base({
+      id: "4:3",
+      type: "INSTANCE",
+      getMainComponentAsync: async () => {
+        lookups += 1
+        return { id: "2:1", type: "COMPONENT" }
+      },
+    })
+    const root = base({ id: "1:1", children: [hidden, visible] })
+
+    const identities = await collectInstanceIdentities([root])
+
+    expect(lookups).toBe(1)
+    expect([...identities.keys()]).toEqual(["4:3"])
+  })
 })
 
 describe("style name resolution", () => {
@@ -1431,6 +1443,31 @@ describe("style name resolution", () => {
 
     expect(lookups.sort()).toEqual(["S:fill", "S:other", "S:stroke"])
     expect(names.get("S:fill")).toBe("Name/S:fill")
+  })
+
+  test("a hidden subtree spends none of the style-name lookup budget", async () => {
+    // The pre-pass walks the tree to resolve style names, and the budget it
+    // spends is capped. Hidden content is never returned, so resolving its
+    // names is pure waste — and worse than waste, because the cap is shared:
+    // a switched-off subtree large enough to exhaust it would leave a visible
+    // sibling's name unresolved. The filter is invisible in the output, so
+    // only a lookup count can catch it being reverted.
+    const lookups: string[] = []
+    const lookup = async (id: string) => {
+      lookups.push(id)
+      return { name: `Name/${id}` }
+    }
+    const hidden = styled("1:2", {
+      visible: false,
+      fillStyleId: "S:hidden",
+      strokeStyleId: "S:hidden-stroke",
+    })
+    const roots = [styled("1:1", { children: [hidden, styled("1:3")] })]
+
+    const names = await collectStyleNames(roots, lookup)
+
+    expect(lookups.sort()).toEqual(["S:fill", "S:stroke"])
+    expect(names.has("S:hidden")).toBe(false)
   })
 
   test("style references carry resolved names and the stroke kind", () => {
@@ -1558,6 +1595,30 @@ describe("variable name resolution", () => {
     expect(lookups.sort()).toEqual(["V:a", "V:b"])
     expect(names.get("V:a")).toBe("token/V:a")
     expect(names.get("V:b")).toBe("token/V:b")
+  })
+
+  test("a hidden subtree spends none of the variable-name lookup budget", async () => {
+    // The pre-pass walks the tree to resolve variable names, and the budget it
+    // spends is capped. Hidden content is never returned, so resolving its
+    // names is pure waste — and worse than waste, because the cap is shared:
+    // a switched-off subtree large enough to exhaust it would leave a visible
+    // sibling's name unresolved. The filter is invisible in the output, so
+    // only a lookup count can catch it being reverted.
+    const lookups: string[] = []
+    const lookup = async (id: string) => {
+      lookups.push(id)
+      return { name: `token/${id}` }
+    }
+    const hidden = base({ id: "1:2", visible: false, ...bound("V:hidden") })
+    const root = base({
+      id: "1:1",
+      children: [hidden, base({ id: "1:3", ...bound("V:visible") })],
+    })
+
+    const names = await collectVariableNames([root], lookup)
+
+    expect(lookups).toEqual(["V:visible"])
+    expect(names.has("V:hidden")).toBe(false)
   })
 
   test("variable references carry the resolved name", () => {
@@ -2371,4 +2432,60 @@ describe("a paint the serializer cannot model is named, not erased", () => {
   test("a paint with no usable type produces nothing at all", () => {
     expect(paints([{ type: "" }, { type: 7 }, {}])).toEqual([])
   })
+})
+
+describe("hidden nodes are never returned", () => {
+  const forest = (root: Record<string, unknown>) =>
+    serializeNodeForest([root], {
+      detail: "minimal",
+      depth: 2,
+      dedupeComponents: false,
+    })
+
+  test("a switched-off child is absent regardless of any flag", () => {
+    const hidden = base({ id: "1:2", name: "Hidden", visible: false })
+    const shown = base({ id: "1:3", name: "Shown", visible: true })
+    const root = base({ children: [hidden, shown] })
+
+    const result = forest(root)
+    expect(result.nodes[0]?.summary.childIds).toEqual(["1:3"])
+    expect(result.nodes[0]?.children.map((c) => c.summary.id)).toEqual(["1:3"])
+  })
+
+  test("a switched-on child is absent when an ancestor above the entry point is switched off", () => {
+    // The child and the entry root are both switched on — only a node
+    // *above* the root, outside the traversed subtree, is switched off.
+    // A per-node `visible` check, or a walk that stops at the entry root,
+    // would wrongly keep this child; only walking `parent` past the root
+    // catches it.
+    const grandparent = { id: "0:0", visible: false }
+    const root = base({ id: "1:1", parent: grandparent })
+    const child = base({ id: "1:2", name: "Deep", visible: true })
+    child.parent = root
+    root.children = [child]
+
+    const result = forest(root)
+    expect(result.nodes[0]?.children.map((c) => c.summary.id)).toEqual([])
+  })
+})
+
+test("no node summary carries a visible field", () => {
+  // Assert absence, not `=== true`: a field that can only say one thing is
+  // the shape this change removes, so a test asserting its value would pass
+  // for exactly the wrong reason.
+  const root = base({ children: [base({ id: "1:3", visible: true })] })
+  const result = serializeNodeForest([root], {
+    detail: "minimal",
+    depth: 1,
+    dedupeComponents: false,
+  })
+
+  const summaries = [
+    result.nodes[0]?.summary,
+    result.nodes[0]?.children[0]?.summary,
+  ]
+  for (const summary of summaries) {
+    expect(summary).toBeDefined()
+    expect(Object.hasOwn(summary as object, "visible")).toBe(false)
+  }
 })

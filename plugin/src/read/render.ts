@@ -14,12 +14,9 @@ import {
 import { progressFor } from "../main/progress"
 import { PluginReadError } from "./navigation"
 import { loadPageIfNeeded, type FigmaReadApi } from "./common"
+import { hostGet, isRecord, rendersVisibly } from "./visibility"
 
 export const SCREENSHOT_VALIDATION_TIMEOUT_MS = 10_000
-
-/** Figma nests far shallower than this; the cap only stops a malformed parent
- * chain from spinning. */
-const MAX_ANCESTOR_WALK = 128
 
 declare const figma: FigmaReadApi
 
@@ -57,6 +54,13 @@ export interface ScreenshotCodec {
   encodeSvg(source: string): Promise<SvgEncodeResult>
 }
 
+// Every entry below must stay on one line (see the NODE_NOT_VISIBLE
+// prettier-ignore for why): the Rust mirror test in tests/contracts/mod.rs
+// (plugin_message_map) parses this object line by line — split on the
+// first colon, then the message pulled from the first quoted span on that
+// same line — so a wrapped entry silently disappears from the parsed map
+// instead of failing loudly, and the mirror test then fails on a missing
+// code with no clue this file is the cause.
 const MESSAGES: Record<ErrorCode, string> = {
   NO_FIGMA_CONNECTION: "No Figma connection is available.",
   AMBIGUOUS_CONNECTION: "More than one Figma connection matches the request.",
@@ -64,6 +68,8 @@ const MESSAGES: Record<ErrorCode, string> = {
   CONNECTION_LOST: "The Figma connection was lost.",
   PROTOCOL_MISMATCH: "The plugin protocol version is not supported.",
   NODE_NOT_FOUND: "The requested node was not found.",
+  // prettier-ignore
+  NODE_NOT_VISIBLE: "The requested node exists but is switched off, so it renders nothing.",
   PAGE_NOT_FOUND: "The requested page was not found.",
   UNSUPPORTED_NODE: "The requested node type is not supported.",
   EMPTY_NODE_BOUNDS: "The requested node renders nothing.",
@@ -78,10 +84,6 @@ const MESSAGES: Record<ErrorCode, string> = {
 
 function observation(startedAt: string) {
   return { startedAt, completedAt: new Date().toISOString() }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object"
 }
 
 function itemError(code: ErrorCode): ItemResult<ScreenshotAsset> {
@@ -122,35 +124,6 @@ function exportSettings(input: GetScreenshotInput): Record<string, unknown> {
   }
 }
 
-// Bounds are node *content*, and under `documentAccess: dynamic-page` some node
-// properties are write-only and throw on read. A hostile or unloaded getter
-// costs us the measurement, not the export.
-function hostGet(node: Record<string, unknown>, key: string): unknown {
-  try {
-    return node[key]
-  } catch {
-    return undefined
-  }
-}
-
-/** A `visible` switch is inherited: the API counts a node as visible only when
- * `visible === true` for itself *and every one of its parents*. So this walks
- * the chain rather than reading one flag.
- *
- * An unfinished walk returns false. Failing to establish visibility is not the
- * same as establishing it, and every caller here treats false as "leave this
- * node alone". */
-function isFullyVisible(node: unknown): boolean {
-  let current: unknown = node
-  for (let step = 0; step < MAX_ANCESTOR_WALK; step += 1) {
-    // Past the root: nothing in the chain was switched off.
-    if (!isRecord(current)) return true
-    if (hostGet(current, "visible") === false) return false
-    current = hostGet(current, "parent")
-  }
-  return false
-}
-
 /** The rule: the host reports `absoluteRenderBounds` as exactly `null` for a
  * node we can also see is switched on.
  *
@@ -163,11 +136,15 @@ function isFullyVisible(node: unknown): boolean {
  * would fire on precisely those nodes and on almost nothing else, since every
  * other type is clamped to at least 0.01.
  *
- * The visibility guard is the price of using it. The same API calls a node
- * invisible when an *ancestor* is switched off, and null-because-hidden says
- * nothing about whether the node has anything in it, so those fall through to
- * the exporter exactly as they do today. The guard can only make this rule fire
- * less often, never more.
+ * The same API calls a node invisible when an *ancestor* is switched off, and
+ * null-because-hidden says nothing about whether the node has anything in
+ * it — reporting EMPTY_NODE_BOUNDS for such a node would be as wrong as
+ * reporting it for one the host simply cannot measure. That case no longer
+ * reaches here at all: the caller refuses a switched-off node (by its own
+ * `visible` or an ancestor's) with NODE_NOT_VISIBLE before this function is
+ * ever called, so this rule only ever runs on a node already known to
+ * render. No visibility check is repeated here — the caller's guard is the
+ * only one, and this function trusts it rather than re-deriving it.
  *
  * `undefined` is not `null`: a property the host does not carry at all — a
  * `PAGE`, which has no layout — or one whose getter throws under
@@ -175,7 +152,6 @@ function isFullyVisible(node: unknown): boolean {
  * not an empty one. */
 function rendersNothing(node: unknown): boolean {
   if (!isRecord(node)) return false
-  if (!isFullyVisible(node)) return false
   return hostGet(node, "absoluteRenderBounds") === null
 }
 
@@ -415,6 +391,13 @@ export async function getScreenshot(
     const exporter = nodeExporter(node)
     if (exporter === undefined) {
       assets.push(itemError("UNSUPPORTED_NODE"))
+      continue
+    }
+    // Before the empty-bounds test on purpose: a switched-off node has no
+    // render bounds either, so asking `rendersNothing` first would report
+    // EMPTY_NODE_BOUNDS for a node that may well have ink on it.
+    if (!rendersVisibly(node)) {
+      assets.push(itemError("NODE_NOT_VISIBLE"))
       continue
     }
     // Asked before the host exporter runs, and for every format: a node that

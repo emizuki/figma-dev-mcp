@@ -28,6 +28,8 @@ import {
   serializeNodeForest,
   type SerializeNodeForestOptions,
 } from "./serialize"
+import { rendersVisibly } from "./visibility"
+import { CANONICAL_MESSAGES } from "../shared/result-validation"
 
 function serializeOptions(
   options: Omit<SerializeNodeForestOptions, "signal">,
@@ -188,7 +190,12 @@ export async function readSelection(
     for (const id of ids) {
       signal?.throwIfAborted()
       const node = await lookupNode(id)
-      if (node !== null && node !== undefined) roots.push(node)
+      // GetSelectionResult carries no per-item error slot, so a switched-off
+      // selected root is excluded rather than reported — same treatment as a
+      // lookup miss, and it must not sink the rest of the selection either.
+      if (node !== null && node !== undefined && rendersVisibly(node)) {
+        roots.push(node)
+      }
     }
   }
   const serialized = await serializePreparedForest(
@@ -208,25 +215,26 @@ export async function readSelection(
   return result as GetSelectionResult
 }
 
+// `nodeError` sources its messages from `CANONICAL_MESSAGES` rather than
+// hand-copying them here. The two `Record<ErrorCode, string>` literals that
+// do spell these strings — `CANONICAL_MESSAGES` in
+// `shared/result-validation.ts` and `MESSAGES` in `read/render.ts` — are
+// each pinned against the Rust canonical set by
+// `the_plugin_mirrors_every_error_code_and_its_canonical_message`
+// (`tests/contracts/mod.rs`), which parses each object out of the plugin
+// source text by name. A `switch` like the one this function used to be is
+// not a `Record` literal that test can find and parse, so a message
+// hand-copied into one would drift unnoticed — that, not a shortage of
+// places allowed to hold the text, is why this function must not hold a
+// literal of its own.
 function nodeError(
-  code: "NODE_NOT_FOUND" | "CAPABILITY_UNAVAILABLE" | "INTERNAL_ERROR",
+  code:
+    | "NODE_NOT_FOUND"
+    | "NODE_NOT_VISIBLE"
+    | "CAPABILITY_UNAVAILABLE"
+    | "INTERNAL_ERROR",
 ) {
-  switch (code) {
-    case "NODE_NOT_FOUND":
-      return {
-        code,
-        message: "The requested node was not found.",
-        retryable: false,
-      }
-    case "CAPABILITY_UNAVAILABLE":
-      return {
-        code,
-        message: "The required Figma capability is unavailable.",
-        retryable: false,
-      }
-    case "INTERNAL_ERROR":
-      return { code, message: "The operation failed.", retryable: false }
-  }
+  return { code, message: CANONICAL_MESSAGES[code], retryable: false }
 }
 
 export async function readNodes(
@@ -254,6 +262,10 @@ export async function readNodes(
       const node = await lookupNode(id)
       if (node === null || node === undefined) {
         items.push({ status: "error", error: nodeError("NODE_NOT_FOUND") })
+        continue
+      }
+      if (!rendersVisibly(node)) {
+        items.push({ status: "error", error: nodeError("NODE_NOT_VISIBLE") })
         continue
       }
       const serialized = await serializePreparedForest(
@@ -324,7 +336,12 @@ export async function resolveDesignRoots(
     for (const id of ids) {
       signal?.throwIfAborted()
       const node = await lookupNode(id)
-      if (node !== null && node !== undefined) roots.push(node)
+      // GetDesignContextResult carries no per-item error slot (it's a bare
+      // NodeForest, like GetSelectionResult), so a switched-off root is
+      // excluded rather than reported — same treatment as a lookup miss.
+      if (node !== null && node !== undefined && rendersVisibly(node)) {
+        roots.push(node)
+      }
     }
     return roots
   }
@@ -334,6 +351,9 @@ export async function resolveDesignRoots(
     if (node === null || node === undefined) {
       throw new PluginReadError("NODE_NOT_FOUND", false)
     }
+    // Excluded, not refused: NODE_NOT_FOUND would be wrong (the id resolved),
+    // and there is no per-item slot to carry a NODE_NOT_VISIBLE error in.
+    if (!rendersVisibly(node)) return []
     return [await loadPageIfNeeded(node)]
   }
   if ("nodeIds" in selector) {
@@ -344,7 +364,7 @@ export async function resolveDesignRoots(
       if (node === null || node === undefined) {
         throw new PluginReadError("NODE_NOT_FOUND", false)
       }
-      roots.push(await loadPageIfNeeded(node))
+      if (rendersVisibly(node)) roots.push(await loadPageIfNeeded(node))
     }
     return roots
   }
@@ -374,7 +394,6 @@ export async function readDesignContext(
       detail,
       depth,
       dedupeComponents: input.dedupeComponents,
-      includeHidden: input.includeHidden,
     },
     signal,
   )

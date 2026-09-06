@@ -83,7 +83,6 @@ export interface SearchNodesInput extends FileScopedInput {
 export interface GetDesignContextInput extends ScopedInput {
   depth?: number
   detail?: DetailLevel
-  includeHidden: boolean
   dedupeComponents: boolean
 }
 
@@ -185,6 +184,7 @@ export const ERROR_CODES: readonly [
   "CONNECTION_LOST",
   "PROTOCOL_MISMATCH",
   "NODE_NOT_FOUND",
+  "NODE_NOT_VISIBLE",
   "PAGE_NOT_FOUND",
   "UNSUPPORTED_NODE",
   "EMPTY_NODE_BOUNDS",
@@ -202,6 +202,7 @@ export const ERROR_CODES: readonly [
   "CONNECTION_LOST",
   "PROTOCOL_MISMATCH",
   "NODE_NOT_FOUND",
+  "NODE_NOT_VISIBLE",
   "PAGE_NOT_FOUND",
   "UNSUPPORTED_NODE",
   "EMPTY_NODE_BOUNDS",

@@ -40,8 +40,7 @@ fn minimal_node(id: &str, name: &str) -> Value {
         "summary": {
             "id": id,
             "name": name,
-            "nodeType": "FRAME",
-            "visible": true
+            "nodeType": "FRAME"
         },
         "data": {},
         "children": [],
@@ -173,8 +172,7 @@ fn fixture_result(operation: &str, input: &Value) -> Value {
                 "node": {
                     "id": "1:2",
                     "name": "Card",
-                    "nodeType": "FRAME",
-                    "visible": true
+                    "nodeType": "FRAME"
                 },
                 "reasons": ["name"]
             }],
@@ -662,7 +660,6 @@ async fn every_tool_and_prompt_round_trips_through_mcp_service() {
                 json!({
                     "selector": {"nodeId": "1:1"},
                     "detail": "minimal",
-                    "includeHidden": false,
                     "dedupeComponents": true
                 }),
             )),

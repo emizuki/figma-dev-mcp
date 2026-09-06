@@ -18,6 +18,7 @@ import {
 import { PluginReadError } from "./navigation"
 import { loadPageIfNeeded, type FigmaReadApi } from "./common"
 import { byteLength, type SerializerLimits } from "./serialize"
+import { rendersVisibly } from "./visibility"
 
 export type NodeType = string
 export type MatchReason = "name" | "nodeType" | "text"
@@ -60,10 +61,6 @@ function string(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback
 }
 
-function boolean(value: unknown, fallback = false): boolean {
-  return typeof value === "boolean" ? value : fallback
-}
-
 function finite(value: unknown, fallback = 0): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback
 }
@@ -96,6 +93,8 @@ async function resolveSearchRoot(
   const node = await lookupNode(scope.nodeId)
   if (node === null || node === undefined)
     throw new PluginReadError("NODE_NOT_FOUND", false)
+  if (!rendersVisibly(node))
+    throw new PluginReadError("NODE_NOT_VISIBLE", false)
   return loadPageIfNeeded(node)
 }
 
@@ -176,8 +175,7 @@ function summarizeMatch(raw: unknown, includeChildren = true): NodeSummary {
   const node = record(raw)
   const parent = record(node.parent)
   const bounds = record(node.absoluteBoundingBox)
-  const children =
-    includeChildren && Array.isArray(node.children) ? node.children : []
+  const children = includeChildren ? childrenOf(node) : []
   const childIds = children
     .map((child) => string(record(child).id))
     .filter((id) => id.length > 0)
@@ -185,7 +183,6 @@ function summarizeMatch(raw: unknown, includeChildren = true): NodeSummary {
     id: string(node.id),
     name: string(node.name),
     nodeType: string(node.type),
-    visible: boolean(node.visible, true),
   }
   if (typeof parent.id === "string") summary.parentId = parent.id
   if (childIds.length > 0) summary.childIds = childIds
@@ -309,9 +306,15 @@ function parseCursor(value: string, key: string): SearchCursorPayload {
   }
 }
 
+// Every candidate that reaches the stack passes through here — the initial
+// cursor-path descent and the per-item push both call it — so filtering here
+// keeps a hidden subtree from ever being walked, rather than trimming matches
+// found inside one after the fact.
 function childrenOf(node: unknown): readonly unknown[] {
   const children = record(node).children
-  return Array.isArray(children) ? children : []
+  return Array.isArray(children)
+    ? children.filter((child) => rendersVisibly(child))
+    : []
 }
 
 function initialStack(

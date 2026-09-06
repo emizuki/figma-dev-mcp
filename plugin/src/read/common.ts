@@ -20,7 +20,6 @@ export interface FigmaReadApi {
     readonly getDevResourcesAsync?: unknown
   }
   readonly editorType: string
-  skipInvisibleInstanceChildren?: boolean
   readonly mixed?: unknown
   getNodeByIdAsync?(id: string): Promise<unknown>
   listAvailableFontsAsync?(): Promise<unknown[]>

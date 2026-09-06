@@ -2075,7 +2075,6 @@ pub struct NodeSummary {
     pub id: NodeId,
     pub name: DisplayText,
     pub node_type: NodeTypeName,
-    pub visible: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_id: Option<NodeId>,
     #[serde(default, skip_serializing_if = "NodeIdList::is_empty")]
@@ -2677,7 +2676,7 @@ fn validate_node<D>(
 
 /// Closed detail marker for a recursive minimal node.
 ///
-/// Identity, visibility, hierarchy references, and basic bounds live in the
+/// Identity, hierarchy references, type, name, and basic bounds live in the
 /// node's [`NodeSummary`]. The empty detail object prevents compact/full-only
 /// fields from appearing in a minimal result while retaining one recursive
 /// tree representation for all detail levels.

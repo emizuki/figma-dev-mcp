@@ -23,7 +23,13 @@ pub const FRONTEND_ADDRESS: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LO
 // deny_unknown_fields visitors, so a "3" plugin talking to a "2" binary would
 // die on gradientTransform with an opaque serde error. Refusing the handshake
 // names the real problem instead.
-pub const PLUGIN_PROTOCOL_VERSION: &str = "3";
+//
+// Bumped to "4" for the hidden-node removal: `includeHidden` left the
+// `get_design_context` input and `visible` left every node summary. Both are
+// closed shapes — the input is `deny_unknown_fields` and `NodeSummary` is a
+// fixed struct — so a "3" plugin and a "4" binary disagree in both directions
+// at once. A handshake refusal names that; a serde error would not.
+pub const PLUGIN_PROTOCOL_VERSION: &str = "4";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Limits {
