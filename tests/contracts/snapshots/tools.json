@@ -1662,7 +1662,7 @@
         },
         "MinimalNodeDetails": {
           "additionalProperties": false,
-          "description": "Closed detail marker for a recursive minimal node.\n\nIdentity, visibility, hierarchy references, and basic bounds live in the\nnode's [`NodeSummary`]. The empty detail object prevents compact/full-only\nfields from appearing in a minimal result while retaining one recursive\ntree representation for all detail levels.",
+          "description": "Closed detail marker for a recursive minimal node.\n\nIdentity, hierarchy references, type, name, and basic bounds live in the\nnode's [`NodeSummary`]. The empty detail object prevents compact/full-only\nfields from appearing in a minimal result while retaining one recursive\ntree representation for all detail levels.",
           "type": "object"
         },
         "NamedComponentProperty": {
@@ -6237,7 +6237,7 @@
         },
         "MinimalNodeDetails": {
           "additionalProperties": false,
-          "description": "Closed detail marker for a recursive minimal node.\n\nIdentity, visibility, hierarchy references, and basic bounds live in the\nnode's [`NodeSummary`]. The empty detail object prevents compact/full-only\nfields from appearing in a minimal result while retaining one recursive\ntree representation for all detail levels.",
+          "description": "Closed detail marker for a recursive minimal node.\n\nIdentity, hierarchy references, type, name, and basic bounds live in the\nnode's [`NodeSummary`]. The empty detail object prevents compact/full-only\nfields from appearing in a minimal result while retaining one recursive\ntree representation for all detail levels.",
           "type": "object"
         },
         "NamedComponentProperty": {
@@ -9757,7 +9757,7 @@
         },
         "MinimalNodeDetails": {
           "additionalProperties": false,
-          "description": "Closed detail marker for a recursive minimal node.\n\nIdentity, visibility, hierarchy references, and basic bounds live in the\nnode's [`NodeSummary`]. The empty detail object prevents compact/full-only\nfields from appearing in a minimal result while retaining one recursive\ntree representation for all detail levels.",
+          "description": "Closed detail marker for a recursive minimal node.\n\nIdentity, hierarchy references, type, name, and basic bounds live in the\nnode's [`NodeSummary`]. The empty detail object prevents compact/full-only\nfields from appearing in a minimal result while retaining one recursive\ntree representation for all detail levels.",
           "type": "object"
         },
         "NamedComponentProperty": {
