@@ -15,9 +15,23 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 
 /// A chain deeper than this is treated as not rendering. Bounded because the
 /// walk reads host properties that can throw, and because a cycle or an
-/// unreadably deep tree must not hang a read. Failing to "does not render" is
-/// the safe direction: the server's contract is that what it returns is what
-/// Figma draws, so an answer it cannot establish is one it must not give.
+/// unreadably deep tree must not hang a read. Exhausting this bound means the
+/// walk genuinely cannot establish an answer on a pathological tree, so it
+/// fails closed to "does not render" — the server's contract is that what it
+/// returns is what Figma draws, and an answer it cannot establish is one it
+/// must not give.
+///
+/// A single throwing getter partway up the chain is a different failure and
+/// is deliberately not treated the same way: `hostGet` below swallows it and
+/// `rendersVisibly` continues as though that property were absent, which for
+/// `visible` reads as switched on. That node is overwhelmingly likely to be
+/// visible in practice — a hostile getter is a local, transient failure under
+/// `documentAccess: dynamic-page`, not evidence the tree is unreadable — and
+/// two of this predicate's callers, `get_selection` and `get_design_context`,
+/// have no error slot to explain a node quietly missing. Failing open there
+/// avoids deleting real content over a getter that misbehaved once; failing
+/// closed on bound exhaustion avoids asserting an answer about a chain that
+/// was never actually walked.
 const MAX_ANCESTOR_WALK = 128
 
 /// Whether this node and every ancestor are switched on.

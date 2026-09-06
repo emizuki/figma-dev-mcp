@@ -1387,6 +1387,40 @@ describe("instance component properties", () => {
         ?.properties,
     ).toEqual([{ name: "Label#0:1", value: { kind: "text", value: "Cancel" } }])
   })
+
+  test("a hidden subtree spends none of the instance-identity lookup budget", async () => {
+    // The pre-pass walks the tree to find INSTANCE nodes so their identity can
+    // be resolved. Hidden content is never returned, so resolving its instance
+    // identity is pure waste — and worse than waste, because a
+    // getMainComponentAsync lookup is shared work: a switched-off subtree
+    // large enough to make many of them would slow resolution of a visible
+    // sibling's identity for no return. The filter is invisible in the
+    // output, so only a lookup count can catch it being reverted.
+    let lookups = 0
+    const hidden = base({
+      id: "4:2",
+      type: "INSTANCE",
+      visible: false,
+      getMainComponentAsync: async () => {
+        lookups += 1
+        return { id: "2:9", type: "COMPONENT" }
+      },
+    })
+    const visible = base({
+      id: "4:3",
+      type: "INSTANCE",
+      getMainComponentAsync: async () => {
+        lookups += 1
+        return { id: "2:1", type: "COMPONENT" }
+      },
+    })
+    const root = base({ id: "1:1", children: [hidden, visible] })
+
+    const identities = await collectInstanceIdentities([root])
+
+    expect(lookups).toBe(1)
+    expect([...identities.keys()]).toEqual(["4:3"])
+  })
 })
 
 describe("style name resolution", () => {
@@ -1561,6 +1595,30 @@ describe("variable name resolution", () => {
     expect(lookups.sort()).toEqual(["V:a", "V:b"])
     expect(names.get("V:a")).toBe("token/V:a")
     expect(names.get("V:b")).toBe("token/V:b")
+  })
+
+  test("a hidden subtree spends none of the variable-name lookup budget", async () => {
+    // The pre-pass walks the tree to resolve variable names, and the budget it
+    // spends is capped. Hidden content is never returned, so resolving its
+    // names is pure waste — and worse than waste, because the cap is shared:
+    // a switched-off subtree large enough to exhaust it would leave a visible
+    // sibling's name unresolved. The filter is invisible in the output, so
+    // only a lookup count can catch it being reverted.
+    const lookups: string[] = []
+    const lookup = async (id: string) => {
+      lookups.push(id)
+      return { name: `token/${id}` }
+    }
+    const hidden = base({ id: "1:2", visible: false, ...bound("V:hidden") })
+    const root = base({
+      id: "1:1",
+      children: [hidden, base({ id: "1:3", ...bound("V:visible") })],
+    })
+
+    const names = await collectVariableNames([root], lookup)
+
+    expect(lookups).toEqual(["V:visible"])
+    expect(names.has("V:hidden")).toBe(false)
   })
 
   test("variable references carry the resolved name", () => {

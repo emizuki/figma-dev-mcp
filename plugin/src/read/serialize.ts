@@ -122,7 +122,7 @@ function own(value: UnknownRecord, key: string): boolean {
 // Under `documentAccess: dynamic-page` some node properties are write-only and
 // throw on read. Every property describing a node's *content* is read through
 // here, so one hostile getter costs that field and not the whole node.
-// Identity and hierarchy — id, name, type, visible, parent, children — are read
+// Identity and hierarchy — id, name, type, parent, children — are read
 // directly on purpose: if those throw there is no node left to serialize, and
 // swallowing the error would turn a crash into silent empty data.
 function hostGet(value: UnknownRecord, key: string): unknown {
