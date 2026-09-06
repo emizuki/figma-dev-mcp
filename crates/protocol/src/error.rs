@@ -47,6 +47,37 @@ pub enum ErrorCode {
     InternalError,
 }
 
+impl ErrorCode {
+    /// Every member, in wire order.
+    ///
+    /// The enum has no iterator, so any test that wants to sweep the whole set
+    /// has to write the members out. Written out once here and shared, a member
+    /// added to the enum reaches every sweep at the same time — where a copy
+    /// kept beside each test would leave the new member silently unswept while
+    /// the test still passed over a shorter list. `tests/contracts` pins this
+    /// against the set derived from the enum's own schema, so a member missing
+    /// from it fails there rather than quietly narrowing what the sweeps cover.
+    pub const ALL: [ErrorCode; 17] = [
+        ErrorCode::NoFigmaConnection,
+        ErrorCode::AmbiguousConnection,
+        ErrorCode::ConnectionNotFound,
+        ErrorCode::ConnectionLost,
+        ErrorCode::ProtocolMismatch,
+        ErrorCode::NodeNotFound,
+        ErrorCode::NodeNotVisible,
+        ErrorCode::PageNotFound,
+        ErrorCode::UnsupportedNode,
+        ErrorCode::EmptyNodeBounds,
+        ErrorCode::CapabilityUnavailable,
+        ErrorCode::UnsafeSvg,
+        ErrorCode::InvalidCursor,
+        ErrorCode::LimitExceeded,
+        ErrorCode::Timeout,
+        ErrorCode::Cancelled,
+        ErrorCode::InternalError,
+    ];
+}
+
 pub const fn canonical_message(code: ErrorCode) -> &'static str {
     match code {
         ErrorCode::NoFigmaConnection => "No Figma connection is available.",
@@ -526,5 +557,32 @@ impl JsonSchema for CanonicalMessageSchema {
             object.insert("readOnly".to_owned(), true.into());
         }
         schema
+    }
+}
+
+#[cfg(test)]
+mod error_code_all_tests {
+    use super::ErrorCode;
+
+    /// `ALL`'s completeness is pinned in `tests/contracts` against the set the
+    /// enum's schema declares, but that check lives in another crate and reads
+    /// the plugin source tree off disk. This one needs neither, so `cargo test
+    /// -p figma-dev-mcp-protocol` on its own still catches the mistake the
+    /// length check cannot see: a member written twice while another is
+    /// missing, which keeps the array 17 long and compiles.
+    #[test]
+    fn all_lists_each_member_once() {
+        let mut tags: Vec<String> = ErrorCode::ALL
+            .iter()
+            .map(|code| serde_json::to_string(code).expect("ErrorCode serializes"))
+            .collect();
+        let listed = tags.len();
+        tags.sort();
+        tags.dedup();
+        assert_eq!(
+            tags.len(),
+            listed,
+            "ErrorCode::ALL repeats a member, so some other member is missing from every sweep"
+        );
     }
 }

@@ -32,7 +32,22 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 /// avoids deleting real content over a getter that misbehaved once; failing
 /// closed on bound exhaustion avoids asserting an answer about a chain that
 /// was never actually walked.
-const MAX_ANCESTOR_WALK = 128
+///
+/// The bound is set far above any depth a real document reaches, because
+/// failing closed here is the one way this predicate can drop a node that
+/// genuinely renders — and its callers `get_selection` and `get_design_context`
+/// have no error slot to say so, making that node silently absent rather than
+/// refused. When this walk lived in `render.ts` the same exhaustion only
+/// suppressed an `EMPTY_NODE_BOUNDS` guess and the node still exported, so the
+/// cost of a low bound rose when the predicate became the rule for every read.
+/// A cycle still terminates, just after more steps; the extra iterations are
+/// paid only on a tree already pathological enough to have no right answer.
+const MAX_ANCESTOR_WALK = 1024
+
+/// Depth past which the walk starts recording what it has seen so a cycle is
+/// caught at its own length rather than at the bound. Set above any real
+/// document's nesting so the common path allocates nothing.
+const CYCLE_WATCH_AFTER = 64
 
 /// Whether this node and every ancestor are switched on.
 ///
@@ -41,10 +56,25 @@ const MAX_ANCESTOR_WALK = 128
 /// confidently-wrong shape as reporting a disabled drop shadow.
 export function rendersVisibly(node: unknown): boolean {
   let current: unknown = node
+  // Allocated only if a chain runs long enough to be suspicious. Every real
+  // chain finishes in the low tens, so the common path never builds a set;
+  // a cycle is caught at its own length instead of walking the full bound,
+  // which matters because this runs once per child on the read hot path and
+  // `search_nodes` visits up to 10,000 nodes with no cancellation check
+  // inside this loop.
+  let seen: Set<unknown> | undefined
   for (let step = 0; step < MAX_ANCESTOR_WALK; step += 1) {
     // Past the root: nothing in the chain was switched off.
     if (!isRecord(current)) return true
     if (hostGet(current, "visible") === false) return false
+    if (step >= CYCLE_WATCH_AFTER) {
+      seen ??= new Set()
+      // Revisiting a node means the chain loops and has no root, so no
+      // answer about it can be established. Same verdict as exhausting the
+      // bound, reached in a fraction of the steps.
+      if (seen.has(current)) return false
+      seen.add(current)
+    }
     current = hostGet(current, "parent")
   }
   return false

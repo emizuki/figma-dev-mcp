@@ -58,9 +58,10 @@ export interface ScreenshotCodec {
 // prettier-ignore for why): the Rust mirror test in tests/contracts/mod.rs
 // (plugin_message_map) parses this object line by line — split on the
 // first colon, then the message pulled from the first quoted span on that
-// same line — so a wrapped entry silently disappears from the parsed map
-// instead of failing loudly, and the mirror test then fails on a missing
-// code with no clue this file is the cause.
+// same line — so every entry has to stay on one line. The Rust side
+// panics by name on a line it cannot parse, so a wrapped entry fails with
+// this file and the offending line rather than as a bare list mismatch —
+// but it still fails, and this directive is what keeps it from happening.
 const MESSAGES: Record<ErrorCode, string> = {
   NO_FIGMA_CONNECTION: "No Figma connection is available.",
   AMBIGUOUS_CONNECTION: "More than one Figma connection matches the request.",

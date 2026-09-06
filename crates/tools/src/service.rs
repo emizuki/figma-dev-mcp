@@ -237,7 +237,7 @@ fn tool_error_response(
     connection_id: Option<String>,
     duration: std::time::Duration,
 ) -> Result<CallToolResponse, McpError> {
-    let code = error_code_name(error.code());
+    let code = crate::observability::known_error_code_tag(error.code());
     let value = serde_json::to_value(&error)
         .map_err(|_| McpError::internal_error("failed to serialize tool error", None))?;
     let result = structured_error(value);
@@ -260,26 +260,4 @@ fn tool_error_response(
         error_code: code,
     });
     Ok(accounted.result.into())
-}
-
-fn error_code_name(code: figma_dev_mcp_protocol::error::ErrorCode) -> &'static str {
-    match code {
-        figma_dev_mcp_protocol::error::ErrorCode::NoFigmaConnection => "NO_FIGMA_CONNECTION",
-        figma_dev_mcp_protocol::error::ErrorCode::AmbiguousConnection => "AMBIGUOUS_CONNECTION",
-        figma_dev_mcp_protocol::error::ErrorCode::ConnectionNotFound => "CONNECTION_NOT_FOUND",
-        figma_dev_mcp_protocol::error::ErrorCode::ConnectionLost => "CONNECTION_LOST",
-        figma_dev_mcp_protocol::error::ErrorCode::ProtocolMismatch => "PROTOCOL_MISMATCH",
-        figma_dev_mcp_protocol::error::ErrorCode::NodeNotFound => "NODE_NOT_FOUND",
-        figma_dev_mcp_protocol::error::ErrorCode::NodeNotVisible => "NODE_NOT_VISIBLE",
-        figma_dev_mcp_protocol::error::ErrorCode::PageNotFound => "PAGE_NOT_FOUND",
-        figma_dev_mcp_protocol::error::ErrorCode::UnsupportedNode => "UNSUPPORTED_NODE",
-        figma_dev_mcp_protocol::error::ErrorCode::EmptyNodeBounds => "EMPTY_NODE_BOUNDS",
-        figma_dev_mcp_protocol::error::ErrorCode::CapabilityUnavailable => "CAPABILITY_UNAVAILABLE",
-        figma_dev_mcp_protocol::error::ErrorCode::UnsafeSvg => "UNSAFE_SVG",
-        figma_dev_mcp_protocol::error::ErrorCode::InvalidCursor => "INVALID_CURSOR",
-        figma_dev_mcp_protocol::error::ErrorCode::LimitExceeded => "LIMIT_EXCEEDED",
-        figma_dev_mcp_protocol::error::ErrorCode::Timeout => "TIMEOUT",
-        figma_dev_mcp_protocol::error::ErrorCode::Cancelled => "CANCELLED",
-        figma_dev_mcp_protocol::error::ErrorCode::InternalError => "INTERNAL_ERROR",
-    }
 }

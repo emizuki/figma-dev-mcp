@@ -268,33 +268,9 @@ fn read_result_name(result: &ReadResult) -> &'static str {
     }
 }
 
-/// The wire order of the stable error codes. Mirrored by `ERROR_CODES` in
-/// `plugin/src/shared/protocol.ts`; the mirror test below checks that this list
-/// is still the set the enum declares, so a member added to `ErrorCode` and not
-/// added here fails rather than going unnoticed.
-pub const ERROR_CODES: [ErrorCode; 17] = [
-    ErrorCode::NoFigmaConnection,
-    ErrorCode::AmbiguousConnection,
-    ErrorCode::ConnectionNotFound,
-    ErrorCode::ConnectionLost,
-    ErrorCode::ProtocolMismatch,
-    ErrorCode::NodeNotFound,
-    ErrorCode::NodeNotVisible,
-    ErrorCode::PageNotFound,
-    ErrorCode::UnsupportedNode,
-    ErrorCode::EmptyNodeBounds,
-    ErrorCode::CapabilityUnavailable,
-    ErrorCode::UnsafeSvg,
-    ErrorCode::InvalidCursor,
-    ErrorCode::LimitExceeded,
-    ErrorCode::Timeout,
-    ErrorCode::Cancelled,
-    ErrorCode::InternalError,
-];
-
 #[test]
 fn stable_error_codes_are_exact_and_screaming_snake_case() {
-    let encoded: Vec<String> = ERROR_CODES
+    let encoded: Vec<String> = ErrorCode::ALL
         .iter()
         .map(|code| {
             let expected = error_code_tag(*code);
@@ -615,21 +591,39 @@ fn plugin_error_code_lists(source: &str) -> (Vec<String>, Vec<String>) {
 /// The `CODE: "message"` pairs of a `Record<ErrorCode, string>` literal, sorted.
 /// Pairs rather than two sets: a message swapped between two codes leaves both
 /// sets identical and is still a dropped session.
-fn plugin_message_map(source: &str, start: &str) -> Vec<(String, String)> {
+fn plugin_message_map(path: &str, source: &str, start: &str) -> Vec<(String, String)> {
     let begin = source
         .find(start)
-        .unwrap_or_else(|| panic!("plugin source must contain {start}"))
+        .unwrap_or_else(|| panic!("{path} must contain {start}"))
         + start.len();
     let rest = &source[begin..];
     let end = rest
         .find("\n}")
-        .unwrap_or_else(|| panic!("plugin source must terminate {start}"));
+        .unwrap_or_else(|| panic!("{path} must terminate {start}"));
+    // Each entry must parse. Skipping the ones that do not would still fail the
+    // comparison below, but as a diff of two message lists with nothing naming
+    // the file or the line — and the cause is almost always mechanical, an
+    // entry wrapped onto a second line so the `CODE: "message"` shape no longer
+    // fits on one. Blank lines and `//` comments are the only non-entry lines
+    // these literals carry, so anything else that fails to parse is the bug.
     let mut pairs: Vec<(String, String)> = rest[..end]
         .lines()
-        .filter_map(|line| {
-            let (code, tail) = line.split_once(':')?;
-            let message = tail.split('"').nth(1)?;
-            Some((code.trim().to_owned(), message.to_owned()))
+        .filter(|line| {
+            let trimmed = line.trim();
+            // Only the single `// prettier-ignore` these literals carry is
+            // skipped. Skipping every `//` line would silently drop an entry
+            // commented out during debugging, which is the same illegible
+            // failure this parser was tightened to stop.
+            !trimmed.is_empty() && trimmed != "// prettier-ignore"
+        })
+        .map(|line| {
+            let (code, tail) = line.split_once(':').unwrap_or_else(|| {
+                panic!("{path}: {start}: entry has no `CODE:` on its own line (wrapped?): {line:?}")
+            });
+            let message = tail.split('"').nth(1).unwrap_or_else(|| {
+                panic!("{path}: {start}: entry has no quoted message (wrapped?): {line:?}")
+            });
+            (code.trim().to_owned(), message.to_owned())
         })
         .collect();
     pairs.sort();
@@ -695,14 +689,14 @@ fn the_plugin_mirrors_every_error_code_and_its_canonical_message() {
     let render = std::fs::read_to_string(plugin.join("read/render.ts")).unwrap();
 
     let rust = schema_error_codes();
-    let mut listed: Vec<String> = ERROR_CODES
+    let mut listed: Vec<String> = ErrorCode::ALL
         .iter()
         .map(|code| error_code_tag(*code).to_owned())
         .collect();
     listed.sort();
     assert_eq!(
         listed, rust,
-        "ERROR_CODES in this file is not the set the enum declares"
+        "ErrorCode::ALL is not the set the enum declares"
     );
 
     let (declared, accepted) = plugin_error_code_lists(&protocol);
@@ -719,7 +713,7 @@ fn the_plugin_mirrors_every_error_code_and_its_canonical_message() {
     // message is not the canonical one for its code. A drifted string is
     // therefore also a dropped session, not a cosmetic difference. Three lists
     // hold these strings and nothing else pins them to each other.
-    let mut expected: Vec<(String, String)> = ERROR_CODES
+    let mut expected: Vec<(String, String)> = ErrorCode::ALL
         .iter()
         .map(|code| {
             (
@@ -731,6 +725,7 @@ fn the_plugin_mirrors_every_error_code_and_its_canonical_message() {
     expected.sort();
     assert_eq!(
         plugin_message_map(
+            "plugin/src/shared/result-validation.ts",
             &validation,
             "const CANONICAL_MESSAGES: Record<ErrorCode, string> = {"
         ),
@@ -738,7 +733,11 @@ fn the_plugin_mirrors_every_error_code_and_its_canonical_message() {
         "plugin result-validation.ts carries different canonical messages than Rust"
     );
     assert_eq!(
-        plugin_message_map(&render, "const MESSAGES: Record<ErrorCode, string> = {"),
+        plugin_message_map(
+            "plugin/src/read/render.ts",
+            &render,
+            "const MESSAGES: Record<ErrorCode, string> = {",
+        ),
         expected,
         "plugin read/render.ts carries different canonical messages than Rust"
     );
@@ -3077,12 +3076,22 @@ fn wire_snapshot_fingerprint() -> String {
 /// The first double-quoted value on the line declaring `key`.
 fn extract_string_literal(source: &str, key: &str) -> Option<String> {
     let prefix = format!("{key}:");
-    source
+    let line = source
         .lines()
-        .find(|line| line.trim_start().starts_with(&prefix))?
-        .split('"')
-        .nth(1)
-        .map(str::to_owned)
+        .find(|line| line.trim_start().starts_with(&prefix))?;
+    // `None` from here would read to the caller as "the key is not declared",
+    // which is the wrong cause: the declaration is present and merely wrapped
+    // onto a second line. Say so instead of letting the caller guess.
+    Some(
+        line.split('"')
+            .nth(1)
+            .unwrap_or_else(|| {
+                panic!(
+                    "{key} is declared but its value is not on the same line (wrapped?): {line:?}"
+                )
+            })
+            .to_owned(),
+    )
 }
 
 fn plugin_src() -> std::path::PathBuf {
