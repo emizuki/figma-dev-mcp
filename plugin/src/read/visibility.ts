@@ -13,35 +13,48 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object"
 }
 
-/// A chain deeper than this is treated as not rendering. Bounded because the
+/// Steps the ancestor walk will take before giving up. Bounded because the
 /// walk reads host properties that can throw, and because a cycle or an
-/// unreadably deep tree must not hang a read. Exhausting this bound means the
-/// walk genuinely cannot establish an answer on a pathological tree, so it
-/// fails closed to "does not render" — the server's contract is that what it
-/// returns is what Figma draws, and an answer it cannot establish is one it
-/// must not give.
+/// unreadably deep tree must not hang a read.
 ///
-/// A single throwing getter partway up the chain is a different failure and
-/// is deliberately not treated the same way: `hostGet` below swallows it and
-/// `rendersVisibly` continues as though that property were absent, which for
-/// `visible` reads as switched on. That node is overwhelmingly likely to be
-/// visible in practice — a hostile getter is a local, transient failure under
-/// `documentAccess: dynamic-page`, not evidence the tree is unreadable — and
-/// two of this predicate's callers, `get_selection` and `get_design_context`,
-/// have no error slot to explain a node quietly missing. Failing open there
-/// avoids deleting real content over a getter that misbehaved once; failing
-/// closed on bound exhaustion avoids asserting an answer about a chain that
-/// was never actually walked.
+/// Exhausting the bound yields `undetermined`, not `hidden`. The walk has
+/// established nothing about this node, and saying "switched off" would be a
+/// confident claim about a chain that was never followed to its root. What the
+/// caller does with that verdict is the caller's own contract, and the two
+/// differ:
 ///
-/// The bound is set far above any depth a real document reaches, because
-/// failing closed here is the one way this predicate can drop a node that
-/// genuinely renders — and its callers `get_selection` and `get_design_context`
-/// have no error slot to say so, making that node silently absent rather than
-/// refused. When this walk lived in `render.ts` the same exhaustion only
-/// suppressed an `EMPTY_NODE_BOUNDS` guess and the node still exported, so the
-/// cost of a low bound rose when the predicate became the rule for every read.
-/// A cycle still terminates, just after more steps; the extra iterations are
-/// paid only on a tree already pathological enough to have no right answer.
+/// - `get_selection` and `get_design_context` list the node under
+///   `unresolved`, so the caller learns the id and can ask again.
+/// - `get_nodes` and `get_screenshot` fail that one item with
+///   `LIMIT_EXCEEDED`; `search_nodes` rejects the whole call with it.
+/// - The child filters (`childrenOf`, `visibleChildren`, and the three
+///   pre-pass collectors in `serialize.ts`) have no per-node channel at any
+///   depth, so they exclude the node exactly as they exclude a hidden one.
+/// - The seven selector-taking tools — `get_styles`, `get_variables`,
+///   `get_components`, `get_fonts`, `get_reactions`, `get_motion`,
+///   `get_dev_mode_data` — resolve their scope through `resolveDesignRoots`
+///   but discard its `unresolved` half, having no field to carry it, so an
+///   unwalkable scope is an ordinary empty result there.
+///
+/// So the bound stays far above any depth a real document reaches. On the last
+/// two groups above, exhaustion is still the one way this predicate can drop a
+/// node that genuinely renders, silently and with no way for the caller to
+/// tell — `unresolved` narrowed that exposure to two tools, it did not remove
+/// it. When this walk lived in `render.ts` the same exhaustion only suppressed
+/// an `EMPTY_NODE_BOUNDS` guess and the node still exported; the cost of a low
+/// bound rose when the predicate became the rule for every read. A cycle still
+/// terminates, just after more steps, and the extra iterations are paid only
+/// on a tree already pathological enough to have no right answer.
+///
+/// A single throwing getter partway up the chain is a different failure and is
+/// deliberately not treated the same way: `hostGet` below swallows it and the
+/// walk continues as though that property were absent, which for `visible`
+/// reads as switched on. That node is overwhelmingly likely to be visible in
+/// practice — a hostile getter is a local, transient failure under
+/// `documentAccess: dynamic-page`, not evidence the tree is unreadable — so
+/// failing open there avoids deleting real content over a getter that
+/// misbehaved once, while returning `undetermined` on bound exhaustion avoids
+/// asserting an answer about a chain that was never actually walked.
 const MAX_ANCESTOR_WALK = 1024
 
 /// Depth past which the walk starts recording what it has seen so a cycle is
