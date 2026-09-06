@@ -28,6 +28,7 @@ import {
   serializeNodeForest,
   type SerializeNodeForestOptions,
 } from "./serialize"
+import { rendersVisibly } from "./visibility"
 
 function serializeOptions(
   options: Omit<SerializeNodeForestOptions, "signal">,
@@ -188,7 +189,12 @@ export async function readSelection(
     for (const id of ids) {
       signal?.throwIfAborted()
       const node = await lookupNode(id)
-      if (node !== null && node !== undefined) roots.push(node)
+      // GetSelectionResult carries no per-item error slot, so a switched-off
+      // selected root is excluded rather than reported — same treatment as a
+      // lookup miss, and it must not sink the rest of the selection either.
+      if (node !== null && node !== undefined && rendersVisibly(node)) {
+        roots.push(node)
+      }
     }
   }
   const serialized = await serializePreparedForest(
@@ -209,13 +215,24 @@ export async function readSelection(
 }
 
 function nodeError(
-  code: "NODE_NOT_FOUND" | "CAPABILITY_UNAVAILABLE" | "INTERNAL_ERROR",
+  code:
+    | "NODE_NOT_FOUND"
+    | "NODE_NOT_VISIBLE"
+    | "CAPABILITY_UNAVAILABLE"
+    | "INTERNAL_ERROR",
 ) {
   switch (code) {
     case "NODE_NOT_FOUND":
       return {
         code,
         message: "The requested node was not found.",
+        retryable: false,
+      }
+    case "NODE_NOT_VISIBLE":
+      return {
+        code,
+        message:
+          "The requested node exists but is switched off, so it renders nothing.",
         retryable: false,
       }
     case "CAPABILITY_UNAVAILABLE":
@@ -254,6 +271,10 @@ export async function readNodes(
       const node = await lookupNode(id)
       if (node === null || node === undefined) {
         items.push({ status: "error", error: nodeError("NODE_NOT_FOUND") })
+        continue
+      }
+      if (!rendersVisibly(node)) {
+        items.push({ status: "error", error: nodeError("NODE_NOT_VISIBLE") })
         continue
       }
       const serialized = await serializePreparedForest(

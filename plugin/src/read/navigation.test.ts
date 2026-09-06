@@ -168,6 +168,44 @@ describe("selection reader", () => {
       truncation: { reason: "depthLimit", appliedDepth: 0 },
     })
   })
+
+  test("a hidden selected node is refused, and its visible sibling still comes back", async () => {
+    // GetSelectionResult has no per-item error slot, so a switched-off
+    // selected root is excluded rather than reported — but it must not sink
+    // the rest of the selection, same as a lookup miss does not.
+    const hidden = {
+      id: "1:1",
+      name: "Hidden",
+      type: "FRAME",
+      visible: false,
+      children: [],
+    }
+    const shown = {
+      id: "1:2",
+      name: "Shown",
+      type: "FRAME",
+      visible: true,
+      children: [],
+    }
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [] },
+      currentPage: {
+        id: "0:1",
+        name: "Page 1",
+        selection: [hidden, shown],
+      },
+      editorType: "dev",
+      getNodeByIdAsync: async (id: string) =>
+        id === hidden.id ? hidden : id === shown.id ? shown : null,
+    }
+
+    await expect(
+      readSelection({ detail: "minimal", depth: 0 }),
+    ).resolves.toMatchObject({
+      nodes: [{ summary: { id: shown.id, name: "Shown" } }],
+      truncated: false,
+    })
+  })
 })
 
 describe("node reader", () => {
@@ -602,6 +640,78 @@ describe("node reader", () => {
       value?: { data?: { variableReferences?: Record<string, unknown>[] } }
     }
     expect(item.value?.data?.variableReferences).toEqual([{ id: "V:a" }])
+  })
+
+  test("an explicitly named hidden node is refused, and its siblings still succeed", async () => {
+    // Per-item: one switched-off node must not cost the caller the whole batch.
+    const hidden = {
+      id: "1:2",
+      name: "Hidden",
+      type: "FRAME",
+      visible: false,
+      children: [],
+    }
+    const shown = {
+      id: "1:3",
+      name: "Shown",
+      type: "FRAME",
+      visible: true,
+      children: [],
+    }
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [] },
+      currentPage: page("0:1", "Page 1"),
+      editorType: "dev",
+      getNodeByIdAsync: async (id: string) =>
+        id === hidden.id ? hidden : id === shown.id ? shown : null,
+    }
+
+    const result = await readNodes({
+      nodeIds: [hidden.id, shown.id],
+      detail: "minimal",
+      depth: 0,
+    })
+
+    expect(result.items[0]).toMatchObject({
+      status: "error",
+      error: { code: "NODE_NOT_VISIBLE" },
+    })
+    expect(result.items[1]).toMatchObject({ status: "success" })
+  })
+
+  test("a switched-on node inside a switched-off parent is refused too", async () => {
+    // Its own `visible` is true; only the ancestor walk catches this.
+    const hiddenParent = {
+      id: "1:4",
+      name: "Group",
+      type: "FRAME",
+      visible: false,
+    }
+    const child = {
+      id: "1:5",
+      name: "Deep",
+      type: "FRAME",
+      visible: true,
+      children: [],
+      parent: hiddenParent,
+    }
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [] },
+      currentPage: page("0:1", "Page 1"),
+      editorType: "dev",
+      getNodeByIdAsync: async (id: string) => (id === child.id ? child : null),
+    }
+
+    const result = await readNodes({
+      nodeIds: [child.id],
+      detail: "minimal",
+      depth: 0,
+    })
+
+    expect(result.items[0]).toMatchObject({
+      status: "error",
+      error: { code: "NODE_NOT_VISIBLE" },
+    })
   })
 })
 

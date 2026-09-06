@@ -270,6 +270,7 @@ fn error_code_name(code: figma_dev_mcp_protocol::error::ErrorCode) -> &'static s
         figma_dev_mcp_protocol::error::ErrorCode::ConnectionLost => "CONNECTION_LOST",
         figma_dev_mcp_protocol::error::ErrorCode::ProtocolMismatch => "PROTOCOL_MISMATCH",
         figma_dev_mcp_protocol::error::ErrorCode::NodeNotFound => "NODE_NOT_FOUND",
+        figma_dev_mcp_protocol::error::ErrorCode::NodeNotVisible => "NODE_NOT_VISIBLE",
         figma_dev_mcp_protocol::error::ErrorCode::PageNotFound => "PAGE_NOT_FOUND",
         figma_dev_mcp_protocol::error::ErrorCode::UnsupportedNode => "UNSUPPORTED_NODE",
         figma_dev_mcp_protocol::error::ErrorCode::EmptyNodeBounds => "EMPTY_NODE_BOUNDS",

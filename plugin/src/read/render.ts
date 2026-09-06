@@ -61,6 +61,8 @@ const MESSAGES: Record<ErrorCode, string> = {
   CONNECTION_LOST: "The Figma connection was lost.",
   PROTOCOL_MISMATCH: "The plugin protocol version is not supported.",
   NODE_NOT_FOUND: "The requested node was not found.",
+  // prettier-ignore
+  NODE_NOT_VISIBLE: "The requested node exists but is switched off, so it renders nothing.",
   PAGE_NOT_FOUND: "The requested page was not found.",
   UNSUPPORTED_NODE: "The requested node type is not supported.",
   EMPTY_NODE_BOUNDS: "The requested node renders nothing.",
@@ -379,6 +381,13 @@ export async function getScreenshot(
     const exporter = nodeExporter(node)
     if (exporter === undefined) {
       assets.push(itemError("UNSUPPORTED_NODE"))
+      continue
+    }
+    // Before the empty-bounds test on purpose: a switched-off node has no
+    // render bounds either, so asking `rendersNothing` first would report
+    // EMPTY_NODE_BOUNDS for a node that may well have ink on it.
+    if (!rendersVisibly(node)) {
+      assets.push(itemError("NODE_NOT_VISIBLE"))
       continue
     }
     // Asked before the host exporter runs, and for every format: a node that

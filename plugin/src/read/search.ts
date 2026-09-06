@@ -97,6 +97,8 @@ async function resolveSearchRoot(
   const node = await lookupNode(scope.nodeId)
   if (node === null || node === undefined)
     throw new PluginReadError("NODE_NOT_FOUND", false)
+  if (!rendersVisibly(node))
+    throw new PluginReadError("NODE_NOT_VISIBLE", false)
   return loadPageIfNeeded(node)
 }
 

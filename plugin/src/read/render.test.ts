@@ -434,6 +434,35 @@ describe("get_screenshot export selection", () => {
     })
   })
 
+  test("a switched-off node is refused before the exporter, not reported as empty bounds", async () => {
+    // Refused before the exporter, and distinctly from EMPTY_NODE_BOUNDS: a
+    // switched-off node has no render bounds either, so the empty-bounds test
+    // would misreport it as having no ink.
+    let exported = false
+    const node = {
+      id: "12:3",
+      type: "FRAME",
+      visible: false,
+      absoluteRenderBounds: null,
+      exportAsync: async () => {
+        exported = true
+        return new Uint8Array([1])
+      },
+    }
+    installFigma({ nodes: new Map([["12:3", node]]) })
+
+    const result = await getScreenshot(
+      { format: "png", selector: { nodeId: "12:3" } },
+      undefined,
+      passthrough,
+    )
+    expect(result.assets[0]).toMatchObject({
+      status: "error",
+      error: { code: "NODE_NOT_VISIBLE" },
+    })
+    expect(exported).toBe(false)
+  })
+
   test("a LINE still exports: it is zero-high by contract and renders anyway", async () => {
     // The pinned typings require a LineNode to be given a height of exactly 0,
     // so a width/height rule would fire on every divider and underline in every
@@ -472,10 +501,11 @@ describe("get_screenshot export selection", () => {
     expect(result.assets[1]).toMatchObject({ status: "success" })
   })
 
-  test("a switched-off node or ancestor leaves the export alone", async () => {
-    // The host reports null render bounds for anything invisible, and counts a
-    // node invisible when any *parent* is switched off. Null-because-hidden is
-    // not evidence the node is empty, so both of these keep today's behaviour.
+  test("a switched-off node or ancestor is refused rather than exported", async () => {
+    // A node counts as invisible when any *parent* is switched off, not just
+    // by its own `visible`. Both are now refused with NODE_NOT_VISIBLE before
+    // the exporter ever runs, rather than falling through to a real export on
+    // the theory that null render bounds are not proof of emptiness.
     const hiddenItself = {
       id: "12:5",
       type: "FRAME",
@@ -502,8 +532,14 @@ describe("get_screenshot export selection", () => {
       undefined,
       passthrough,
     )
-    expect(result.assets[0]).toMatchObject({ status: "success" })
-    expect(result.assets[1]).toMatchObject({ status: "success" })
+    expect(result.assets[0]).toMatchObject({
+      status: "error",
+      error: { code: "NODE_NOT_VISIBLE" },
+    })
+    expect(result.assets[1]).toMatchObject({
+      status: "error",
+      error: { code: "NODE_NOT_VISIBLE" },
+    })
   })
 
   test("render bounds the host will not report leave the export alone", async () => {
@@ -543,7 +579,10 @@ describe("get_screenshot export selection", () => {
     expect(result.assets[1]).toMatchObject({ status: "success" })
   })
 
-  test("a cyclic parent chain leaves the export alone rather than spinning", async () => {
+  test("a cyclic parent chain terminates as refused rather than spinning", async () => {
+    // rendersVisibly bounds its ancestor walk, so an unresolvable chain (a
+    // cycle included) is treated as not rendering rather than hanging the
+    // read. That now surfaces as NODE_NOT_VISIBLE instead of a real export.
     const node: Record<string, unknown> = {
       id: "12:9",
       type: "FRAME",
@@ -558,7 +597,10 @@ describe("get_screenshot export selection", () => {
       undefined,
       passthrough,
     )
-    expect(result.assets[0]).toMatchObject({ status: "success" })
+    expect(result.assets[0]).toMatchObject({
+      status: "error",
+      error: { code: "NODE_NOT_VISIBLE" },
+    })
   })
 
   test("carries the SVG verdict from the codec onto the asset", async () => {

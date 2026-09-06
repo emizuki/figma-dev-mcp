@@ -272,13 +272,14 @@ fn read_result_name(result: &ReadResult) -> &'static str {
 /// `plugin/src/shared/protocol.ts`; the mirror test below checks that this list
 /// is still the set the enum declares, so a member added to `ErrorCode` and not
 /// added here fails rather than going unnoticed.
-pub const ERROR_CODES: [ErrorCode; 16] = [
+pub const ERROR_CODES: [ErrorCode; 17] = [
     ErrorCode::NoFigmaConnection,
     ErrorCode::AmbiguousConnection,
     ErrorCode::ConnectionNotFound,
     ErrorCode::ConnectionLost,
     ErrorCode::ProtocolMismatch,
     ErrorCode::NodeNotFound,
+    ErrorCode::NodeNotVisible,
     ErrorCode::PageNotFound,
     ErrorCode::UnsupportedNode,
     ErrorCode::EmptyNodeBounds,
@@ -310,6 +311,7 @@ fn stable_error_codes_are_exact_and_screaming_snake_case() {
             "CONNECTION_LOST",
             "PROTOCOL_MISMATCH",
             "NODE_NOT_FOUND",
+            "NODE_NOT_VISIBLE",
             "PAGE_NOT_FOUND",
             "UNSUPPORTED_NODE",
             "EMPTY_NODE_BOUNDS",
@@ -2118,6 +2120,7 @@ fn error_code_tag(code: ErrorCode) -> &'static str {
         ErrorCode::ConnectionLost => "CONNECTION_LOST",
         ErrorCode::ProtocolMismatch => "PROTOCOL_MISMATCH",
         ErrorCode::NodeNotFound => "NODE_NOT_FOUND",
+        ErrorCode::NodeNotVisible => "NODE_NOT_VISIBLE",
         ErrorCode::PageNotFound => "PAGE_NOT_FOUND",
         ErrorCode::UnsupportedNode => "UNSUPPORTED_NODE",
         ErrorCode::EmptyNodeBounds => "EMPTY_NODE_BOUNDS",
@@ -3034,7 +3037,7 @@ const WIRE_SNAPSHOTS: [&str; 3] = [
 
 /// The fingerprint of `WIRE_SNAPSHOTS` at the current wire version, over
 /// LF-normalised bytes so it does not depend on the checkout's line endings.
-const EXPECTED_WIRE_FINGERPRINT: &str = "0x269c91b5af686b7d";
+const EXPECTED_WIRE_FINGERPRINT: &str = "0xa645b7c6f69cf323";
 
 /// FNV-1a, 64-bit, over the three snapshots in order, separated by a byte that
 /// cannot occur in UTF-8 so moving text between two files still changes it.
@@ -3207,5 +3210,20 @@ fn modelled_effects_still_require_their_own_fields() {
             "figmaType": "NOISE"
         }))
         .is_err()
+    );
+}
+
+#[test]
+fn a_hidden_node_is_refused_by_name_rather_than_reported_missing() {
+    // NODE_NOT_FOUND would be a lie: the caller's id is correct and the node is
+    // in the document. Saying "not found" sends them to check the id.
+    let code = figma_dev_mcp_protocol::error::ErrorCode::NodeNotVisible;
+    assert_eq!(
+        serde_json::to_value(code).unwrap(),
+        serde_json::json!("NODE_NOT_VISIBLE")
+    );
+    assert_eq!(
+        canonical_message(code),
+        "The requested node exists but is switched off, so it renders nothing."
     );
 }

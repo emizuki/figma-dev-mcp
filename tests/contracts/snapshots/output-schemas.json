@@ -2364,8 +2364,13 @@
             "type": "string"
           },
           {
+            "const": "NODE_NOT_VISIBLE",
+            "description": "The node is in the document but does not render, by its own `visible`\nor an ancestor's. Distinct from `NODE_NOT_FOUND`, which means the id\nresolved to nothing: here the id is correct and the caller would waste\ntheir time re-checking it. The server returns only what Figma draws, so\na switched-off node is refused rather than returned with a flag.",
+            "type": "string"
+          },
+          {
             "const": "EMPTY_NODE_BOUNDS",
-            "description": "The node puts no ink on the page, so there is no picture to return in\nany format. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Judged on the host's own render bounds,\nmeasured after strokes and effects, so a zero-height rule or divider\nstill renders and still succeeds. A node that is switched off, or whose\nbounds the host will not report, is left to the exporter.",
+            "description": "The node puts no ink on the page, so there is no picture to return in\nany format. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Judged on the host's own render bounds,\nmeasured after strokes and effects, so a zero-height rule or divider\nstill renders and still succeeds.",
             "type": "string"
           },
           {
@@ -3334,8 +3339,13 @@
             "type": "string"
           },
           {
+            "const": "NODE_NOT_VISIBLE",
+            "description": "The node is in the document but does not render, by its own `visible`\nor an ancestor's. Distinct from `NODE_NOT_FOUND`, which means the id\nresolved to nothing: here the id is correct and the caller would waste\ntheir time re-checking it. The server returns only what Figma draws, so\na switched-off node is refused rather than returned with a flag.",
+            "type": "string"
+          },
+          {
             "const": "EMPTY_NODE_BOUNDS",
-            "description": "The node puts no ink on the page, so there is no picture to return in\nany format. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Judged on the host's own render bounds,\nmeasured after strokes and effects, so a zero-height rule or divider\nstill renders and still succeeds. A node that is switched off, or whose\nbounds the host will not report, is left to the exporter.",
+            "description": "The node puts no ink on the page, so there is no picture to return in\nany format. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Judged on the host's own render bounds,\nmeasured after strokes and effects, so a zero-height rule or divider\nstill renders and still succeeds.",
             "type": "string"
           },
           {
@@ -4685,8 +4695,13 @@
             "type": "string"
           },
           {
+            "const": "NODE_NOT_VISIBLE",
+            "description": "The node is in the document but does not render, by its own `visible`\nor an ancestor's. Distinct from `NODE_NOT_FOUND`, which means the id\nresolved to nothing: here the id is correct and the caller would waste\ntheir time re-checking it. The server returns only what Figma draws, so\na switched-off node is refused rather than returned with a flag.",
+            "type": "string"
+          },
+          {
             "const": "EMPTY_NODE_BOUNDS",
-            "description": "The node puts no ink on the page, so there is no picture to return in\nany format. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Judged on the host's own render bounds,\nmeasured after strokes and effects, so a zero-height rule or divider\nstill renders and still succeeds. A node that is switched off, or whose\nbounds the host will not report, is left to the exporter.",
+            "description": "The node puts no ink on the page, so there is no picture to return in\nany format. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Judged on the host's own render bounds,\nmeasured after strokes and effects, so a zero-height rule or divider\nstill renders and still succeeds.",
             "type": "string"
           },
           {
@@ -6266,8 +6281,13 @@
             "type": "string"
           },
           {
+            "const": "NODE_NOT_VISIBLE",
+            "description": "The node is in the document but does not render, by its own `visible`\nor an ancestor's. Distinct from `NODE_NOT_FOUND`, which means the id\nresolved to nothing: here the id is correct and the caller would waste\ntheir time re-checking it. The server returns only what Figma draws, so\na switched-off node is refused rather than returned with a flag.",
+            "type": "string"
+          },
+          {
             "const": "EMPTY_NODE_BOUNDS",
-            "description": "The node puts no ink on the page, so there is no picture to return in\nany format. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Judged on the host's own render bounds,\nmeasured after strokes and effects, so a zero-height rule or divider\nstill renders and still succeeds. A node that is switched off, or whose\nbounds the host will not report, is left to the exporter.",
+            "description": "The node puts no ink on the page, so there is no picture to return in\nany format. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Judged on the host's own render bounds,\nmeasured after strokes and effects, so a zero-height rule or divider\nstill renders and still succeeds.",
             "type": "string"
           },
           {
@@ -7040,8 +7060,13 @@
             "type": "string"
           },
           {
+            "const": "NODE_NOT_VISIBLE",
+            "description": "The node is in the document but does not render, by its own `visible`\nor an ancestor's. Distinct from `NODE_NOT_FOUND`, which means the id\nresolved to nothing: here the id is correct and the caller would waste\ntheir time re-checking it. The server returns only what Figma draws, so\na switched-off node is refused rather than returned with a flag.",
+            "type": "string"
+          },
+          {
             "const": "EMPTY_NODE_BOUNDS",
-            "description": "The node puts no ink on the page, so there is no picture to return in\nany format. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Judged on the host's own render bounds,\nmeasured after strokes and effects, so a zero-height rule or divider\nstill renders and still succeeds. A node that is switched off, or whose\nbounds the host will not report, is left to the exporter.",
+            "description": "The node puts no ink on the page, so there is no picture to return in\nany format. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Judged on the host's own render bounds,\nmeasured after strokes and effects, so a zero-height rule or divider\nstill renders and still succeeds.",
             "type": "string"
           },
           {
@@ -10385,8 +10410,13 @@
             "type": "string"
           },
           {
+            "const": "NODE_NOT_VISIBLE",
+            "description": "The node is in the document but does not render, by its own `visible`\nor an ancestor's. Distinct from `NODE_NOT_FOUND`, which means the id\nresolved to nothing: here the id is correct and the caller would waste\ntheir time re-checking it. The server returns only what Figma draws, so\na switched-off node is refused rather than returned with a flag.",
+            "type": "string"
+          },
+          {
             "const": "EMPTY_NODE_BOUNDS",
-            "description": "The node puts no ink on the page, so there is no picture to return in\nany format. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Judged on the host's own render bounds,\nmeasured after strokes and effects, so a zero-height rule or divider\nstill renders and still succeeds. A node that is switched off, or whose\nbounds the host will not report, is left to the exporter.",
+            "description": "The node puts no ink on the page, so there is no picture to return in\nany format. Distinct from `INTERNAL_ERROR`, which means the cause is\nunknown; here it is known. Judged on the host's own render bounds,\nmeasured after strokes and effects, so a zero-height rule or divider\nstill renders and still succeeds.",
             "type": "string"
           },
           {

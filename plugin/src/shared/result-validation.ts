@@ -268,6 +268,8 @@ const CANONICAL_MESSAGES: Record<ErrorCode, string> = {
   CONNECTION_LOST: "The Figma connection was lost.",
   PROTOCOL_MISMATCH: "The plugin protocol version is not supported.",
   NODE_NOT_FOUND: "The requested node was not found.",
+  // prettier-ignore
+  NODE_NOT_VISIBLE: "The requested node exists but is switched off, so it renders nothing.",
   PAGE_NOT_FOUND: "The requested page was not found.",
   UNSUPPORTED_NODE: "The requested node type is not supported.",
   EMPTY_NODE_BOUNDS: "The requested node renders nothing.",
