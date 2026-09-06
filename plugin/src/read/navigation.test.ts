@@ -1087,12 +1087,17 @@ describe("design context reader", () => {
         id === hidden.id ? hidden : null,
     }
 
-    await expect(
-      readDesignContext({
-        selector: { nodeId: hidden.id },
-        dedupeComponents: false,
-      }),
-    ).resolves.toMatchObject({ roots: [] })
+    const result = await readDesignContext({
+      selector: { nodeId: hidden.id },
+      dedupeComponents: false,
+    })
+
+    expect(result.roots).toEqual([])
+    // A switched-off root must not slip into `unresolved` — it is excluded,
+    // not reported. Collapsing the hidden/undetermined guards on this branch
+    // would leave `roots` empty (satisfying the assertion above) while still
+    // adding an entry here, so this is the only thing that catches that leak.
+    expect(Object.hasOwn(result, "unresolved")).toBe(false)
   })
 
   test("get_design_context reports an unwalkable selector root", async () => {
@@ -1166,6 +1171,58 @@ describe("design context reader", () => {
     })
 
     expect(result.roots.map((node) => node.summary.id)).toEqual([shown.id])
+    // Same leak this branch could otherwise let through: a switched-off root
+    // must not add an `unresolved` entry alongside its excluded absence.
+    expect(Object.hasOwn(result, "unresolved")).toBe(false)
+  })
+
+  test("get_design_context reports an unwalkable selection root, and stays silent about a hidden one", async () => {
+    const hidden = {
+      id: "1:2",
+      name: "Hidden",
+      type: "FRAME",
+      visible: false,
+      children: [],
+    }
+    const looped: Record<string, unknown> = {
+      id: "1:3",
+      name: "Looped",
+      type: "FRAME",
+      visible: true,
+      children: [],
+    }
+    looped.parent = looped
+    const currentPage = {
+      id: "0:1",
+      name: "Current",
+      type: "PAGE",
+      children: [],
+      selection: [hidden, looped],
+    }
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [currentPage] },
+      currentPage,
+      editorType: "dev",
+      getNodeByIdAsync: async (id: string) =>
+        id === hidden.id ? hidden : id === looped.id ? looped : null,
+    }
+
+    const result = await readDesignContext({
+      selector: { selection: true },
+      dedupeComponents: false,
+    })
+
+    expect(result.roots).toHaveLength(0)
+    expect(result.unresolved).toEqual([
+      {
+        id: "1:3",
+        error: {
+          code: "LIMIT_EXCEEDED",
+          message: "The operation exceeded a safety limit.",
+          retryable: false,
+        },
+      },
+    ])
   })
 
   test("excludes a root whose ancestor is switched off, and keeps its visible sibling in nodeIds", async () => {
@@ -1205,5 +1262,76 @@ describe("design context reader", () => {
     })
 
     expect(result.roots.map((node) => node.summary.id)).toEqual([shown.id])
+    // Same leak this branch could otherwise let through: a switched-off root
+    // must not add an `unresolved` entry alongside its excluded absence.
+    expect(Object.hasOwn(result, "unresolved")).toBe(false)
+  })
+
+  test("get_design_context reports an unwalkable nodeIds root, and stays silent about a hidden one", async () => {
+    const hidden = {
+      id: "1:2",
+      name: "Hidden",
+      type: "FRAME",
+      visible: false,
+      children: [],
+    }
+    const looped: Record<string, unknown> = {
+      id: "1:3",
+      name: "Looped",
+      type: "FRAME",
+      visible: true,
+      children: [],
+    }
+    looped.parent = looped
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [] },
+      currentPage: { id: "0:1", name: "Current", type: "PAGE", children: [] },
+      editorType: "dev",
+      getNodeByIdAsync: async (id: string) =>
+        id === hidden.id ? hidden : id === looped.id ? looped : null,
+    }
+
+    const result = await readDesignContext({
+      selector: { nodeIds: [hidden.id, "1:3"] },
+      dedupeComponents: false,
+    })
+
+    expect(result.roots).toHaveLength(0)
+    expect(result.unresolved).toEqual([
+      {
+        id: "1:3",
+        error: {
+          code: "LIMIT_EXCEEDED",
+          message: "The operation exceeded a safety limit.",
+          retryable: false,
+        },
+      },
+    ])
+  })
+
+  test("a clean design context selector omits unresolved entirely", async () => {
+    const live = {
+      id: "1:2",
+      name: "Live",
+      type: "FRAME",
+      visible: true,
+      children: [],
+    }
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [] },
+      currentPage: { id: "0:1", name: "Current", type: "PAGE", children: [] },
+      editorType: "dev",
+      getNodeByIdAsync: async (id: string) => (id === live.id ? live : null),
+    }
+
+    const result = await readDesignContext({
+      selector: { nodeId: live.id },
+      dedupeComponents: false,
+    })
+
+    // `toEqual` cannot tell an absent key apart from one present with value
+    // `undefined`; only `Object.hasOwn` proves a healthy response stays
+    // byte-identical to what it was before this field existed.
+    expect(Object.hasOwn(result, "unresolved")).toBe(false)
   })
 })
