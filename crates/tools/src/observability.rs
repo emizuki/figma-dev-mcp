@@ -66,16 +66,20 @@ pub fn tool_result_log_code(is_error: Option<bool>, structured_code: Option<&str
     if is_error != Some(true) {
         return "OK";
     }
-    // A `None` code means the failure never reached structured content at
-    // all (for example a schema rejection at the MCP layer), and an
-    // unparseable string means the "code" field held something that is not
-    // one of this protocol's error codes. Neither is the case this function
-    // exists to protect against, so both keep the pre-existing fallback
-    // rather than being folded into the exhaustive match below, which is
-    // reserved for codes the enum actually declares.
+    // Three cases, not two. A failure that carries one of this protocol's own
+    // codes logs as that code, via the exhaustive match below. The other two
+    // are genuinely different failures from each other — `structured_code`
+    // being `None` means the failure never reached structured content at all
+    // (for example a schema rejection at the MCP layer), while `Some` but
+    // unparseable means a "code" field was present but held something this
+    // protocol never declared — but neither is a safety-limit breach, so
+    // neither should log as `LIMIT_EXCEEDED`: that would tell an operator a
+    // specific, actionable, and wrong thing. Both get their own tag instead,
+    // `UNKNOWN`, which is honest about not knowing rather than confidently
+    // wrong about knowing something false.
     match structured_code.and_then(parse_error_code) {
         Some(code) => known_error_code_tag(code),
-        None => "LIMIT_EXCEEDED",
+        None => "UNKNOWN",
     }
 }
 
@@ -111,7 +115,19 @@ mod tests {
             "LIMIT_EXCEEDED"
         );
         assert_eq!(tool_result_log_code(Some(false), None), "OK");
-        assert_eq!(tool_result_log_code(Some(true), None), "LIMIT_EXCEEDED");
+    }
+
+    /// A failure with no code at all, and a failure whose code is not one of
+    /// this protocol's own, are both `UNKNOWN` rather than the safety-limit
+    /// tag they used to share. Neither is a limit breach, and mislabelling
+    /// one as one is the exact bug this whole function exists to stop.
+    #[test]
+    fn a_failure_without_a_recognizable_code_is_unknown_not_a_limit_breach() {
+        assert_eq!(tool_result_log_code(Some(true), None), "UNKNOWN");
+        assert_eq!(
+            tool_result_log_code(Some(true), Some("NOT_A_REAL_CODE")),
+            "UNKNOWN"
+        );
     }
 
     /// Every code the protocol declares must log as itself, not as
