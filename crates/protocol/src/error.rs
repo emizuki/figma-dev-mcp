@@ -47,6 +47,37 @@ pub enum ErrorCode {
     InternalError,
 }
 
+impl ErrorCode {
+    /// Every member, in wire order.
+    ///
+    /// The enum has no iterator, so any test that wants to sweep the whole set
+    /// has to write the members out. Written out once here and shared, a member
+    /// added to the enum reaches every sweep at the same time — where a copy
+    /// kept beside each test would leave the new member silently unswept while
+    /// the test still passed over a shorter list. `tests/contracts` pins this
+    /// against the set derived from the enum's own schema, so a member missing
+    /// from it fails there rather than quietly narrowing what the sweeps cover.
+    pub const ALL: [ErrorCode; 17] = [
+        ErrorCode::NoFigmaConnection,
+        ErrorCode::AmbiguousConnection,
+        ErrorCode::ConnectionNotFound,
+        ErrorCode::ConnectionLost,
+        ErrorCode::ProtocolMismatch,
+        ErrorCode::NodeNotFound,
+        ErrorCode::NodeNotVisible,
+        ErrorCode::PageNotFound,
+        ErrorCode::UnsupportedNode,
+        ErrorCode::EmptyNodeBounds,
+        ErrorCode::CapabilityUnavailable,
+        ErrorCode::UnsafeSvg,
+        ErrorCode::InvalidCursor,
+        ErrorCode::LimitExceeded,
+        ErrorCode::Timeout,
+        ErrorCode::Cancelled,
+        ErrorCode::InternalError,
+    ];
+}
+
 pub const fn canonical_message(code: ErrorCode) -> &'static str {
     match code {
         ErrorCode::NoFigmaConnection => "No Figma connection is available.",

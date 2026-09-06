@@ -272,25 +272,12 @@ fn read_result_name(result: &ReadResult) -> &'static str {
 /// `plugin/src/shared/protocol.ts`; the mirror test below checks that this list
 /// is still the set the enum declares, so a member added to `ErrorCode` and not
 /// added here fails rather than going unnoticed.
-pub const ERROR_CODES: [ErrorCode; 17] = [
-    ErrorCode::NoFigmaConnection,
-    ErrorCode::AmbiguousConnection,
-    ErrorCode::ConnectionNotFound,
-    ErrorCode::ConnectionLost,
-    ErrorCode::ProtocolMismatch,
-    ErrorCode::NodeNotFound,
-    ErrorCode::NodeNotVisible,
-    ErrorCode::PageNotFound,
-    ErrorCode::UnsupportedNode,
-    ErrorCode::EmptyNodeBounds,
-    ErrorCode::CapabilityUnavailable,
-    ErrorCode::UnsafeSvg,
-    ErrorCode::InvalidCursor,
-    ErrorCode::LimitExceeded,
-    ErrorCode::Timeout,
-    ErrorCode::Cancelled,
-    ErrorCode::InternalError,
-];
+///
+/// The members themselves now live on `ErrorCode::ALL` so that every sweep in
+/// the workspace — this file's and the one in `crates/tools/src/observability.rs`
+/// — walks one list. The schema check below therefore guards both: it is the
+/// single place that proves the shared list is complete.
+pub const ERROR_CODES: [ErrorCode; 17] = ErrorCode::ALL;
 
 #[test]
 fn stable_error_codes_are_exact_and_screaming_snake_case() {
@@ -624,12 +611,26 @@ fn plugin_message_map(source: &str, start: &str) -> Vec<(String, String)> {
     let end = rest
         .find("\n}")
         .unwrap_or_else(|| panic!("plugin source must terminate {start}"));
+    // Each entry must parse. Skipping the ones that do not would still fail the
+    // comparison below, but as a diff of two message lists with nothing naming
+    // the file or the line — and the cause is almost always mechanical, an
+    // entry wrapped onto a second line so the `CODE: "message"` shape no longer
+    // fits on one. Blank lines and `//` comments are the only non-entry lines
+    // these literals carry, so anything else that fails to parse is the bug.
     let mut pairs: Vec<(String, String)> = rest[..end]
         .lines()
-        .filter_map(|line| {
-            let (code, tail) = line.split_once(':')?;
-            let message = tail.split('"').nth(1)?;
-            Some((code.trim().to_owned(), message.to_owned()))
+        .filter(|line| {
+            let trimmed = line.trim();
+            !trimmed.is_empty() && !trimmed.starts_with("//")
+        })
+        .map(|line| {
+            let (code, tail) = line.split_once(':').unwrap_or_else(|| {
+                panic!("{start}: entry has no `CODE:` on its own line (wrapped?): {line:?}")
+            });
+            let message = tail.split('"').nth(1).unwrap_or_else(|| {
+                panic!("{start}: entry has no quoted message (wrapped?): {line:?}")
+            });
+            (code.trim().to_owned(), message.to_owned())
         })
         .collect();
     pairs.sort();

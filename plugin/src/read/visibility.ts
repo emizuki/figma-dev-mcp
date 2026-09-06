@@ -32,7 +32,17 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 /// avoids deleting real content over a getter that misbehaved once; failing
 /// closed on bound exhaustion avoids asserting an answer about a chain that
 /// was never actually walked.
-const MAX_ANCESTOR_WALK = 128
+///
+/// The bound is set far above any depth a real document reaches, because
+/// failing closed here is the one way this predicate can drop a node that
+/// genuinely renders — and its callers `get_selection` and `get_design_context`
+/// have no error slot to say so, making that node silently absent rather than
+/// refused. When this walk lived in `render.ts` the same exhaustion only
+/// suppressed an `EMPTY_NODE_BOUNDS` guess and the node still exported, so the
+/// cost of a low bound rose when the predicate became the rule for every read.
+/// A cycle still terminates, just after more steps; the extra iterations are
+/// paid only on a tree already pathological enough to have no right answer.
+const MAX_ANCESTOR_WALK = 1024
 
 /// Whether this node and every ancestor are switched on.
 ///

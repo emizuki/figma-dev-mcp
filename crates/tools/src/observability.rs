@@ -142,25 +142,7 @@ mod tests {
     /// both fell through to `LIMIT_EXCEEDED` before this fix.
     #[test]
     fn every_protocol_error_code_logs_as_itself() {
-        for code in [
-            ErrorCode::NoFigmaConnection,
-            ErrorCode::AmbiguousConnection,
-            ErrorCode::ConnectionNotFound,
-            ErrorCode::ConnectionLost,
-            ErrorCode::ProtocolMismatch,
-            ErrorCode::NodeNotFound,
-            ErrorCode::NodeNotVisible,
-            ErrorCode::PageNotFound,
-            ErrorCode::UnsupportedNode,
-            ErrorCode::EmptyNodeBounds,
-            ErrorCode::CapabilityUnavailable,
-            ErrorCode::UnsafeSvg,
-            ErrorCode::InvalidCursor,
-            ErrorCode::LimitExceeded,
-            ErrorCode::Timeout,
-            ErrorCode::Cancelled,
-            ErrorCode::InternalError,
-        ] {
+        for code in ErrorCode::ALL {
             let wire_tag = match serde_json::to_value(code).expect("ErrorCode always serializes") {
                 serde_json::Value::String(tag) => tag,
                 other => panic!("ErrorCode serialized to a non-string: {other:?}"),
