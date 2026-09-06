@@ -4,6 +4,8 @@ import {
   type ReadResult,
   type UnresolvedNode,
 } from "./protocol"
+// Generated from the Rust protocol; see tests/contracts/error_catalog.rs.
+import { CANONICAL_MESSAGES } from "./error-catalog"
 import type {
   AnimationBinding,
   AnimationTrack,
@@ -264,35 +266,6 @@ function oneOf<const Value extends string>(
 ): Value {
   for (const candidate of allowed) if (value === candidate) return candidate
   return fail(`${label} is not an allowed value`)
-}
-
-// Every entry below must stay on one line (see the NODE_NOT_VISIBLE
-// prettier-ignore for why): the Rust mirror test in tests/contracts/mod.rs
-// (plugin_message_map) parses this object line by line — split on the
-// first colon, then the message pulled from the first quoted span on that
-// same line — so every entry has to stay on one line. The Rust side
-// panics by name on a line it cannot parse, so a wrapped entry fails with
-// this file and the offending line rather than as a bare list mismatch —
-// but it still fails, and this directive is what keeps it from happening.
-export const CANONICAL_MESSAGES: Record<ErrorCode, string> = {
-  NO_FIGMA_CONNECTION: "No Figma connection is available.",
-  AMBIGUOUS_CONNECTION: "More than one Figma connection matches the request.",
-  CONNECTION_NOT_FOUND: "The requested Figma connection was not found.",
-  CONNECTION_LOST: "The Figma connection was lost.",
-  PROTOCOL_MISMATCH: "The plugin protocol version is not supported.",
-  NODE_NOT_FOUND: "The requested node was not found.",
-  // prettier-ignore
-  NODE_NOT_VISIBLE: "The requested node exists but is switched off, so it renders nothing.",
-  PAGE_NOT_FOUND: "The requested page was not found.",
-  UNSUPPORTED_NODE: "The requested node type is not supported.",
-  EMPTY_NODE_BOUNDS: "The requested node renders nothing.",
-  CAPABILITY_UNAVAILABLE: "The required Figma capability is unavailable.",
-  UNSAFE_SVG: "The SVG was rejected by the safety policy.",
-  INVALID_CURSOR: "The search cursor is invalid or stale.",
-  LIMIT_EXCEEDED: "The operation exceeded a safety limit.",
-  TIMEOUT: "The operation timed out.",
-  CANCELLED: "The operation was cancelled.",
-  INTERNAL_ERROR: "The operation failed.",
 }
 
 function errorCode(value: unknown): ErrorCode {

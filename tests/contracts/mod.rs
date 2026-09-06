@@ -1,6 +1,7 @@
 //! Contract tests.
 
 mod allocation;
+mod error_catalog;
 mod prompts_catalog;
 mod resources_catalog;
 mod response_accounting;
@@ -566,74 +567,10 @@ fn sorted_quoted(segment: &str) -> Vec<String> {
     tags
 }
 
-/// The two halves of the plugin's `ERROR_CODES` declaration: the tuple type
-/// that gives `ErrorCode` its members, and the value list the validator checks
-/// an incoming code against. The plugin writes the sixteen strings out twice
-/// and nothing else pins the two copies to each other.
-fn plugin_error_code_lists(source: &str) -> (Vec<String>, Vec<String>) {
-    const START: &str = "export const ERROR_CODES: readonly [";
-    const SPLIT: &str = "] = [";
-    let begin = source
-        .find(START)
-        .expect("plugin protocol.ts must declare ERROR_CODES")
-        + START.len();
-    let rest = &source[begin..];
-    let split = rest
-        .find(SPLIT)
-        .expect("the ERROR_CODES tuple type must terminate");
-    let values = &rest[split + SPLIT.len()..];
-    let end = values
-        .find("\n]")
-        .expect("the ERROR_CODES value list must terminate");
-    (sorted_quoted(&rest[..split]), sorted_quoted(&values[..end]))
-}
-
-/// The `CODE: "message"` pairs of a `Record<ErrorCode, string>` literal, sorted.
-/// Pairs rather than two sets: a message swapped between two codes leaves both
-/// sets identical and is still a dropped session.
-fn plugin_message_map(path: &str, source: &str, start: &str) -> Vec<(String, String)> {
-    let begin = source
-        .find(start)
-        .unwrap_or_else(|| panic!("{path} must contain {start}"))
-        + start.len();
-    let rest = &source[begin..];
-    let end = rest
-        .find("\n}")
-        .unwrap_or_else(|| panic!("{path} must terminate {start}"));
-    // Each entry must parse. Skipping the ones that do not would still fail the
-    // comparison below, but as a diff of two message lists with nothing naming
-    // the file or the line — and the cause is almost always mechanical, an
-    // entry wrapped onto a second line so the `CODE: "message"` shape no longer
-    // fits on one. Blank lines and `//` comments are the only non-entry lines
-    // these literals carry, so anything else that fails to parse is the bug.
-    let mut pairs: Vec<(String, String)> = rest[..end]
-        .lines()
-        .filter(|line| {
-            let trimmed = line.trim();
-            // Only the single `// prettier-ignore` these literals carry is
-            // skipped. Skipping every `//` line would silently drop an entry
-            // commented out during debugging, which is the same illegible
-            // failure this parser was tightened to stop.
-            !trimmed.is_empty() && trimmed != "// prettier-ignore"
-        })
-        .map(|line| {
-            let (code, tail) = line.split_once(':').unwrap_or_else(|| {
-                panic!("{path}: {start}: entry has no `CODE:` on its own line (wrapped?): {line:?}")
-            });
-            let message = tail.split('"').nth(1).unwrap_or_else(|| {
-                panic!("{path}: {start}: entry has no quoted message (wrapped?): {line:?}")
-            });
-            (code.trim().to_owned(), message.to_owned())
-        })
-        .collect();
-    pairs.sort();
-    pairs
-}
-
 /// Every `ErrorCode` tag, read out of the derived schema rather than a list
 /// written by hand. A member added to the enum turns up here whether or not
-/// anyone remembers the copies, which is what makes the mirror below catch a
-/// Rust-only member instead of silently comparing two stale lists.
+/// anyone remembers `ErrorCode::ALL`, which is what makes the check above
+/// catch a Rust-only member instead of silently comparing two stale lists.
 fn schema_error_codes() -> Vec<String> {
     let schema = serde_json::to_value(schemars::schema_for!(ErrorCode)).unwrap();
     let mut tags = Vec::new();
@@ -673,73 +610,27 @@ fn collect_schema_string_tags(value: &Value, out: &mut Vec<String>) {
 }
 
 #[test]
-fn the_plugin_mirrors_every_error_code_and_its_canonical_message() {
+fn error_code_all_is_the_set_the_enum_declares() {
     // A code present on one end and absent on the other is not a failed
     // request: the decoder refuses the frame and the whole broker session
-    // drops. So the two ends are pinned in BOTH directions. The Rust side
-    // comes from the derived schema, so a Rust-only seventeenth member is
-    // caught; the plugin side comes from the plugin's own lists, so a
-    // plugin-only one is caught too.
-    let plugin = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("tests crate has a workspace parent")
-        .join("plugin/src");
-    let protocol = std::fs::read_to_string(plugin.join("shared/protocol.ts")).unwrap();
-    let validation = std::fs::read_to_string(plugin.join("shared/result-validation.ts")).unwrap();
-    let render = std::fs::read_to_string(plugin.join("read/render.ts")).unwrap();
-
-    let rust = schema_error_codes();
+    // drops. `ErrorCode::ALL` is what every sweep in the workspace walks and
+    // what the plugin's catalog is generated from, so it has to be the set the
+    // enum actually declares. The expected side comes from the derived schema,
+    // so a member added to the enum and forgotten here fails.
+    //
+    // The plugin half of this pinning used to live here too, reading the
+    // plugin's TypeScript and parsing its tables out of the source text. It
+    // does not any more: `error_catalog.rs` generates those tables from this
+    // same protocol, so there is nothing left to disagree.
     let mut listed: Vec<String> = ErrorCode::ALL
         .iter()
         .map(|code| error_code_tag(*code).to_owned())
         .collect();
     listed.sort();
     assert_eq!(
-        listed, rust,
+        listed,
+        schema_error_codes(),
         "ErrorCode::ALL is not the set the enum declares"
-    );
-
-    let (declared, accepted) = plugin_error_code_lists(&protocol);
-    assert_eq!(
-        declared, rust,
-        "plugin protocol.ts declares a different set of error codes than Rust"
-    );
-    assert_eq!(
-        accepted, rust,
-        "plugin protocol.ts's ERROR_CODES value list differs from its own tuple type"
-    );
-
-    // The message is code-owned, and the Rust decoder refuses any frame whose
-    // message is not the canonical one for its code. A drifted string is
-    // therefore also a dropped session, not a cosmetic difference. Three lists
-    // hold these strings and nothing else pins them to each other.
-    let mut expected: Vec<(String, String)> = ErrorCode::ALL
-        .iter()
-        .map(|code| {
-            (
-                error_code_tag(*code).to_owned(),
-                canonical_message(*code).to_owned(),
-            )
-        })
-        .collect();
-    expected.sort();
-    assert_eq!(
-        plugin_message_map(
-            "plugin/src/shared/result-validation.ts",
-            &validation,
-            "const CANONICAL_MESSAGES: Record<ErrorCode, string> = {"
-        ),
-        expected,
-        "plugin result-validation.ts carries different canonical messages than Rust"
-    );
-    assert_eq!(
-        plugin_message_map(
-            "plugin/src/read/render.ts",
-            &render,
-            "const MESSAGES: Record<ErrorCode, string> = {",
-        ),
-        expected,
-        "plugin read/render.ts carries different canonical messages than Rust"
     );
 }
 

@@ -30,7 +30,7 @@ import {
   type SerializeNodeForestOptions,
 } from "./serialize"
 import { visibilityOf } from "./visibility"
-import { CANONICAL_MESSAGES } from "../shared/result-validation"
+import { CANONICAL_MESSAGES } from "../shared/error-catalog"
 
 function serializeOptions(
   options: Omit<SerializeNodeForestOptions, "signal">,
