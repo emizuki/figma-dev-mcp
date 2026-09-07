@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 
+import { FIGMA_MIXED, installFigma } from "../../tests/figma-harness"
 import { LocalCancellationController } from "../main/cancellation"
 import { FONT_SEGMENT_RANGE, getFonts } from "./fonts"
 
-const MIXED = Symbol("figma.mixed")
+const MIXED = FIGMA_MIXED
 
 const page = (id: string, name: string, children: unknown[] = []) => ({
   id,
@@ -27,58 +28,6 @@ const text = (
   fontName: { family: "Inter", style: "Regular" },
   ...extras,
 })
-
-function installFigma(options: {
-  currentPage: Record<string, unknown>
-  pages?: Record<string, unknown>[]
-  nodes?: Map<string, unknown>
-  available?: { family: string; style: string }[]
-  forbidCatalog?: boolean
-}): {
-  currentPage: Record<string, unknown>
-  loadedPages: string[]
-} {
-  const loadedPages: string[] = []
-  const pages = (options.pages ?? [options.currentPage]).map((item) => {
-    const load = item.loadAsync
-    if (typeof load !== "function") return item
-    return {
-      ...item,
-      loadAsync: async () => {
-        loadedPages.push(String(item.id))
-        await load.call(item)
-      },
-    }
-  })
-  const nodes = options.nodes ?? new Map()
-  const current =
-    pages.find((item) => item.id === options.currentPage.id) ??
-    options.currentPage
-  const api = {
-    root: { name: "Checkout flow", children: pages },
-    currentPage: current,
-    editorType: "dev",
-    mixed: MIXED,
-    loadAllPagesAsync: async () => {
-      throw new Error("fonts must not load every page")
-    },
-    loadFontAsync: async () => {
-      throw new Error("fonts must not load or substitute fonts")
-    },
-    listAvailableFontsAsync: options.forbidCatalog
-      ? undefined
-      : async () =>
-          (options.available ?? [{ family: "Inter", style: "Regular" }]).map(
-            (fontName) => ({ fontName }),
-          ),
-    getNodeByIdAsync: async (id: string) => {
-      if (nodes.has(id)) return nodes.get(id)
-      return pages.find((item) => item.id === id) ?? null
-    },
-  }
-  ;(globalThis as typeof globalThis & { figma: unknown }).figma = api
-  return { currentPage: current, loadedPages }
-}
 
 describe("get_fonts", () => {
   beforeEach(() => {

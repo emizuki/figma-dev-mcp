@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 
+import { installFigma } from "../../tests/figma-harness"
 import { LocalCancellationController } from "../main/cancellation"
 import { PluginReadError } from "./navigation"
 import { getComponents } from "./components"
@@ -135,52 +136,6 @@ function instance(options: {
       return options.main ?? null
     },
   }
-}
-
-function installFigma(options: {
-  currentPage: Record<string, unknown>
-  pages?: Record<string, unknown>[]
-  nodes?: Map<string, unknown>
-}): {
-  currentPage: Record<string, unknown>
-  lookedUp: string[]
-  loadedPages: string[]
-} {
-  const lookedUp: string[] = []
-  const loadedPages: string[] = []
-  const pages = (options.pages ?? [options.currentPage]).map((item) => {
-    const load = item.loadAsync
-    if (typeof load !== "function") return item
-    return {
-      ...item,
-      loadAsync: async () => {
-        loadedPages.push(String(item.id))
-        await load.call(item)
-      },
-    }
-  })
-  const nodes = options.nodes ?? new Map()
-  const current =
-    pages.find((item) => item.id === options.currentPage.id) ??
-    options.currentPage
-  const api = {
-    root: { name: "Checkout flow", children: pages },
-    currentPage: current,
-    editorType: "dev",
-    loadAllPagesAsync: async () => {
-      throw new Error("components must not load every page")
-    },
-    importComponentByKeyAsync: async () => {
-      throw new Error("components must not import remotes")
-    },
-    getNodeByIdAsync: async (id: string) => {
-      lookedUp.push(id)
-      if (nodes.has(id)) return nodes.get(id)
-      return pages.find((item) => item.id === id) ?? null
-    },
-  }
-  ;(globalThis as typeof globalThis & { figma: unknown }).figma = api
-  return { currentPage: current, lookedUp, loadedPages }
 }
 
 describe("get_components", () => {

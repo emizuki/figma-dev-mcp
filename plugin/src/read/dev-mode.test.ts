@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 
+import { installFigma } from "../../tests/figma-harness"
 import { LocalCancellationController } from "../main/cancellation"
 import { PluginReadError } from "./navigation"
 import { getDevModeData } from "./dev-mode"
@@ -25,84 +26,6 @@ const frame = (
   leftover: "must-not-leak",
   ...extras,
 })
-
-function findNode(root: unknown, id: string): unknown {
-  const node = record(root)
-  if (node.id === id) return root
-  const children = Array.isArray(node.children) ? node.children : []
-  for (const child of children) {
-    const match = findNode(child, id)
-    if (match !== undefined) return match
-  }
-  return undefined
-}
-
-function record(value: unknown): Record<string, unknown> {
-  return value !== null && typeof value === "object"
-    ? (value as Record<string, unknown>)
-    : {}
-}
-
-function installFigma(options: {
-  currentPage: Record<string, unknown>
-  pages?: Record<string, unknown>[]
-  nodes?: Map<string, unknown>
-  categories?: unknown[]
-  forbidCategories?: boolean
-}): {
-  currentPage: Record<string, unknown>
-  loadedPages: string[]
-  categoryLoads: { count: number }
-} {
-  const loadedPages: string[] = []
-  const pages = (options.pages ?? [options.currentPage]).map((item) => {
-    const load = item.loadAsync
-    if (typeof load !== "function") return item
-    return {
-      ...item,
-      loadAsync: async () => {
-        loadedPages.push(String(item.id))
-        await load.call(item)
-      },
-    }
-  })
-  const nodes = options.nodes ?? new Map()
-  const current =
-    pages.find((item) => item.id === options.currentPage.id) ??
-    options.currentPage
-  const categoryLoads = { count: 0 }
-  const api: Record<string, unknown> = {
-    root: { name: "Checkout flow", children: pages },
-    currentPage: current,
-    editorType: "dev",
-    loadAllPagesAsync: async () => {
-      throw new Error("dev-mode must not load every page")
-    },
-    getNodeByIdAsync: async (id: string) => {
-      if (nodes.has(id)) return nodes.get(id)
-      for (const pageNode of pages) {
-        const match = findNode(pageNode, id)
-        if (match !== undefined) return match
-      }
-      return null
-    },
-  }
-  if (!options.forbidCategories) {
-    api.annotations = {
-      getAnnotationCategoriesAsync: async () => {
-        categoryLoads.count += 1
-        return (
-          options.categories ?? [
-            { id: "cat-note", label: "Note", color: "yellow", leftover: true },
-            { id: "cat-todo", label: "Todo", color: "blue" },
-          ]
-        )
-      },
-    }
-  }
-  ;(globalThis as typeof globalThis & { figma: unknown }).figma = api
-  return { currentPage: current, loadedPages, categoryLoads }
-}
 
 describe("get_dev_mode_data", () => {
   beforeEach(() => {
