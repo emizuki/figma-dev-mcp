@@ -240,6 +240,43 @@ fn per_item_ceilings_reject_complete_assets_without_slicing() {
     }
 }
 
+/// The raster per-item ceiling is inclusive, the same as the SVG one below.
+///
+/// `per_item_ceilings_reject_complete_assets_without_slicing` pins only
+/// `MAX_RASTER_BASE64_BYTES + 1`, and `max_svg_source_survives_preview_base64_…`
+/// pins the accept half for SVG alone. Narrowing the raster comparison from
+/// `<=` to `<` left the whole suite green — while a screenshot sitting exactly
+/// on the published ceiling came back as `LIMIT_EXCEEDED` with no image at all,
+/// which is the one payload size the ceiling was chosen to admit.
+#[test]
+fn a_raster_asset_at_exactly_the_per_item_ceiling_is_returned_whole() {
+    let payload = "D".repeat(MAX_RASTER_BASE64_BYTES);
+    let accounted = account_batch_images(
+        &modern_context(),
+        vec![AccountedImage {
+            id: Some("1:9".into()),
+            structured_item: json!({"nodeId": "1:9"}),
+            image_base64: payload.clone(),
+            mime_type: "image/png".into(),
+        }],
+        |items| json!({"assets": items, "truncated": false, "observation": observation()}),
+    )
+    .expect("an asset at the ceiling is still a tool result");
+
+    let asset = &accounted.result.structured_content.as_ref().unwrap()["assets"][0];
+    assert_eq!(
+        asset["status"], "success",
+        "exactly {MAX_RASTER_BASE64_BYTES} base64 bytes is at the ceiling, not past it"
+    );
+    let image = accounted
+        .result
+        .content
+        .iter()
+        .find_map(ContentBlock::as_image)
+        .expect("the image block must survive, not be dropped for its size");
+    assert_eq!(image.data.len(), payload.len());
+}
+
 #[test]
 fn max_svg_source_survives_preview_base64_and_is_charged_once() {
     let prefix = "<svg xmlns='http://www.w3.org/2000/svg'>";
