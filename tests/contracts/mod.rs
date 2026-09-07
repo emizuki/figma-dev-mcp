@@ -11,8 +11,8 @@ mod tools_catalog;
 use figma_dev_mcp_broker::PLUGIN_PROTOCOL_VERSION;
 use figma_dev_mcp_protocol::{
     domain::{
-        AxisAlign, ComponentValue, ConnectionId, CornerRadiusValue, DesignNode, EffectValue,
-        GetDesignContextResult, GetDevModeDataResult, GetMotionResult, GetNodesResult,
+        AxisAlign, BoundaryValueError, ComponentValue, ConnectionId, CornerRadiusValue, DesignNode,
+        EffectValue, GetDesignContextResult, GetDevModeDataResult, GetMotionResult, GetNodesResult,
         GetReactionsResult, GetSelectionResult, InstanceValue, ItemIdentifier, LayoutValue,
         LetterSpacingValue, LineHeightValue, MinimalNodeDetails, NodeForest, NodeId, NodeTypeList,
         NodeTypeName, NodesSelector, PageId, PagesSelector, PaintValue, RasterScale,
@@ -827,6 +827,12 @@ fn boundary_decoders_reject_oversized_inputs_before_dispatch() {
 ///
 /// The over-limit half is asserted alongside so the accept half cannot pass by
 /// the fixture being malformed in some way that has nothing to do with depth.
+///
+/// The accept half round-trips rather than checking `is_ok`. `depth` is an
+/// `Option` skipped when absent, so a guard that quietly resolved the boundary
+/// value to `None` — accepting the request and then walking to the default
+/// depth instead of the one asked for — would satisfy a bare `is_ok` while
+/// discarding the very value under test.
 #[test]
 fn an_input_asking_for_exactly_the_maximum_depth_is_accepted() {
     let request = |depth: u8| {
@@ -837,9 +843,13 @@ fn an_input_asking_for_exactly_the_maximum_depth_is_accepted() {
             }}
         })
     };
-    assert!(
-        serde_json::from_value::<BrokerToPlugin>(request(MAX_DEPTH)).is_ok(),
-        "depth {MAX_DEPTH} is the maximum the input schema publishes, so it must decode"
+    let decoded: BrokerToPlugin = serde_json::from_value(request(MAX_DEPTH))
+        .expect("the maximum depth the input schema publishes must decode");
+    let reencoded = serde_json::to_value(&decoded).expect("a request re-encodes");
+    assert_eq!(
+        reencoded["operation"]["input"]["depth"],
+        json!(MAX_DEPTH),
+        "the accepted depth must survive the decode, not be silently resolved away: {reencoded}"
     );
     assert!(
         serde_json::from_value::<BrokerToPlugin>(request(MAX_DEPTH + 1)).is_err(),
@@ -962,6 +972,12 @@ fn rpc_frames_are_length_prefixed_and_reject_oversize_before_body_read() {
 /// The body here is deliberately short, so the length check is the only thing
 /// that can answer first: past it the frame fails for its truncated body, and
 /// the two failures are told apart by which one the error names.
+///
+/// That second failure is asserted positively, by the length it names, rather
+/// than only by the absence of "exceeds". The declared length is the accepted
+/// value here, and a guard that let the ceiling through but clamped it on the
+/// way past would satisfy a bare "did not refuse it for its size" while
+/// silently altering the number the rest of the read depends on.
 #[test]
 fn a_frame_declaring_exactly_the_envelope_ceiling_is_not_refused_for_its_size() {
     let framed = |declared: usize| {
@@ -974,6 +990,11 @@ fn a_frame_declaring_exactly_the_envelope_ceiling_is_not_refused_for_its_size() 
     assert!(
         !error.to_string().contains("exceeds"),
         "a frame at exactly {MAX_ENVELOPE_BYTES} must get past the length check, got: {error}"
+    );
+    assert_eq!(
+        error.to_string(),
+        format!("frame contains 2 body bytes but declares {MAX_ENVELOPE_BYTES}"),
+        "the ceiling must survive the length check intact, not be clamped past it"
     );
 
     // The control: one byte more is refused for its size, so the assertion
@@ -2254,15 +2275,29 @@ fn outbound_node_collections_reject_wide_roots_and_children_without_auxiliary_gr
 /// the plugin had already done the work.
 ///
 /// The over-limit half is asserted alongside so the accept half cannot pass by
-/// the fixture being shallower than it claims.
+/// the fixture being shallower than it claims. The accept half measures the
+/// depth the builder actually returned rather than checking `is_ok`: a builder
+/// that accepted the tree and pruned it back to the level above would satisfy
+/// `is_ok` while dropping exactly the level under test.
 #[test]
 fn the_outbound_node_builder_accepts_a_tree_at_exactly_the_depth_ceiling() {
+    fn deepest_level<D>(node: &DesignNode<D>) -> u8 {
+        node.children
+            .iter()
+            .map(|child| deepest_level(child) + 1)
+            .max()
+            .unwrap_or(0)
+    }
+
     let at_ceiling: DesignNode<MinimalNodeDetails> =
         serde_json::from_value(nested_detail_node("minimal", MAX_DEPTH))
             .expect("a tree at the depth ceiling decodes");
-    assert!(
-        NodeForest::try_from(vec![at_ceiling]).is_ok(),
-        "the builder must accept the depth the decoder accepts"
+    let forest = NodeForest::try_from(vec![at_ceiling])
+        .expect("the builder must accept the depth the decoder accepts");
+    assert_eq!(
+        deepest_level(&forest.as_slice()[0]),
+        MAX_DEPTH,
+        "the accepted tree must come back at the depth it went in at, not pruned"
     );
 
     // One level deeper cannot be decoded — the decoder refuses it — so the
@@ -2272,9 +2307,17 @@ fn the_outbound_node_builder_accepts_a_tree_at_exactly_the_depth_ceiling() {
     let mut past_ceiling: DesignNode<MinimalNodeDetails> =
         serde_json::from_value(detail_node_fixture("minimal")).unwrap();
     past_ceiling.children = vec![deepest];
+    let error = NodeForest::try_from(vec![past_ceiling])
+        .expect_err("one level past the ceiling must still be refused");
     assert!(
-        NodeForest::try_from(vec![past_ceiling]).is_err(),
-        "one level past the ceiling must still be refused"
+        matches!(
+            error,
+            BoundaryValueError::TooDeep {
+                maximum: MAX_DEPTH,
+                ..
+            }
+        ),
+        "the refusal must name the depth ceiling, not some unrelated bound: {error}"
     );
 }
 

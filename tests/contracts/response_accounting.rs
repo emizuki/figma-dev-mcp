@@ -274,7 +274,14 @@ fn a_raster_asset_at_exactly_the_per_item_ceiling_is_returned_whole() {
         .iter()
         .find_map(ContentBlock::as_image)
         .expect("the image block must survive, not be dropped for its size");
-    assert_eq!(image.data.len(), payload.len());
+    // Compared, not measured: a length check passes on a payload that was
+    // swapped or re-encoded on the way out. `assert!` rather than `assert_eq!`
+    // so a failure does not try to print two 16 MiB strings.
+    assert!(
+        image.data == payload,
+        "the accepted asset must come back byte for byte, got {} bytes",
+        image.data.len()
+    );
 }
 
 #[test]
