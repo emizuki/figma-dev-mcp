@@ -111,17 +111,29 @@ export function installFigma(options: FigmaHarnessOptions = {}): FigmaHarness {
   }
 
   // Recording `loadAsync` is what proves a tool paged in only what it needed.
-  const pages = (options.pages ?? [requested]).map((item) => {
+  // The wrapper is memoised on the caller's own object so that a page reached
+  // through the `nodes` map is the same object as the one in `pages`: both
+  // paths record the load. Wrapping only the array would leave a map hit
+  // returning the unwrapped original, and a `loadedPages` assertion would then
+  // silently miss the load it was written to catch.
+  const wrappers = new Map<Record<string, unknown>, Record<string, unknown>>()
+  const wrapPage = (item: Record<string, unknown>): Record<string, unknown> => {
+    const cached = wrappers.get(item)
+    if (cached !== undefined) return cached
     const load = item.loadAsync
     if (typeof load !== "function") return item
-    return {
+    const wrapped: Record<string, unknown> = {
       ...item,
       loadAsync: async () => {
         loadedPages.push(String(item.id))
         await load.call(item)
       },
     }
-  })
+    wrappers.set(item, wrapped)
+    return wrapped
+  }
+
+  const pages = (options.pages ?? [requested]).map(wrapPage)
 
   let current = pages.find((item) => item.id === requested.id) ?? requested
   if (options.pageChildren !== undefined || options.selection !== undefined) {
@@ -134,6 +146,10 @@ export function installFigma(options: FigmaHarnessOptions = {}): FigmaHarness {
     }
     const index = pages.indexOf(current)
     if (index >= 0) pages[index] = overridden
+    // So a `nodes` hit on the caller's own current page yields the page the
+    // host actually installed, overrides included, rather than the pre-override
+    // one.
+    wrappers.set(requested, overridden)
     current = overridden
   }
 
@@ -171,7 +187,11 @@ export function installFigma(options: FigmaHarnessOptions = {}): FigmaHarness {
       options.getNodeByIdAsync ??
       (async (id: string) => {
         lookedUp.push(id)
-        if (nodes.has(id)) return nodes.get(id)
+        if (nodes.has(id)) {
+          const hit = nodes.get(id)
+          if (hit === null || typeof hit !== "object") return hit
+          return wrapPage(hit as Record<string, unknown>)
+        }
         for (const page of pages) {
           const match = findNode(page, id)
           if (match !== undefined) return match
@@ -207,8 +227,20 @@ export function installFigma(options: FigmaHarnessOptions = {}): FigmaHarness {
   }
 
   // Every `forbid*` flag leaves the capability off the object rather than
-  // installing a thrower: the tests that set one assert on the read tool's
-  // "capability unavailable" path, which is reached by absence.
+  // installing a thrower. The four flags did not agree before this harness:
+  // `dev-mode`'s `forbidCategories` omitted the key and `fonts`' `forbidCatalog`
+  // set it to `undefined` — both already meant "absent" — while `styles`'
+  // `forbidLocal` and `forbidGetStyle` installed functions that *threw*, meaning
+  // "this reader must not be called". Absence is the only rule that unifies all
+  // four, so it is the rule here.
+  //
+  // Be clear about what that costs, because it is not free: it retires those two
+  // tripwires. A read tool that touches a forbidden styles API no longer blows
+  // the test up — it sees `undefined` and takes the CAPABILITY_UNAVAILABLE path
+  // instead, which is a much quieter failure. No styles test asserts on that
+  // path through these two flags, and every site that sets one pairs it with a
+  // `source` that never reaches the reader, so nothing changes today. Do not
+  // read this comment as saying the tripwire is still there. It is not.
   if (!options.forbidCatalog) {
     api.listAvailableFontsAsync = async () =>
       (options.available ?? [{ family: "Inter", style: "Regular" }]).map(
