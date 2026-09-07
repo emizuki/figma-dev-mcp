@@ -267,6 +267,17 @@ fn defines_install_figma(source: &str) -> bool {
     })
 }
 
+/// True if `source` assigns `figma` a value (`(...).figma = {...}` or
+/// `something.figma = something`), the way a test installs a fake host
+/// inline without going through any builder function at all. `==`/`===`
+/// comparisons against `.figma` do not count.
+fn assigns_global_figma(source: &str) -> bool {
+    source.match_indices(".figma").any(|(index, needle)| {
+        let after = source[index + needle.len()..].trim_start_matches([' ', '\t']);
+        after.starts_with('=') && !after.starts_with("==")
+    })
+}
+
 /// Every read test installs its fake Figma one of two sanctioned ways:
 /// importing the shared builder in `plugin/tests/figma-harness.ts`, or —
 /// solely `common.test.ts` — defining its own `installFigma`, because that
@@ -275,24 +286,28 @@ fn defines_install_figma(source: &str) -> bool {
 ///
 /// This checks three things over every `*.test.ts` file under
 /// `plugin/src/read`: no file other than `common.test.ts` defines its own
-/// `installFigma`; every file expected to import the shared harness still
-/// does, rather than drifting back to a local builder; and `common.test.ts`
-/// itself still defines its own host, so that exemption cannot rot into a
-/// dead branch that always passes.
+/// `installFigma`; every file that installs a fake Figma host at all still
+/// imports the shared harness, rather than drifting back to a local builder;
+/// and `common.test.ts` itself still defines its own host, so that exemption
+/// cannot rot into a dead branch that always passes.
 ///
-/// `navigation.test.ts`, `serialize.test.ts`, and `visibility.test.ts` are
-/// exempted from the import requirement: they predate the harness and never
-/// built a host through a reusable `installFigma` function — the first two
-/// assign `figma` inline per test, the third never touches `figma` at all —
-/// so importing the harness is not a property they are expected to hold.
+/// Whether a file installs a host is derived — `defines_install_figma` or
+/// `assigns_global_figma` — not listed, so a future test file that never
+/// touches `figma` needs no entry here and drops out on its own, while a
+/// future file that does install one and skips the harness is caught
+/// automatically instead of requiring someone to remember to add it to an
+/// exemption list.
+///
+/// Only two files are named explicitly. `common.test.ts` is the positive
+/// control above. `navigation.test.ts` installs its hosts by hand, inline,
+/// once per test, with no reusable builder at all — the same defect class the
+/// harness was built to retire, just never folded into this migration. It is
+/// exempted from the import requirement, not because it has no host to
+/// migrate, but because migrating a file this size belongs in its own change,
+/// not inside this test's fix.
 #[test]
 fn read_tests_share_one_figma_harness() {
-    const EXEMPT_FROM_HARNESS_IMPORT: [&str; 4] = [
-        "common.test.ts",
-        "navigation.test.ts",
-        "serialize.test.ts",
-        "visibility.test.ts",
-    ];
+    const NAMED_EXEMPT_FROM_HARNESS_IMPORT: [&str; 1] = ["navigation.test.ts"];
 
     let root = workspace_root();
     let mut pending = vec![root.join("plugin/src/read")];
@@ -321,16 +336,20 @@ fn read_tests_share_one_figma_harness() {
                 .to_string_lossy()
                 .into_owned();
             let source = fs::read_to_string(&path).expect("test source is readable");
-            let defines_own_host = defines_install_figma(&source);
+            let defines_own_builder = defines_install_figma(&source);
 
             if file_name == "common.test.ts" {
                 found_common_test = true;
-                common_test_defines_its_own_host = defines_own_host;
-            } else if defines_own_host {
+                common_test_defines_its_own_host = defines_own_builder;
+                continue;
+            }
+            if defines_own_builder {
                 own_builder_offenders.push(relative.clone());
             }
 
-            if !EXEMPT_FROM_HARNESS_IMPORT.contains(&file_name.as_str())
+            let installs_a_host = defines_own_builder || assigns_global_figma(&source);
+            if installs_a_host
+                && !NAMED_EXEMPT_FROM_HARNESS_IMPORT.contains(&file_name.as_str())
                 && !source.contains("tests/figma-harness")
             {
                 missing_import_offenders.push(relative);
