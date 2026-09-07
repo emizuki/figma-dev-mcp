@@ -52,7 +52,6 @@ export interface FigmaHarness {
   styleLookups: string[]
   variableLookups: string[]
   collectionLookups: string[]
-  exports: Record<string, unknown>[]
   catalogCalls: { count: number }
   categoryLoads: { count: number }
   localCalls: string[]
@@ -98,7 +97,6 @@ export function installFigma(options: FigmaHarnessOptions = {}): FigmaHarness {
   const styleLookups: string[] = []
   const variableLookups: string[] = []
   const collectionLookups: string[] = []
-  const exports: Record<string, unknown>[] = []
   const catalogCalls = { count: 0 }
   const categoryLoads = { count: 0 }
   const localCalls: string[] = []
@@ -327,7 +325,6 @@ export function installFigma(options: FigmaHarnessOptions = {}): FigmaHarness {
     styleLookups,
     variableLookups,
     collectionLookups,
-    exports,
     catalogCalls,
     categoryLoads,
     localCalls,
