@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 
+import { installFigma } from "../../tests/figma-harness"
 import { LocalCancellationController } from "../main/cancellation"
 import { PluginReadError } from "./navigation"
 import {
@@ -31,37 +32,6 @@ const node = (
   children: [],
   ...extras,
 })
-
-function installFigma(options: {
-  currentPage: Record<string, unknown>
-  pages?: Record<string, unknown>[]
-  nodes?: Map<string, unknown>
-  getNodeByIdAsync?: (id: string) => Promise<unknown>
-}): { currentPage: Record<string, unknown>; lookedUp: string[] } {
-  const lookedUp: string[] = []
-  const pages = options.pages ?? [options.currentPage]
-  const nodes = options.nodes ?? new Map()
-  const api = {
-    root: { name: "Checkout flow", children: pages },
-    currentPage: options.currentPage,
-    editorType: "dev",
-    loadAllPagesAsync: async () => {
-      throw new Error("search must not call loadAllPagesAsync")
-    },
-    loadFontAsync: async () => {
-      throw new Error("search must not load fonts")
-    },
-    getNodeByIdAsync:
-      options.getNodeByIdAsync ??
-      (async (id: string) => {
-        lookedUp.push(id)
-        if (nodes.has(id)) return nodes.get(id)
-        return pages.find((item) => item.id === id) ?? null
-      }),
-  }
-  ;(globalThis as typeof globalThis & { figma: unknown }).figma = api
-  return { currentPage: options.currentPage, lookedUp }
-}
 
 describe("search predicate", () => {
   test("requires query or types, trims them, and keeps match mode", () => {
@@ -299,7 +269,14 @@ describe("search_nodes handler", () => {
     expect(result.matches[0]?.reasons).toEqual(["name"])
     expect(result.truncated).toBe(false)
     expect(result.observation.startedAt).toMatch(/Z$/)
-    expect(currentPage).toBe(current)
+    // Was `toBe(current)`: under the old fake, `page()` fixtures passed
+    // through untouched, so identity proved the current page hadn't moved.
+    // `page()` carries `loadAsync`, and the harness wraps any such page in a
+    // proxy to track its load, so identity no longer holds even when the
+    // current page is genuinely unchanged. Comparing `.id` checks what the
+    // test actually means: searching an explicit page didn't switch the
+    // current page away from `current`.
+    expect(currentPage.id).toBe(current.id)
   })
 
   test("searches one explicit node scope and loads a page node without widening", async () => {

@@ -116,19 +116,32 @@ export function installFigma(options: FigmaHarnessOptions = {}): FigmaHarness {
   // paths record the load. Wrapping only the array would leave a map hit
   // returning the unwrapped original, and a `loadedPages` assertion would then
   // silently miss the load it was written to catch.
+  //
+  // The wrap is a `Proxy`, not a spread. A spread reads every enumerable own
+  // property up front, which forces any getter on the page — including one a
+  // test installs specifically to prove some reader does *not* touch it
+  // eagerly — to fire the moment the harness wraps the page, before the code
+  // under test ever runs. A real Figma page does not do that: reading
+  // `page.loadAsync` does not force `page.children` to evaluate. The proxy
+  // intercepts only `loadAsync` and forwards every other property lazily via
+  // `Reflect.get`, so a page's own getters keep their laziness.
   const wrappers = new Map<Record<string, unknown>, Record<string, unknown>>()
   const wrapPage = (item: Record<string, unknown>): Record<string, unknown> => {
     const cached = wrappers.get(item)
     if (cached !== undefined) return cached
     const load = item.loadAsync
     if (typeof load !== "function") return item
-    const wrapped: Record<string, unknown> = {
-      ...item,
-      loadAsync: async () => {
-        loadedPages.push(String(item.id))
-        await load.call(item)
+    const wrapped: Record<string, unknown> = new Proxy(item, {
+      get(target, prop, receiver) {
+        if (prop === "loadAsync") {
+          return async () => {
+            loadedPages.push(String(item.id))
+            await load.call(item)
+          }
+        }
+        return Reflect.get(target, prop, receiver)
       },
-    }
+    })
     wrappers.set(item, wrapped)
     return wrapped
   }
