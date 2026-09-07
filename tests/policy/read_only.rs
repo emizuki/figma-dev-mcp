@@ -242,36 +242,125 @@ fn plugin_source_denies_mutation_private_and_motion_write_apis() {
     }
 }
 
-/// Only `common.test.ts` defines its own `installFigma`.
+/// True if `source` defines the identifier `installFigma` — as a
+/// `function installFigma(`, or as a `const`/`let`/`var installFigma =` —
+/// rather than merely mentioning a longer name that happens to start with it
+/// (`installFigmaHost`) or calling it.
+fn defines_install_figma(source: &str) -> bool {
+    const DEFINING_KEYWORDS: [&str; 4] = ["function", "const", "let", "var"];
+    let is_ident_char = |ch: char| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$';
+
+    source.match_indices("installFigma").any(|(index, needle)| {
+        let after = source[index + needle.len()..].chars().next();
+        if after.is_some_and(is_ident_char) {
+            return false; // e.g. installFigmaHost
+        }
+        let before = source[..index].trim_end_matches(char::is_whitespace);
+        DEFINING_KEYWORDS.iter().any(|keyword| {
+            before.ends_with(keyword)
+                && before.len() > keyword.len()
+                && before[..before.len() - keyword.len()]
+                    .chars()
+                    .next_back()
+                    .is_none_or(|ch| !is_ident_char(ch))
+        })
+    })
+}
+
+/// Every read test installs its fake Figma one of two sanctioned ways:
+/// importing the shared builder in `plugin/tests/figma-harness.ts`, or —
+/// solely `common.test.ts` — defining its own `installFigma`, because that
+/// file tests capability detection when a capability is absent and needs a
+/// host the harness, which always builds a complete one, cannot express.
 ///
-/// Nine read test files each built their own fake Figma, and they disagreed —
-/// `loadAsync` modelled in five of them and absent in two, `nodes` meaning a
-/// lookup map in eight and page children in the ninth. A test that agrees with
-/// a wrong model stays green, so the divergence could not be found by running
-/// anything.
+/// This checks three things over every `*.test.ts` file under
+/// `plugin/src/read`: no file other than `common.test.ts` defines its own
+/// `installFigma`; every file expected to import the shared harness still
+/// does, rather than drifting back to a local builder; and `common.test.ts`
+/// itself still defines its own host, so that exemption cannot rot into a
+/// dead branch that always passes.
 ///
-/// `common.test.ts` keeps its own: it installs a deliberately incomplete host
-/// to test capability detection, which a harness that always builds a complete
-/// API cannot express.
+/// `navigation.test.ts`, `serialize.test.ts`, and `visibility.test.ts` are
+/// exempted from the import requirement: they predate the harness and never
+/// built a host through a reusable `installFigma` function — the first two
+/// assign `figma` inline per test, the third never touches `figma` at all —
+/// so importing the harness is not a property they are expected to hold.
 #[test]
 fn read_tests_share_one_figma_harness() {
-    let read = workspace_root().join("plugin/src/read");
-    let mut offenders = Vec::new();
-    for entry in fs::read_dir(&read).expect("read test directory is readable") {
-        let path = entry.expect("read test entry is readable").path();
-        let name = path.to_string_lossy().to_string();
-        if !name.ends_with(".test.ts") || name.ends_with("common.test.ts") {
-            continue;
-        }
-        let source = fs::read_to_string(&path).expect("test source is readable");
-        if source.contains("function installFigma") {
-            offenders.push(name);
+    const EXEMPT_FROM_HARNESS_IMPORT: [&str; 4] = [
+        "common.test.ts",
+        "navigation.test.ts",
+        "serialize.test.ts",
+        "visibility.test.ts",
+    ];
+
+    let root = workspace_root();
+    let mut pending = vec![root.join("plugin/src/read")];
+    let mut found_common_test = false;
+    let mut common_test_defines_its_own_host = false;
+    let mut own_builder_offenders = Vec::new();
+    let mut missing_import_offenders = Vec::new();
+
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(&directory).expect("read test directory is readable") {
+            let path = entry.expect("read test entry is readable").path();
+            if path.is_dir() {
+                pending.push(path);
+                continue;
+            }
+            let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if !file_name.ends_with(".test.ts") {
+                continue;
+            }
+            let file_name = file_name.to_owned();
+            let relative = path
+                .strip_prefix(&root)
+                .expect("read test path is inside the workspace")
+                .to_string_lossy()
+                .into_owned();
+            let source = fs::read_to_string(&path).expect("test source is readable");
+            let defines_own_host = defines_install_figma(&source);
+
+            if file_name == "common.test.ts" {
+                found_common_test = true;
+                common_test_defines_its_own_host = defines_own_host;
+            } else if defines_own_host {
+                own_builder_offenders.push(relative.clone());
+            }
+
+            if !EXEMPT_FROM_HARNESS_IMPORT.contains(&file_name.as_str())
+                && !source.contains("tests/figma-harness")
+            {
+                missing_import_offenders.push(relative);
+            }
         }
     }
+    own_builder_offenders.sort();
+    missing_import_offenders.sort();
+
     assert!(
-        offenders.is_empty(),
-        "these read tests still define their own Figma harness instead of \
-         importing plugin/tests/figma-harness.ts: {offenders:?}"
+        found_common_test,
+        "expected the walk to find plugin/src/read/common.test.ts; the walk \
+         or its exemption list has drifted from the files on disk"
+    );
+    assert!(
+        common_test_defines_its_own_host,
+        "common.test.ts must still define its own installFigma: it installs \
+         a deliberately incomplete host to test capability detection, which \
+         the shared harness cannot express, and this is the positive control \
+         proving the definition predicate still fires"
+    );
+    assert!(
+        own_builder_offenders.is_empty(),
+        "these read tests define their own Figma builder instead of \
+         importing plugin/tests/figma-harness: {own_builder_offenders:?}"
+    );
+    assert!(
+        missing_import_offenders.is_empty(),
+        "these read tests do not import the shared Figma harness \
+         (plugin/tests/figma-harness): {missing_import_offenders:?}"
     );
 }
 
