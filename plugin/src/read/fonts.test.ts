@@ -194,7 +194,7 @@ describe("get_fonts", () => {
   test("returns unknown availability when the catalog cannot be observed", async () => {
     installFigma({
       currentPage: page("0:2", "Current", [text("5:1")]),
-      forbidCatalog: true,
+      omitCatalog: true,
     })
 
     const result = await getFonts({})

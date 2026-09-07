@@ -333,9 +333,10 @@ const HARNESS_MIGRATED_FILES: [&str; 9] = [
 /// Every read test installs its fake Figma one of two sanctioned ways —
 /// importing the shared builder in `plugin/tests/figma-harness.ts`, or,
 /// solely `common.test.ts`, defining its own `installFigma` because that file
-/// tests capability detection when a capability is absent and needs a host
-/// the harness, which always builds a complete one, cannot express — plus one
-/// documented exception below (`navigation.test.ts`).
+/// tests capability detection across arbitrary combinations of absent keys,
+/// and the harness's `omit*` options cover only the few specific keys some
+/// read path needed — plus one documented exception below
+/// (`navigation.test.ts`).
 ///
 /// Whether a file installs a host at all is derived — `defines_install_figma`
 /// or `assigns_figma` — not listed, so a future test file that never touches

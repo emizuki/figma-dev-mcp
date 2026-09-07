@@ -50,8 +50,14 @@ export interface FigmaHarnessOptions {
   selection?: { id: string }[]
   ui?: { postMessage(message: unknown): void }
   available?: { family: string; style: string }[]
-  forbidCatalog?: boolean
-  forbidCategories?: boolean
+  /**
+   * Leaves `listAvailableFontsAsync` off the host entirely, so the code under
+   * test takes its capability-unavailable branch. See the `omit*` versus
+   * `forbid*` note beside the installation below.
+   */
+  omitCatalog?: boolean
+  /** Leaves `annotations` off the host entirely, for the same reason. */
+  omitCategories?: boolean
   styles?: Map<string, unknown>
   local?: {
     paint?: unknown[]
@@ -59,13 +65,22 @@ export interface FigmaHarnessOptions {
     effect?: unknown[]
     grid?: unknown[]
   }
-  /** Installs the four `getLocal*StylesAsync` readers as throwers. */
+  /**
+   * Installs the four `getLocal*StylesAsync` readers as **throwers**: they
+   * exist on the host, and this tool must not touch them. Use this to assert
+   * a read path stays away from an API, not to test its absence — a thrower
+   * turns a stray call into a failure instead of an `undefined`.
+   */
   forbidLocal?: boolean
-  /** Installs `getStyleByIdAsync` as a thrower. */
+  /** Installs `getStyleByIdAsync` as a **thrower**, for the same reason. */
   forbidGetStyle?: boolean
-  /** Leaves the four `getLocal*StylesAsync` readers off the host entirely. */
+  /**
+   * Leaves the four `getLocal*StylesAsync` readers off the host entirely, so
+   * the code under test takes its capability-unavailable branch. Reach for
+   * `forbidLocal` instead unless the test genuinely needs the key missing.
+   */
   omitLocal?: boolean
-  /** Leaves `getStyleByIdAsync` off the host entirely. */
+  /** Leaves `getStyleByIdAsync` off the host entirely, for the same reason. */
   omitGetStyle?: boolean
   motion?: unknown
   getNodeByIdAsync?: (id: string) => Promise<unknown>
@@ -351,7 +366,7 @@ export function installFigma(options: FigmaHarnessOptions = {}): FigmaHarness {
   // absence. The distinction is not cosmetic — it is the difference between a
   // tripwire and no tripwire:
   //
-  //   forbidCatalog / forbidCategories — **absent**. `fonts` and `dev-mode`
+  //   omitCatalog / omitCategories — **absent**. `fonts` and `dev-mode`
   //     set these to test the capability-unavailable path itself, so the key
   //     genuinely has to be missing for the code under test to take it.
   //   omitLocal / omitGetStyle — **absent**, same reason: `styles`' "fails
@@ -367,17 +382,21 @@ export function installFigma(options: FigmaHarnessOptions = {}): FigmaHarness {
   // `figma.getStyleByIdAsync?.("MUTANT")` into `emitLocal` fails 6 tests with
   // these installed as throwers and only 2 with them absent; the same
   // injection into `emitReferenced` fails 2 versus 1. Five detections, all in
-  // `styles.test.ts`. The throwers are what make `expect(styleLookups)
-  // .toEqual([])` and `expect(localCalls).toEqual([])` mean anything — with
-  // the API absent, nothing could ever push to those recorders and both
-  // assertions hold vacuously.
-  if (!options.forbidCatalog) {
+  // `styles.test.ts`. Note what the throwers do and do not fix: the
+  // `expect(styleLookups).toEqual([])` and `expect(localCalls).toEqual([])`
+  // assertions are vacuous either way, because only the non-forbidding reader
+  // ever pushes to those recorders, so under either mechanism nothing can
+  // make them fail. What the throwers bind is the **test**, one line earlier
+  // — a stray call now blows up inside `forbidden()` before the assertion is
+  // reached. The annotations at those two assertion sites say the same thing
+  // from the other side; if you change one, change both.
+  if (!options.omitCatalog) {
     api.listAvailableFontsAsync = async () =>
       (options.available ?? [{ family: "Inter", style: "Regular" }]).map(
         (fontName) => ({ fontName }),
       )
   }
-  if (!options.forbidCategories) {
+  if (!options.omitCategories) {
     api.annotations = {
       getAnnotationCategoriesAsync: async () => {
         categoryLoads.count += 1

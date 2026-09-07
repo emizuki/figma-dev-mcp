@@ -117,7 +117,7 @@ describe("get_dev_mode_data", () => {
     const bare = frame("4:2", { annotations: [{ label: "Note" }] })
     installFigma({
       currentPage: page("0:2", "Current", [bare]),
-      forbidCategories: true,
+      omitCategories: true,
     })
 
     const result = await getDevModeData({ selector: { nodeId: "4:2" } })
