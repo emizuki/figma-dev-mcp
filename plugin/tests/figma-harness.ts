@@ -53,10 +53,9 @@ export interface FigmaHarness {
   variableLookups: string[]
   collectionLookups: string[]
   exports: Record<string, unknown>[]
-  calls: { count: number }
   catalogCalls: { count: number }
   categoryLoads: { count: number }
-  localCalls: { count: number }
+  localCalls: string[]
 }
 
 /**
@@ -100,10 +99,9 @@ export function installFigma(options: FigmaHarnessOptions = {}): FigmaHarness {
   const variableLookups: string[] = []
   const collectionLookups: string[] = []
   const exports: Record<string, unknown>[] = []
-  const calls = { count: 0 }
   const catalogCalls = { count: 0 }
   const categoryLoads = { count: 0 }
-  const localCalls = { count: 0 }
+  const localCalls: string[] = []
 
   const requested: Record<string, unknown> = options.currentPage ?? {
     id: "0:1",
@@ -156,7 +154,7 @@ export function installFigma(options: FigmaHarnessOptions = {}): FigmaHarness {
     kind: "paint" | "text" | "effect" | "grid",
   ): (() => Promise<unknown[]>) => {
     return async () => {
-      localCalls.count += 1
+      localCalls.push(kind)
       return options.local?.[kind] ?? []
     }
   }
@@ -272,7 +270,6 @@ export function installFigma(options: FigmaHarnessOptions = {}): FigmaHarness {
     variableLookups,
     collectionLookups,
     exports,
-    calls,
     catalogCalls,
     categoryLoads,
     localCalls,
