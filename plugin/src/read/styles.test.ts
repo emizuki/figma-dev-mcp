@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 
+import { FIGMA_MIXED, installFigma } from "../../tests/figma-harness"
 import { LocalCancellationController } from "../main/cancellation"
 import { PluginReadError } from "./navigation"
 import { getStyles } from "./styles"
@@ -95,70 +96,6 @@ function gridStyle(id: string, name: string) {
   }
 }
 
-function installFigma(options: {
-  currentPage: Record<string, unknown>
-  pages?: Record<string, unknown>[]
-  nodes?: Map<string, unknown>
-  styles?: Map<string, unknown>
-  local?: {
-    paint?: unknown[]
-    text?: unknown[]
-    effect?: unknown[]
-    grid?: unknown[]
-  }
-  forbidLocal?: boolean
-  forbidGetStyle?: boolean
-}): {
-  currentPage: Record<string, unknown>
-  localCalls: string[]
-  styleLookups: string[]
-} {
-  const localCalls: string[] = []
-  const styleLookups: string[] = []
-  const pages = options.pages ?? [options.currentPage]
-  const nodes = options.nodes ?? new Map()
-  const styles = options.styles ?? new Map()
-  const api = {
-    root: { name: "Checkout flow", children: pages },
-    currentPage: options.currentPage,
-    editorType: "dev",
-    loadAllPagesAsync: async () => {
-      throw new Error("styles must not call loadAllPagesAsync")
-    },
-    getNodeByIdAsync: async (id: string) => {
-      if (nodes.has(id)) return nodes.get(id)
-      return pages.find((item) => item.id === id) ?? null
-    },
-    getLocalPaintStylesAsync: async () => {
-      if (options.forbidLocal) throw new Error("local paint styles forbidden")
-      localCalls.push("paint")
-      return options.local?.paint ?? []
-    },
-    getLocalTextStylesAsync: async () => {
-      if (options.forbidLocal) throw new Error("local text styles forbidden")
-      localCalls.push("text")
-      return options.local?.text ?? []
-    },
-    getLocalEffectStylesAsync: async () => {
-      if (options.forbidLocal) throw new Error("local effect styles forbidden")
-      localCalls.push("effect")
-      return options.local?.effect ?? []
-    },
-    getLocalGridStylesAsync: async () => {
-      if (options.forbidLocal) throw new Error("local grid styles forbidden")
-      localCalls.push("grid")
-      return options.local?.grid ?? []
-    },
-    getStyleByIdAsync: async (id: string) => {
-      if (options.forbidGetStyle) throw new Error("getStyleByIdAsync forbidden")
-      styleLookups.push(id)
-      return styles.get(id) ?? null
-    },
-  }
-  ;(globalThis as typeof globalThis & { figma: unknown }).figma = api
-  return { currentPage: options.currentPage, localCalls, styleLookups }
-}
-
 describe("get_styles", () => {
   beforeEach(() => {
     installFigma({ currentPage: page("0:2", "Current") })
@@ -180,6 +117,13 @@ describe("get_styles", () => {
     const result = await getStyles({ source: "local" })
 
     expect(localCalls).toEqual(["paint", "text", "effect", "grid"])
+    // Restates the claim; it does not enforce it. `forbidGetStyle` installs
+    // `getStyleByIdAsync` as a thrower, so a local read that touched it would
+    // blow this test up before reaching here — and this recorder, which only
+    // the non-forbidding reader ever pushes to, could not have caught it
+    // either way. The thrower is the tripwire; this line documents what it
+    // guards. (Verified: injecting `figma.getStyleByIdAsync?.("MUTANT")` into
+    // `emitLocal` fails this test via the thrower, not via this assertion.)
     expect(styleLookups).toEqual([])
     expect(result.truncated).toBe(false)
     expect(result.observation.startedAt).toMatch(/Z$/)
@@ -316,7 +260,7 @@ describe("get_styles", () => {
     })
     const requested = page("0:1", "Requested", [root])
     const current = page("0:2", "Current")
-    const { currentPage, localCalls, styleLookups } = installFigma({
+    const { localCalls, styleLookups } = installFigma({
       currentPage: current,
       pages: [requested, current],
       nodes: new Map<string, unknown>([[requested.id, requested]]),
@@ -335,7 +279,27 @@ describe("get_styles", () => {
       selector: { pageId: requested.id },
     })
 
-    expect(currentPage).toBe(current)
+    // Was `toBe(current)` against the harness's returned `currentPage`
+    // channel. That channel is an install-time snapshot (`installFigma`
+    // returns `currentPage: current` once, at setup, before `getStyles` ever
+    // runs) — it has no way to observe a later switch, so comparing it
+    // cannot fail no matter what the code under test does. Reading the live
+    // host's `figma.currentPage` is what actually checks that requesting an
+    // explicit page's styles didn't move the current page away from
+    // `current`; verified by injecting a current-page switch into
+    // `loadPageIfNeeded` and confirming this assertion (and only this
+    // form) catches it.
+    expect(
+      (
+        globalThis as typeof globalThis & {
+          figma: { currentPage: { id: unknown } }
+        }
+      ).figma.currentPage.id,
+    ).toBe(current.id)
+    // Same shape as the note at the `styleLookups` assertion above:
+    // `forbidLocal` installs the four `getLocal*StylesAsync` readers as
+    // throwers, so a referenced read that enumerated local styles fails here
+    // loudly. This line records the intent; the throwers enforce it.
     expect(localCalls).toEqual([])
     expect(styleLookups).toEqual([
       "S:fill",
@@ -424,10 +388,19 @@ describe("get_styles", () => {
 
     expect(loaded).toBe(1)
     expect(result.styles.map((style) => style.id)).toEqual(["S:fill"])
+    // Was `toBe(current)`: same cause as above, on the installed host's
+    // channel rather than the returned one. The harness wraps `current`
+    // (it carries `loadAsync`) in a proxy, so `figma.currentPage` is no
+    // longer the exact fixture even though it is still the current page.
+    // Comparing `.id` checks the thing the test cares about: loading the
+    // explicit page did not change which page is current.
     expect(
-      (globalThis as typeof globalThis & { figma: { currentPage: unknown } })
-        .figma.currentPage,
-    ).toBe(current)
+      (
+        globalThis as typeof globalThis & {
+          figma: { currentPage: { id: unknown } }
+        }
+      ).figma.currentPage.id,
+    ).toBe(current.id)
   })
 
   test("fails missing explicit roots without falling back to the current page", async () => {
@@ -460,11 +433,15 @@ describe("get_styles", () => {
   })
 
   test("fails when required style APIs are unavailable", async () => {
-    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
-      root: { name: "Checkout flow", children: [] },
+    // `omit*`, not `forbid*`: this is the one styles test whose subject *is*
+    // the missing-capability path, so the readers have to be genuinely absent
+    // for production's `=== undefined` checks to reach CAPABILITY_UNAVAILABLE.
+    // `forbid*` installs throwers, which are present and would blow up here.
+    installFigma({
       currentPage: page("0:1", "Page 1"),
-      editorType: "dev",
-    }
+      omitLocal: true,
+      omitGetStyle: true,
+    })
 
     await expect(getStyles({ source: "local" })).rejects.toMatchObject({
       code: "CAPABILITY_UNAVAILABLE",
@@ -500,9 +477,8 @@ describe("get_styles", () => {
   })
 
   test("skips mixed style ids and does not look up the string mixed", async () => {
-    const mixed = Symbol("figma.mixed")
     const card = node("1:1", "Card", {
-      fillStyleId: mixed,
+      fillStyleId: FIGMA_MIXED,
       strokeStyleId: "mixed",
       textStyleId: "S:text",
     })
@@ -511,9 +487,6 @@ describe("get_styles", () => {
       nodes: new Map([[card.id, card]]),
       styles: new Map([["S:text", textStyle("S:text", "Body")]]),
     })
-    ;(
-      globalThis as typeof globalThis & { figma: { mixed: unknown } }
-    ).figma.mixed = mixed
 
     const result = await getStyles({
       source: "referenced",
@@ -524,20 +497,19 @@ describe("get_styles", () => {
   })
 
   test("collects mixed text style ids from styled segments", async () => {
-    const mixed = Symbol("figma.mixed")
     const text = {
       id: "2:1",
       name: "Label",
       type: "TEXT",
       visible: true,
       children: [],
-      fillStyleId: mixed,
-      textStyleId: mixed,
+      fillStyleId: FIGMA_MIXED,
+      textStyleId: FIGMA_MIXED,
       getStyledTextSegments: (fields: string[]) => {
         expect(fields).toEqual(["textStyleId", "fillStyleId"])
         return [
           { textStyleId: "S:range", fillStyleId: "S:fill" },
-          { textStyleId: mixed, fillStyleId: "S:fill" },
+          { textStyleId: FIGMA_MIXED, fillStyleId: "S:fill" },
         ]
       },
     }
@@ -549,9 +521,6 @@ describe("get_styles", () => {
         ["S:fill", paintStyle("S:fill", "Fill")],
       ]),
     })
-    ;(
-      globalThis as typeof globalThis & { figma: { mixed: unknown } }
-    ).figma.mixed = mixed
 
     const result = await getStyles({
       source: "referenced",

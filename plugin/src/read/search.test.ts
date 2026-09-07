@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 
+import { installFigma } from "../../tests/figma-harness"
 import { LocalCancellationController } from "../main/cancellation"
 import { PluginReadError } from "./navigation"
 import {
@@ -31,37 +32,6 @@ const node = (
   children: [],
   ...extras,
 })
-
-function installFigma(options: {
-  currentPage: Record<string, unknown>
-  pages?: Record<string, unknown>[]
-  nodes?: Map<string, unknown>
-  getNodeByIdAsync?: (id: string) => Promise<unknown>
-}): { currentPage: Record<string, unknown>; lookedUp: string[] } {
-  const lookedUp: string[] = []
-  const pages = options.pages ?? [options.currentPage]
-  const nodes = options.nodes ?? new Map()
-  const api = {
-    root: { name: "Checkout flow", children: pages },
-    currentPage: options.currentPage,
-    editorType: "dev",
-    loadAllPagesAsync: async () => {
-      throw new Error("search must not call loadAllPagesAsync")
-    },
-    loadFontAsync: async () => {
-      throw new Error("search must not load fonts")
-    },
-    getNodeByIdAsync:
-      options.getNodeByIdAsync ??
-      (async (id: string) => {
-        lookedUp.push(id)
-        if (nodes.has(id)) return nodes.get(id)
-        return pages.find((item) => item.id === id) ?? null
-      }),
-  }
-  ;(globalThis as typeof globalThis & { figma: unknown }).figma = api
-  return { currentPage: options.currentPage, lookedUp }
-}
 
 describe("search predicate", () => {
   test("requires query or types, trims them, and keeps match mode", () => {
@@ -283,7 +253,7 @@ describe("search_nodes handler", () => {
     const current = page("0:2", "Current", [node("9:9", "Card", "FRAME")])
     Object.assign(leaf, { parent: child })
     Object.assign(child, { parent: requested })
-    const { currentPage } = installFigma({
+    installFigma({
       currentPage: current,
       pages: [requested, current],
     })
@@ -299,7 +269,25 @@ describe("search_nodes handler", () => {
     expect(result.matches[0]?.reasons).toEqual(["name"])
     expect(result.truncated).toBe(false)
     expect(result.observation.startedAt).toMatch(/Z$/)
-    expect(currentPage).toBe(current)
+    // Was `toBe(current)` against the harness's returned `currentPage`
+    // channel. That channel is an install-time snapshot — `installFigma`
+    // returns `currentPage: current` once, at setup, before `searchNodes`
+    // ever runs — so it cannot observe a later switch and the comparison
+    // cannot fail regardless of what the code under test does. (The old
+    // fake's `currentPage: options.currentPage` return proved nothing here
+    // either, for the same reason; the migration inherited a tautology
+    // rather than introducing one.) Reading the live host's
+    // `figma.currentPage` is what actually checks that searching an
+    // explicit page didn't switch the current page away from `current`;
+    // verified by injecting a current-page switch into `loadPageIfNeeded`
+    // and confirming this form catches it.
+    expect(
+      (
+        globalThis as typeof globalThis & {
+          figma: { currentPage: { id: unknown } }
+        }
+      ).figma.currentPage.id,
+    ).toBe(current.id)
   })
 
   test("searches one explicit node scope and loads a page node without widening", async () => {

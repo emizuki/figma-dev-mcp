@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 
+import { installFigma } from "../../tests/figma-harness"
 import { LocalCancellationController } from "../main/cancellation"
 import { PluginReadError } from "./navigation"
 import { getMotion } from "./motion"
@@ -50,70 +51,6 @@ function floatKeyframe(
     value: { type: "FLOAT", value },
     easing,
   }
-}
-
-function installFigma(options: {
-  currentPage: Record<string, unknown>
-  pages?: Record<string, unknown>[]
-  nodes?: Map<string, unknown>
-  motion?: unknown
-}): {
-  currentPage: Record<string, unknown>
-  loadedPages: string[]
-  catalogCalls: { count: number }
-} {
-  const loadedPages: string[] = []
-  const pages = (options.pages ?? [options.currentPage]).map((item) => {
-    const load = item.loadAsync
-    if (typeof load !== "function") return item
-    return {
-      ...item,
-      loadAsync: async () => {
-        loadedPages.push(String(item.id))
-        await load.call(item)
-      },
-    }
-  })
-  const nodes = options.nodes ?? new Map()
-  const current =
-    pages.find((item) => item.id === options.currentPage.id) ??
-    options.currentPage
-  const catalogCalls = { count: 0 }
-  const motion =
-    options.motion === undefined
-      ? {
-          figmaAnimationStyles: () => {
-            catalogCalls.count += 1
-            return [
-              {
-                styleId: "S:fade",
-                name: "Fade in",
-                description: "Catalog fade",
-                leftover: true,
-                props: {
-                  direction: "string",
-                  distance: "number",
-                },
-              },
-            ]
-          },
-        }
-      : options.motion
-  const api: Record<string, unknown> = {
-    root: { name: "Checkout flow", children: pages },
-    currentPage: current,
-    editorType: "dev",
-    loadAllPagesAsync: async () => {
-      throw new Error("motion must not load every page")
-    },
-    getNodeByIdAsync: async (id: string) => {
-      if (nodes.has(id)) return nodes.get(id)
-      return pages.find((item) => item.id === id) ?? null
-    },
-  }
-  if (motion !== false) api.motion = motion
-  ;(globalThis as typeof globalThis & { figma: unknown }).figma = api
-  return { currentPage: current, loadedPages, catalogCalls }
 }
 
 describe("get_motion", () => {
@@ -257,7 +194,7 @@ describe("get_motion", () => {
       },
       timelines: [{ id: "tl-1", duration: 0.4, leftover: true }],
     })
-    const { catalogCalls } = installFigma({
+    const { motionCatalogCalls } = installFigma({
       currentPage: page("0:2", "Current", [node]),
       nodes: new Map<string, unknown>([[String(node.id), node]]),
     })
@@ -266,7 +203,7 @@ describe("get_motion", () => {
       selector: { nodeId: "6:1" },
       includeAvailableStyles: true,
     })
-    expect(catalogCalls.count).toBe(1)
+    expect(motionCatalogCalls.count).toBe(1)
     expect(result.availableStyles).toEqual([
       {
         styleId: "S:fade",
@@ -573,7 +510,7 @@ describe("get_motion", () => {
 
   test("does not call figmaAnimationStyles when includeAvailableStyles is false", async () => {
     const node = motionNode("6:1")
-    const { catalogCalls } = installFigma({
+    const { motionCatalogCalls } = installFigma({
       currentPage: page("0:2", "Current", [node]),
       nodes: new Map<string, unknown>([[String(node.id), node]]),
     })
@@ -582,7 +519,7 @@ describe("get_motion", () => {
       selector: { nodeId: "6:1" },
       includeAvailableStyles: false,
     })
-    expect(catalogCalls.count).toBe(0)
+    expect(motionCatalogCalls.count).toBe(0)
     expect(result.availableStyles).toBeUndefined()
   })
 

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 
+import { installFigma } from "../../tests/figma-harness"
 import {
   LocalCancellationController,
   LocalCancellationError,
@@ -50,23 +51,6 @@ function exportNode(
     type: "FRAME",
     exportAsync: exporter,
   }
-}
-
-function installFigma(options: {
-  selection?: { id: string }[]
-  nodes?: Map<string, unknown>
-  ui?: { postMessage(message: unknown): void }
-}): { exports: Record<string, unknown>[] } {
-  const exports: Record<string, unknown>[] = []
-  const nodes = options.nodes ?? new Map()
-  ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
-    root: { name: "Checkout flow", children: [page("0:1", "Page 1")] },
-    currentPage: page("0:1", "Page 1", options.selection ?? []),
-    editorType: "dev",
-    getNodeByIdAsync: async (id: string) => nodes.get(id) ?? null,
-    ...(options.ui === undefined ? {} : { ui: options.ui }),
-  }
-  return { exports }
 }
 
 function parseScreenshotInput(input: Record<string, unknown>): unknown {
@@ -298,12 +282,7 @@ describe("get_screenshot export selection", () => {
       current.selection = []
       return new Uint8Array([4])
     })
-    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
-      root: { name: "Checkout flow", children: [current] },
-      currentPage: current,
-      editorType: "dev",
-      getNodeByIdAsync: async (id: string) => (id === "4:1" ? node : null),
-    }
+    installFigma({ currentPage: current, nodes: new Map([["4:1", node]]) })
     const result = await getScreenshot(
       { format: "png", selector: { selection: true } },
       undefined,
@@ -346,14 +325,11 @@ describe("get_screenshot export selection", () => {
   })
 
   test("maps a throwing screenshot lookup to NODE_NOT_FOUND", async () => {
-    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
-      root: { name: "Checkout flow", children: [page("0:1", "Page 1")] },
-      currentPage: page("0:1", "Page 1"),
-      editorType: "dev",
+    installFigma({
       getNodeByIdAsync: async () => {
         throw new Error("invalid node id")
       },
-    }
+    })
     const result = await getScreenshot(
       { format: "png", selector: { nodeId: "00:00000" } },
       undefined,
