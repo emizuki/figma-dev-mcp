@@ -253,7 +253,7 @@ describe("get_styles", () => {
     })
     const requested = page("0:1", "Requested", [root])
     const current = page("0:2", "Current")
-    const { currentPage, localCalls, styleLookups } = installFigma({
+    const { localCalls, styleLookups } = installFigma({
       currentPage: current,
       pages: [requested, current],
       nodes: new Map<string, unknown>([[requested.id, requested]]),
@@ -272,14 +272,23 @@ describe("get_styles", () => {
       selector: { pageId: requested.id },
     })
 
-    // Was `toBe(current)`: under the old fake, `currentPage` was the exact
-    // fixture object, so identity proved the current page hadn't been
-    // switched. The harness wraps any page carrying `loadAsync` in a proxy
-    // to track its load, so that identity no longer holds even when the
-    // current page is genuinely unchanged. Comparing `.id` checks what the
-    // test actually means: requesting an explicit page's styles didn't move
-    // the current page away from `current`.
-    expect(currentPage.id).toBe(current.id)
+    // Was `toBe(current)` against the harness's returned `currentPage`
+    // channel. That channel is an install-time snapshot (`installFigma`
+    // returns `currentPage: current` once, at setup, before `getStyles` ever
+    // runs) — it has no way to observe a later switch, so comparing it
+    // cannot fail no matter what the code under test does. Reading the live
+    // host's `figma.currentPage` is what actually checks that requesting an
+    // explicit page's styles didn't move the current page away from
+    // `current`; verified by injecting a current-page switch into
+    // `loadPageIfNeeded` and confirming this assertion (and only this
+    // form) catches it.
+    expect(
+      (
+        globalThis as typeof globalThis & {
+          figma: { currentPage: { id: unknown } }
+        }
+      ).figma.currentPage.id,
+    ).toBe(current.id)
     expect(localCalls).toEqual([])
     expect(styleLookups).toEqual([
       "S:fill",

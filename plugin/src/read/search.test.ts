@@ -253,7 +253,7 @@ describe("search_nodes handler", () => {
     const current = page("0:2", "Current", [node("9:9", "Card", "FRAME")])
     Object.assign(leaf, { parent: child })
     Object.assign(child, { parent: requested })
-    const { currentPage } = installFigma({
+    installFigma({
       currentPage: current,
       pages: [requested, current],
     })
@@ -269,14 +269,25 @@ describe("search_nodes handler", () => {
     expect(result.matches[0]?.reasons).toEqual(["name"])
     expect(result.truncated).toBe(false)
     expect(result.observation.startedAt).toMatch(/Z$/)
-    // Was `toBe(current)`: under the old fake, `page()` fixtures passed
-    // through untouched, so identity proved the current page hadn't moved.
-    // `page()` carries `loadAsync`, and the harness wraps any such page in a
-    // proxy to track its load, so identity no longer holds even when the
-    // current page is genuinely unchanged. Comparing `.id` checks what the
-    // test actually means: searching an explicit page didn't switch the
-    // current page away from `current`.
-    expect(currentPage.id).toBe(current.id)
+    // Was `toBe(current)` against the harness's returned `currentPage`
+    // channel. That channel is an install-time snapshot — `installFigma`
+    // returns `currentPage: current` once, at setup, before `searchNodes`
+    // ever runs — so it cannot observe a later switch and the comparison
+    // cannot fail regardless of what the code under test does. (The old
+    // fake's `currentPage: options.currentPage` return proved nothing here
+    // either, for the same reason; the migration inherited a tautology
+    // rather than introducing one.) Reading the live host's
+    // `figma.currentPage` is what actually checks that searching an
+    // explicit page didn't switch the current page away from `current`;
+    // verified by injecting a current-page switch into `loadPageIfNeeded`
+    // and confirming this form catches it.
+    expect(
+      (
+        globalThis as typeof globalThis & {
+          figma: { currentPage: { id: unknown } }
+        }
+      ).figma.currentPage.id,
+    ).toBe(current.id)
   })
 
   test("searches one explicit node scope and loads a page node without widening", async () => {

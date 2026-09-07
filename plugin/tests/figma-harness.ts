@@ -150,13 +150,26 @@ export function installFigma(options: FigmaHarnessOptions = {}): FigmaHarness {
 
   let current = pages.find((item) => item.id === requested.id) ?? requested
   if (options.pageChildren !== undefined || options.selection !== undefined) {
-    const overridden: Record<string, unknown> = { ...current }
-    if (options.pageChildren !== undefined) {
-      overridden.children = options.pageChildren
-    }
-    if (options.selection !== undefined) {
-      overridden.selection = options.selection
-    }
+    // A Proxy layered on `current`, not a spread: `current` may itself be a
+    // `wrapPage` proxy over a page with lazy getters, and spreading it here
+    // would read every one of its properties eagerly — the same defect just
+    // removed from `wrapPage`, reintroduced one call site later. Only
+    // `children` / `selection` are actually overridden; every other property
+    // (`loadAsync` included) forwards through `Reflect.get`, so nesting on
+    // top of an already-wrapped page keeps that page's own laziness and its
+    // `loadAsync` recording intact.
+    const base = current
+    const overridden: Record<string, unknown> = new Proxy(base, {
+      get(target, prop, receiver) {
+        if (prop === "children" && options.pageChildren !== undefined) {
+          return options.pageChildren
+        }
+        if (prop === "selection" && options.selection !== undefined) {
+          return options.selection
+        }
+        return Reflect.get(target, prop, receiver)
+      },
+    })
     const index = pages.indexOf(current)
     if (index >= 0) pages[index] = overridden
     // So a `nodes` hit on the caller's own current page yields the page the
