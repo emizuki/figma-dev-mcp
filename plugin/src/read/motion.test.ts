@@ -194,7 +194,7 @@ describe("get_motion", () => {
       },
       timelines: [{ id: "tl-1", duration: 0.4, leftover: true }],
     })
-    const { catalogCalls } = installFigma({
+    const { motionCatalogCalls } = installFigma({
       currentPage: page("0:2", "Current", [node]),
       nodes: new Map<string, unknown>([[String(node.id), node]]),
     })
@@ -203,7 +203,7 @@ describe("get_motion", () => {
       selector: { nodeId: "6:1" },
       includeAvailableStyles: true,
     })
-    expect(catalogCalls.count).toBe(1)
+    expect(motionCatalogCalls.count).toBe(1)
     expect(result.availableStyles).toEqual([
       {
         styleId: "S:fade",
@@ -510,7 +510,7 @@ describe("get_motion", () => {
 
   test("does not call figmaAnimationStyles when includeAvailableStyles is false", async () => {
     const node = motionNode("6:1")
-    const { catalogCalls } = installFigma({
+    const { motionCatalogCalls } = installFigma({
       currentPage: page("0:2", "Current", [node]),
       nodes: new Map<string, unknown>([[String(node.id), node]]),
     })
@@ -519,7 +519,7 @@ describe("get_motion", () => {
       selector: { nodeId: "6:1" },
       includeAvailableStyles: false,
     })
-    expect(catalogCalls.count).toBe(0)
+    expect(motionCatalogCalls.count).toBe(0)
     expect(result.availableStyles).toBeUndefined()
   })
 

@@ -1,6 +1,9 @@
 //! Read-only policy proof over source, catalog, and wire shapes.
 
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::{Component, Path, PathBuf},
+};
 
 use figma_dev_mcp_prompts::{RESOURCE_URI_PREFIX, resource_uri};
 use figma_dev_mcp_protocol::wire::{BrokerToPlugin, ReadOperation};
@@ -301,23 +304,104 @@ fn assigns_figma(source: &str) -> bool {
     })
 }
 
-/// True if `source` has an `import` line naming the shared harness module, as
-/// opposed to merely containing the string anywhere (a stale comment left
-/// behind by a migration away from it, for instance).
-fn imports_figma_harness(source: &str) -> bool {
-    source.lines().any(|line| {
-        let trimmed = line.trim_start();
-        trimmed.starts_with("import") && trimmed.contains("/tests/figma-harness\"")
-    })
+/// Strips the surrounding quotes from a module specifier sitting at the end
+/// of an import statement — the last quoted run in `statement`, with any
+/// trailing `;` and whitespace ignored. `None` if the statement does not end
+/// in a quoted specifier, which is how a statement spread over several lines
+/// reports "not finished yet".
+fn trailing_module_specifier(statement: &str) -> Option<&str> {
+    let statement = statement.trim_end().trim_end_matches(';').trim_end();
+    let quote = statement
+        .chars()
+        .next_back()
+        .filter(|ch| *ch == '"' || *ch == '\'')?;
+    let body = &statement[..statement.len() - quote.len_utf8()];
+    let open = body.rfind(quote)?;
+    Some(&body[open + quote.len_utf8()..])
+}
+
+/// Normalises a path lexically — no filesystem access, no symlink
+/// resolution — so `plugin/src/read/../../tests/figma-harness` collapses to
+/// `plugin/tests/figma-harness`.
+fn normalize_lexically(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    normalized
+}
+
+/// True if `source` imports the *shared* harness — the actual module at
+/// `plugin/tests/figma-harness.ts` — as opposed to merely mentioning the
+/// string somewhere (a stale comment left behind by a migration away from it,
+/// for instance) or importing some other module whose path happens to end the
+/// same way.
+///
+/// The specifier is resolved lexically against `directory`, the importing
+/// file's own directory, and compared to the harness's real location. A decoy
+/// at `plugin/src/read/tests/figma-harness.ts`, imported as
+/// `"./tests/figma-harness"`, therefore does *not* satisfy this — a suffix
+/// match would have accepted it.
+///
+/// Statements spread over several lines are handled: a line that opens an
+/// `import` without reaching its specifier is joined to the lines that follow
+/// until one ends in a quoted specifier, so the multi-line form Prettier
+/// produces once an import list grows is recognised.
+///
+/// Known limits, both of which fail *closed* — an unrecognised import reads
+/// as "does not import the harness", so the assertions below fire rather than
+/// pass quietly. Only relative specifiers are resolved: this repo configures
+/// no path aliases, so a bare-specifier or aliased import of the harness
+/// would not be recognised. And the statement must begin at the start of a
+/// line with the word `import`; `await import(...)` and
+/// `require("...")` are not.
+fn imports_figma_harness(source: &str, directory: &Path, root: &Path) -> bool {
+    let harness = root.join("plugin/tests/figma-harness");
+    let mut statement = String::new();
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if statement.is_empty() {
+            if !trimmed.starts_with("import") {
+                continue;
+            }
+            statement.push_str(trimmed);
+        } else {
+            statement.push(' ');
+            statement.push_str(trimmed);
+        }
+        let Some(specifier) = trailing_module_specifier(&statement) else {
+            // Not finished: either a still-open multi-line import, or a
+            // statement that ended without a specifier. Drop the latter so a
+            // malformed line cannot swallow the rest of the file.
+            if statement.trim_end().ends_with(';') {
+                statement.clear();
+            }
+            continue;
+        };
+        let resolved = specifier.starts_with('.')
+            && normalize_lexically(&directory.join(specifier)) == harness;
+        statement.clear();
+        if resolved {
+            return true;
+        }
+    }
+    false
 }
 
 const COMMON_TEST_PATH: &str = "plugin/src/read/common.test.ts";
 
 /// Read tests migrated onto the shared harness by this plan. Not exhaustive
-/// of every read test — see the exemptions below — but if the walk stops
-/// seeing one of these, something moved, was renamed, or was deleted, and the
-/// other assertions here would otherwise report success over whatever is
-/// left, `common.test.ts` included.
+/// of every read test — see the exemptions below — but each of these is held
+/// to two things: the walk must still reach it (if the walk stops seeing one,
+/// something moved, was renamed, or was deleted, and the other assertions
+/// here would otherwise report success over whatever is left, `common.test.ts`
+/// included), and it must import the shared harness, unconditionally.
 const HARNESS_MIGRATED_FILES: [&str; 9] = [
     "plugin/src/read/components.test.ts",
     "plugin/src/read/dev-mode.test.ts",
@@ -338,14 +422,36 @@ const HARNESS_MIGRATED_FILES: [&str; 9] = [
 /// read path needed — plus one documented exception below
 /// (`navigation.test.ts`).
 ///
-/// Whether a file installs a host at all is derived — `defines_install_figma`
-/// or `assigns_figma` — not listed, so a future test file that never touches
-/// `figma` needs no entry here and drops out on its own, while a future file
-/// that does install one and skips the harness is caught automatically
-/// instead of requiring someone to remember to add it to an exemption list.
-/// Known limit shared by both predicates: name- and syntax-matching, not
-/// parsing, so an unrecognised spelling of either can still slip through:
-/// `defines_install_figma`'s and `assigns_figma`'s doc comments say which.
+/// Two rules drive the import requirement, and they answer different
+/// questions — neither subsumes the other:
+///
+/// **Derived.** A file that installs a host textually — `defines_install_figma`
+/// or `assigns_figma` — must import the harness. Nothing is listed, so a
+/// future test file that never touches `figma` needs no entry here and drops
+/// out on its own, while a future file that *does* hand-roll a host and skips
+/// the harness is caught without anyone remembering to add it to a list.
+///
+/// **Unconditional.** Every path in `HARNESS_MIGRATED_FILES` must import the
+/// harness, whether or not it looks like it installs anything. The derived
+/// rule cannot carry this: after the migration none of the nine installs a
+/// host textually any more — they get one purely through the import — so
+/// `installs_a_host` is false for all of them and the derived rule never
+/// fires on the very files this test exists to pin. Without the unconditional
+/// rule, a migrated file could drift back off the harness by any route and
+/// stay green.
+///
+/// Known limits. Both predicates are name- and syntax-matching, not parsing,
+/// so an unrecognised spelling of either can still slip through:
+/// `defines_install_figma`'s and `assigns_figma`'s doc comments say which
+/// (`Object.assign(globalThis, { figma })` is one that does).
+/// Structurally: **the walk opens only `*.test.ts`**. A builder moved into a
+/// sibling module that is not a test file — `plugin/src/read/fake-host.ts`,
+/// say — is never read, so neither predicate can see it. That route is closed
+/// for the nine by the unconditional rule (dropping the harness import to
+/// take it is itself the failure), but a *new* `*.test.ts` file importing a
+/// hand-rolled builder from such a sibling is outside this test's reach.
+/// Resolving imports to decide whether a specifier reaches a host builder is
+/// a different, larger job than this scan does.
 ///
 /// Only two exact repo-relative paths are named. `COMMON_TEST_PATH` is the
 /// positive control below. `plugin/src/read/navigation.test.ts` installs its
@@ -359,14 +465,15 @@ const HARNESS_MIGRATED_FILES: [&str; 9] = [
 /// `plugin/src/read/**/navigation.test.ts` or `.../common.test.ts` does not
 /// inherit either exemption for free.
 ///
-/// This makes five assertions: the walk actually reaches `common.test.ts`
+/// This makes six assertions: the walk actually reaches `common.test.ts`
 /// (otherwise every check below could pass over an empty or renamed
 /// directory); it also reaches every file in `HARNESS_MIGRATED_FILES`
 /// (otherwise the first floor alone would still pass with only
 /// `common.test.ts` left); `common.test.ts` still defines its own host, so
 /// its exemption cannot rot into a dead branch that always passes; no other
-/// file defines its own builder; and every file that installs a host and
-/// is not named above imports the shared harness.
+/// file defines its own builder; every file in `HARNESS_MIGRATED_FILES`
+/// imports the shared harness; and every file that installs a host and is
+/// not named above imports it too.
 #[test]
 fn read_tests_share_one_figma_harness() {
     const NAMED_EXEMPT_FROM_HARNESS_IMPORT: [&str; 1] = ["plugin/src/read/navigation.test.ts"];
@@ -378,6 +485,7 @@ fn read_tests_share_one_figma_harness() {
     let mut common_test_defines_its_own_host = false;
     let mut own_builder_offenders = Vec::new();
     let mut missing_import_offenders = Vec::new();
+    let mut migrated_without_import_offenders = Vec::new();
 
     while let Some(directory) = pending.pop() {
         for entry in fs::read_dir(&directory).expect("read test directory is readable") {
@@ -411,10 +519,23 @@ fn read_tests_share_one_figma_harness() {
                 own_builder_offenders.push(relative.clone());
             }
 
+            let file_directory = path
+                .parent()
+                .expect("read test file has a parent directory")
+                .to_path_buf();
+            let imports_harness = imports_figma_harness(&source, &file_directory, &root);
+
+            // Unconditional: a migrated file must import the harness however
+            // it now gets its host. Nothing derived from the file's own text
+            // can stand in for this — see the doc comment above.
+            if HARNESS_MIGRATED_FILES.contains(&relative.as_str()) && !imports_harness {
+                migrated_without_import_offenders.push(relative.clone());
+            }
+
             let installs_a_host = defines_own_builder || assigns_figma(&source);
             if installs_a_host
                 && !NAMED_EXEMPT_FROM_HARNESS_IMPORT.contains(&relative.as_str())
-                && !imports_figma_harness(&source)
+                && !imports_harness
             {
                 missing_import_offenders.push(relative);
             }
@@ -422,6 +543,7 @@ fn read_tests_share_one_figma_harness() {
     }
     own_builder_offenders.sort();
     missing_import_offenders.sort();
+    migrated_without_import_offenders.sort();
 
     let missing_migrated_files: Vec<&str> = HARNESS_MIGRATED_FILES
         .into_iter()
@@ -450,6 +572,13 @@ fn read_tests_share_one_figma_harness() {
         own_builder_offenders.is_empty(),
         "these read tests define their own Figma builder instead of \
          importing plugin/tests/figma-harness: {own_builder_offenders:?}"
+    );
+    assert!(
+        migrated_without_import_offenders.is_empty(),
+        "these read tests were migrated onto the shared Figma harness \
+         (plugin/tests/figma-harness) and no longer import it, so they have \
+         drifted back onto a Figma model of their own: \
+         {migrated_without_import_offenders:?}"
     );
     assert!(
         missing_import_offenders.is_empty(),

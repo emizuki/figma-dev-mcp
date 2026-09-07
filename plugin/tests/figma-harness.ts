@@ -97,7 +97,12 @@ export interface FigmaHarness {
   styleLookups: string[]
   variableLookups: string[]
   collectionLookups: string[]
-  catalogCalls: { count: number }
+  /**
+   * Calls to `motion.figmaAnimationStyles()` — the Motion style catalog, not
+   * the font catalog `omitCatalog` controls. Nothing records that one; if a
+   * fonts test ever needs it, wire a recorder rather than reading this.
+   */
+  motionCatalogCalls: { count: number }
   categoryLoads: { count: number }
   localCalls: string[]
 }
@@ -169,7 +174,7 @@ export function installFigma(options: FigmaHarnessOptions = {}): FigmaHarness {
   const styleLookups: string[] = []
   const variableLookups: string[] = []
   const collectionLookups: string[] = []
-  const catalogCalls = { count: 0 }
+  const motionCatalogCalls = { count: 0 }
   const categoryLoads = { count: 0 }
   const localCalls: string[] = []
 
@@ -429,7 +434,7 @@ export function installFigma(options: FigmaHarnessOptions = {}): FigmaHarness {
     options.motion === undefined
       ? {
           figmaAnimationStyles: () => {
-            catalogCalls.count += 1
+            motionCatalogCalls.count += 1
             return [
               {
                 styleId: "S:fade",
@@ -457,7 +462,7 @@ export function installFigma(options: FigmaHarnessOptions = {}): FigmaHarness {
     styleLookups,
     variableLookups,
     collectionLookups,
-    catalogCalls,
+    motionCatalogCalls,
     categoryLoads,
     localCalls,
   }
