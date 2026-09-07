@@ -156,8 +156,270 @@ Two are worth ruling on first:
 
 ## plugin shared/validation.ts and shared/result-validation.ts
 
+A gap here means the plugin refuses a result it has just produced itself, so the
+session drops. Same consequence as the decoder above, from the other end of the
+wire.
+
+`result-validation.ts` is 2,884 lines, exports `parseU32` and `parseReadResult`,
+is imported by exactly one production file, and has no dedicated test file of
+its own. Its wall is `exact(value, label, required, optional)`, which refuses
+any key outside `required ∪ optional`. There are **129 `exact(` call sites**;
+**53 of them pass an `optional` list**, and those lists hold **116 (call site,
+optional field) pairs**.
+
+Those 116 pairs are the 116 groups, and the grouping is forced rather than
+chosen. A group is what one mutation answers, and deleting one name from one
+site's `optional` list refuses exactly the payloads carrying that field at that
+site — nothing wider, nothing narrower. Grouping by result family, as the plan
+suggested, would have hidden the main finding: `truncation` is thirteen separate
+entries in thirteen separate lists, and a mutation at one of them says nothing
+whatever about the other twelve.
+
+Every mutation below was applied to production code, built, measured, and
+reverted; the committed diff adds tests only. Baseline before this task:
+**400 pass / 0 fail / 1841 expect() calls / 25 files**. After: **413 pass /
+0 fail / 1854 expect() calls / 26 files**.
+
+**48 covered, 68 gaps, 0 not applicable.**
+
+Neither of Task 2's shapes transfers cleanly. The inclusive-ceiling class cannot
+arise at all: `exact()` is an allow-list, not a comparison, so there is no
+character to move. The duplicated-guard class does arise, and where it does it
+is stark — but it is not the majority. **47 of the 116 pairs are a field name
+that appears in more than one `optional` list; 30 of those 47 are gaps. The
+other 38 gaps are at a name that occurs exactly once.** The bulk of the finding
+is therefore simpler than Task 2's: whole result families — reactions, motion,
+dev-mode — have no acceptance coverage of their optional fields at all.
+
+### The single largest finding: `truncation`, thirteen times, never once pinned
+
+`truncation` is optional on every one of the thirteen result families, and each
+family names it in its own `exact()` call. All thirteen mutations stayed green.
+Not one half of this thirteen-way duplication was held by anything in the plugin
+suite, and Rust carries the field as `#[serde(default, skip_serializing_if =
+"Option::is_none")]` on all thirteen — so the two ends could have drifted
+silently in either direction. `parseTruncation`'s own three optional counters
+(`appliedDepth`, `visitedNodes`, `encodedBytes`) were likewise unpinned, which
+means a truncated response — the response the plugin sends precisely when a
+read hit a safety limit — was the least-tested shape in the file.
+
+### What the covered rows do and do not prove
+
+Some covered rows here are weaker than the covered rows in the Rust section
+above. Seven `… survive(s) the wire validator` tests in
+`plugin/src/read/serialize.test.ts` assert
+`expect(parseReadResult(…)).toBeDefined()` and nothing else — the whole test
+body is a serializer call and that one line. That is exactly the assertion Task
+2's review found insufficient: it goes red when the wall *refuses* the field,
+which is why those rows read covered, but it would pass unchanged if the parser
+accepted the field and then dropped it. Re-running all 48 covered mutations and
+recording which tests went red puts a number on it: **21 of the 48 covered rows
+were held by nothing but those seven tests.**
+
+The thirteen new tests therefore carry **all 116 optional fields**, not only the
+68 unpinned ones, and compare the whole parsed tree against the payload with
+`toEqual`. That re-run confirms it: every one of the 48 covered mutations turned
+a new test red as well, so every covered row above now has a survival assertion
+behind it too.
+
+### Where the new tests live
+
+In a new `plugin/src/shared/result-validation.test.ts`, not in
+`validation.test.ts`. The brief left this open until the gap count was known,
+and 68 gaps is well past a handful: thirteen tests about `parseReadResult`
+would have doubled a file that is about the transport envelope and the message
+tags. The module also had no test file of its own, which is part of what this
+section found.
+
+### The table
+
 | Accept path | Mutation | Suite result | Verdict | Test added |
 |---|---|---|---|---|
+| a batch item failure (`parseItemError`) carrying `id` is taken and the field survives | drop `"id"` from the `optional` list at `result-validation.ts:276` | 400 / 0 | **gap** | `a get_nodes result carrying every optional field survives parseReadResult` |
+| an unsafe SVG asset's rejection (`parseSvgRejection`) carrying `name` is taken and the field survives | drop `"name"` from the `optional` list at `result-validation.ts:306` | 399 / 1 | covered | — |
+| a tool error (`parseToolError`) carrying `items` is taken and the field survives | drop `"items"` from the `optional` list at `result-validation.ts:316` | 400 / 0 | **gap** | `a get_nodes result carrying every optional field survives parseReadResult` |
+| a truncation record (`parseTruncation`) carrying `appliedDepth` is taken and the field survives | drop `"appliedDepth"` from the `optional` list at `result-validation.ts:369` | 400 / 0 | **gap** | all thirteen `a get_… result carrying every optional field survives parseReadResult` tests |
+| a truncation record (`parseTruncation`) carrying `visitedNodes` is taken and the field survives | drop `"visitedNodes"` from the `optional` list at `result-validation.ts:369` | 400 / 0 | **gap** | all thirteen `a get_… result carrying every optional field survives parseReadResult` tests |
+| a truncation record (`parseTruncation`) carrying `encodedBytes` is taken and the field survives | drop `"encodedBytes"` from the `optional` list at `result-validation.ts:369` | 400 / 0 | **gap** | all thirteen `a get_… result carrying every optional field survives parseReadResult` tests |
+| the metadata capability set (`parseCapabilitySet`) carrying `annotations` is taken and the field survives | drop `"annotations"` from the `optional` list at `result-validation.ts:414` | 397 / 3 | covered | — |
+| the metadata capability set (`parseCapabilitySet`) carrying `devResources` is taken and the field survives | drop `"devResources"` from the `optional` list at `result-validation.ts:414` | 397 / 3 | covered | — |
+| the metadata capability set (`parseCapabilitySet`) carrying `motion` is taken and the field survives | drop `"motion"` from the `optional` list at `result-validation.ts:414` | 397 / 3 | covered | — |
+| the metadata capability set (`parseCapabilitySet`) carrying `svgStringExport` is taken and the field survives | drop `"svgStringExport"` from the `optional` list at `result-validation.ts:414` | 397 / 3 | covered | — |
+| the metadata capability set (`parseCapabilitySet`) carrying `variableCodeSyntax` is taken and the field survives | drop `"variableCodeSyntax"` from the `optional` list at `result-validation.ts:414` | 397 / 3 | covered | — |
+| a node's strokes (`parseStrokes`) carrying `weight` is taken and the field survives | drop `"weight"` from the `optional` list at `result-validation.ts:592` | 399 / 1 | covered | — |
+| a node's strokes (`parseStrokes`) carrying `align` is taken and the field survives | drop `"align"` from the `optional` list at `result-validation.ts:592` | 399 / 1 | covered | — |
+| a node's strokes (`parseStrokes`) carrying `dashPattern` is taken and the field survives | drop `"dashPattern"` from the `optional` list at `result-validation.ts:592` | 399 / 1 | covered | — |
+| a node's auto layout (`parseLayout`) carrying `primaryAlign` is taken and the field survives | drop `"primaryAlign"` from the `optional` list at `result-validation.ts:683` | 399 / 1 | covered | — |
+| a node's auto layout (`parseLayout`) carrying `counterAlign` is taken and the field survives | drop `"counterAlign"` from the `optional` list at `result-validation.ts:683` | 399 / 1 | covered | — |
+| a node's auto layout (`parseLayout`) carrying `wrap` is taken and the field survives | drop `"wrap"` from the `optional` list at `result-validation.ts:683` | 399 / 1 | covered | — |
+| a node's auto layout (`parseLayout`) carrying `counterAxisSpacing` is taken and the field survives | drop `"counterAxisSpacing"` from the `optional` list at `result-validation.ts:683` | 399 / 1 | covered | — |
+| a text style's line height (`parseLineHeight`) carrying `value` is taken and the field survives | drop `"value"` from the `optional` list at `result-validation.ts:747` | 398 / 2 | covered | — |
+| a text style (`parseTextStyle`) carrying `fontSize` is taken and the field survives | drop `"fontSize"` from the `optional` list at `result-validation.ts:777` | 397 / 3 | covered | — |
+| a text style (`parseTextStyle`) carrying `lineHeight` is taken and the field survives | drop `"lineHeight"` from the `optional` list at `result-validation.ts:777` | 397 / 3 | covered | — |
+| a text style (`parseTextStyle`) carrying `letterSpacing` is taken and the field survives | drop `"letterSpacing"` from the `optional` list at `result-validation.ts:777` | 397 / 3 | covered | — |
+| a text style (`parseTextStyle`) carrying `fontWeight` is taken and the field survives | drop `"fontWeight"` from the `optional` list at `result-validation.ts:777` | 399 / 1 | covered | — |
+| a text style (`parseTextStyle`) carrying `textDecoration` is taken and the field survives | drop `"textDecoration"` from the `optional` list at `result-validation.ts:777` | 399 / 1 | covered | — |
+| a text value (`parseTextValue`) carrying `alignHorizontal` is taken and the field survives | drop `"alignHorizontal"` from the `optional` list at `result-validation.ts:826` | 399 / 1 | covered | — |
+| a text value (`parseTextValue`) carrying `alignVertical` is taken and the field survives | drop `"alignVertical"` from the `optional` list at `result-validation.ts:826` | 399 / 1 | covered | — |
+| a text value (`parseTextValue`) carrying `autoResize` is taken and the field survives | drop `"autoResize"` from the `optional` list at `result-validation.ts:826` | 399 / 1 | covered | — |
+| a component/instance value (`parseComponentValue`) carrying `componentSetId` is taken and the field survives | drop `"componentSetId"` from the `optional` list at `result-validation.ts:907` | 399 / 1 | covered | — |
+| a node's geometry (`parseGeometry`) carrying `bounds` is taken and the field survives | drop `"bounds"` from the `optional` list at `result-validation.ts:960` | 384 / 16 | covered | — |
+| a style reference (`parseStyleReference`) carrying `name` is taken and the field survives | drop `"name"` from the `optional` list at `result-validation.ts:992` | 399 / 1 | covered | — |
+| a variable reference (`parseVariableReference`) carrying `name` is taken and the field survives | drop `"name"` from the `optional` list at `result-validation.ts:1010` | 399 / 1 | covered | — |
+| a node summary (`parseNodeSummary`) carrying `parentId` is taken and the field survives | drop `"parentId"` from the `optional` list at `result-validation.ts:1022` | 384 / 16 | covered | — |
+| a node summary (`parseNodeSummary`) carrying `childIds` is taken and the field survives | drop `"childIds"` from the `optional` list at `result-validation.ts:1022` | 400 / 0 | **gap** | `a get_selection result carrying every optional field survives parseReadResult` |
+| a node summary (`parseNodeSummary`) carrying `bounds` is taken and the field survives | drop `"bounds"` from the `optional` list at `result-validation.ts:1022` | 384 / 16 | covered | — |
+| compact node data (`parseCompactData`) carrying `geometry` is taken and the field survives | drop `"geometry"` from the `optional` list at `result-validation.ts:1050` | 398 / 2 | covered | — |
+| compact node data (`parseCompactData`) carrying `constraints` is taken and the field survives | drop `"constraints"` from the `optional` list at `result-validation.ts:1050` | 399 / 1 | covered | — |
+| compact node data (`parseCompactData`) carrying `autoLayout` is taken and the field survives | drop `"autoLayout"` from the `optional` list at `result-validation.ts:1050` | 399 / 1 | covered | — |
+| compact node data (`parseCompactData`) carrying `text` is taken and the field survives | drop `"text"` from the `optional` list at `result-validation.ts:1050` | 400 / 0 | **gap** | `a get_nodes result carrying every optional field survives parseReadResult` |
+| compact node data (`parseCompactData`) carrying `component` is taken and the field survives | drop `"component"` from the `optional` list at `result-validation.ts:1050` | 400 / 0 | **gap** | `a get_nodes result carrying every optional field survives parseReadResult` |
+| compact node data (`parseCompactData`) carrying `instance` is taken and the field survives | drop `"instance"` from the `optional` list at `result-validation.ts:1050` | 399 / 1 | covered | — |
+| full node data (`parseFullData`) carrying `geometry` is taken and the field survives | drop `"geometry"` from the `optional` list at `result-validation.ts:1090` | 385 / 15 | covered | — |
+| full node data (`parseFullData`) carrying `constraints` is taken and the field survives | drop `"constraints"` from the `optional` list at `result-validation.ts:1090` | 400 / 0 | **gap** | `a get_selection result carrying every optional field survives parseReadResult` |
+| full node data (`parseFullData`) carrying `autoLayout` is taken and the field survives | drop `"autoLayout"` from the `optional` list at `result-validation.ts:1090` | 400 / 0 | **gap** | `a get_selection result carrying every optional field survives parseReadResult` |
+| full node data (`parseFullData`) carrying `text` is taken and the field survives | drop `"text"` from the `optional` list at `result-validation.ts:1090` | 395 / 5 | covered | — |
+| full node data (`parseFullData`) carrying `component` is taken and the field survives | drop `"component"` from the `optional` list at `result-validation.ts:1090` | 400 / 0 | **gap** | `a get_selection result carrying every optional field survives parseReadResult` |
+| full node data (`parseFullData`) carrying `instance` is taken and the field survives | drop `"instance"` from the `optional` list at `result-validation.ts:1090` | 400 / 0 | **gap** | `a get_selection result carrying every optional field survives parseReadResult` |
+| full node data (`parseFullData`) carrying `strokes` is taken and the field survives | drop `"strokes"` from the `optional` list at `result-validation.ts:1090` | 399 / 1 | covered | — |
+| full node data (`parseFullData`) carrying `cornerRadius` is taken and the field survives | drop `"cornerRadius"` from the `optional` list at `result-validation.ts:1090` | 399 / 1 | covered | — |
+| full node data (`parseFullData`) carrying `cornerSmoothing` is taken and the field survives | drop `"cornerSmoothing"` from the `optional` list at `result-validation.ts:1090` | 399 / 1 | covered | — |
+| full node data (`parseFullData`) carrying `clipsContent` is taken and the field survives | drop `"clipsContent"` from the `optional` list at `result-validation.ts:1090` | 399 / 1 | covered | — |
+| full node data (`parseFullData`) carrying `blendMode` is taken and the field survives | drop `"blendMode"` from the `optional` list at `result-validation.ts:1090` | 399 / 1 | covered | — |
+| a design node (`parseDesignNode`) carrying `childrenTruncation` is taken and the field survives | drop `"childrenTruncation"` from the `optional` list at `result-validation.ts:1186` | 400 / 0 | **gap** | `a get_selection result carrying every optional field survives parseReadResult` |
+| the get_selection result (`parseSelectionResult`) carrying `truncation` is taken and the field survives | drop `"truncation"` from the `optional` list at `result-validation.ts:1314` | 400 / 0 | **gap** | `a get_selection result carrying every optional field survives parseReadResult` |
+| the get_selection result (`parseSelectionResult`) carrying `unresolved` is taken and the field survives | drop `"unresolved"` from the `optional` list at `result-validation.ts:1314` | 398 / 2 | covered | — |
+| the get_nodes result (`parseNodesResult`) carrying `truncation` is taken and the field survives | drop `"truncation"` from the `optional` list at `result-validation.ts:1362` | 400 / 0 | **gap** | `a get_nodes result carrying every optional field survives parseReadResult` |
+| the get_design_context result (`parseDesignContextResult`) carrying `truncation` is taken and the field survives | drop `"truncation"` from the `optional` list at `result-validation.ts:1413` | 400 / 0 | **gap** | `a get_design_context result carrying every optional field survives parseReadResult` |
+| the get_design_context result (`parseDesignContextResult`) carrying `unresolved` is taken and the field survives | drop `"unresolved"` from the `optional` list at `result-validation.ts:1413` | 399 / 1 | covered | — |
+| the file metadata (`parseFileMetadata`) carrying `key` is taken and the field survives | drop `"key"` from the `optional` list at `result-validation.ts:1461` | 397 / 3 | covered | — |
+| the get_metadata result (`parseMetadataResult`) carrying `truncation` is taken and the field survives | drop `"truncation"` from the `optional` list at `result-validation.ts:1480` | 400 / 0 | **gap** | `a get_metadata result carrying every optional field survives parseReadResult` |
+| the search_nodes result (`parseSearchResult`) carrying `truncation` is taken and the field survives | drop `"truncation"` from the `optional` list at `result-validation.ts:1522` | 400 / 0 | **gap** | `a search_nodes result carrying every optional field survives parseReadResult` |
+| the search_nodes result (`parseSearchResult`) carrying `nextCursor` is taken and the field survives | drop `"nextCursor"` from the `optional` list at `result-validation.ts:1522` | 399 / 1 | covered | — |
+| a **paint** style (`parseStyle`) carrying `description` is taken and the field survives | drop `"description"` from the `optional` list at `result-validation.ts:1564` | 399 / 1 | covered | — |
+| a **paint** style (`parseStyle`) carrying `remote` is taken and the field survives | drop `"remote"` from the `optional` list at `result-validation.ts:1564` | 399 / 1 | covered | — |
+| a **paint** style (`parseStyle`) carrying `key` is taken and the field survives | drop `"key"` from the `optional` list at `result-validation.ts:1564` | 399 / 1 | covered | — |
+| a **text** style (`parseStyle`) carrying `description` is taken and the field survives | drop `"description"` from the `optional` list at `result-validation.ts:1577` | 400 / 0 | **gap** | `a get_styles result carrying every optional field survives parseReadResult` |
+| an **effect** style (`parseStyle`) carrying `description` is taken and the field survives | drop `"description"` from the `optional` list at `result-validation.ts:1590` | 400 / 0 | **gap** | `a get_styles result carrying every optional field survives parseReadResult` |
+| a **grid** style (`parseStyle`) carrying `description` is taken and the field survives | drop `"description"` from the `optional` list at `result-validation.ts:1603` | 400 / 0 | **gap** | `a get_styles result carrying every optional field survives parseReadResult` |
+| the get_styles result (`parseStylesResult`) carrying `truncation` is taken and the field survives | drop `"truncation"` from the `optional` list at `result-validation.ts:1622` | 400 / 0 | **gap** | `a get_styles result carrying every optional field survives parseReadResult` |
+| a variable mode value (`parseVariableModeValue`) carrying `resolved` is taken and the field survives | drop `"resolved"` from the `optional` list at `result-validation.ts:1658` | 400 / 0 | **gap** | `a get_variables result carrying every optional field survives parseReadResult` |
+| a variable mode value (`parseVariableModeValue`) carrying `error` is taken and the field survives | drop `"error"` from the `optional` list at `result-validation.ts:1658` | 399 / 1 | covered | — |
+| the get_variables result (`parseVariablesResult`) carrying `truncation` is taken and the field survives | drop `"truncation"` from the `optional` list at `result-validation.ts:1732` | 400 / 0 | **gap** | `a get_variables result carrying every optional field survives parseReadResult` |
+| a documentation reference (`parseDocumentation`) carrying `label` is taken and the field survives | drop `"label"` from the `optional` list at `result-validation.ts:1755` | 400 / 0 | **gap** | `a get_components result carrying every optional field survives parseReadResult` |
+| a component property definition (`parsePropertyDefinition`) carrying `preferredValues` is taken and the field survives | drop `"preferredValues"` from the `optional` list at `result-validation.ts:1768` | 400 / 0 | **gap** | `a get_components result carrying every optional field survives parseReadResult` |
+| a component definition (`parseComponentDefinition`) carrying `componentSetId` is taken and the field survives | drop `"componentSetId"` from the `optional` list at `result-validation.ts:1807` | 400 / 0 | **gap** | `a get_components result carrying every optional field survives parseReadResult` |
+| a component definition (`parseComponentDefinition`) carrying `description` is taken and the field survives | drop `"description"` from the `optional` list at `result-validation.ts:1807` | 400 / 0 | **gap** | `a get_components result carrying every optional field survives parseReadResult` |
+| the get_components result (`parseComponentsResult`) carrying `truncation` is taken and the field survives | drop `"truncation"` from the `optional` list at `result-validation.ts:1854` | 400 / 0 | **gap** | `a get_components result carrying every optional field survives parseReadResult` |
+| the get_fonts result (`parseFontsResult`) carrying `truncation` is taken and the field survives | drop `"truncation"` from the `optional` list at `result-validation.ts:1905` | 400 / 0 | **gap** | `a get_fonts result carrying every optional field survives parseReadResult` |
+| an annotation (`parseAnnotation`) carrying `categoryId` is taken and the field survives | drop `"categoryId"` from the `optional` list at `result-validation.ts:1919` | 400 / 0 | **gap** | `a get_dev_mode_data result carrying every optional field survives parseReadResult` |
+| a dev-mode node (`parseDevModeNode`) carrying `description` is taken and the field survives | drop `"description"` from the `optional` list at `result-validation.ts:1949` | 400 / 0 | **gap** | `a get_dev_mode_data result carrying every optional field survives parseReadResult` |
+| a dev-mode node (`parseDevModeNode`) carrying `descriptionMarkdown` is taken and the field survives | drop `"descriptionMarkdown"` from the `optional` list at `result-validation.ts:1949` | 400 / 0 | **gap** | `a get_dev_mode_data result carrying every optional field survives parseReadResult` |
+| a dev-mode node (`parseDevModeNode`) carrying `ownerNodeId` is taken and the field survives | drop `"ownerNodeId"` from the `optional` list at `result-validation.ts:1949` | 400 / 0 | **gap** | `a get_dev_mode_data result carrying every optional field survives parseReadResult` |
+| a dev-mode node (`parseDevModeNode`) carrying `inheritedFromNodeId` is taken and the field survives | drop `"inheritedFromNodeId"` from the `optional` list at `result-validation.ts:1949` | 400 / 0 | **gap** | `a get_dev_mode_data result carrying every optional field survives parseReadResult` |
+| the get_dev_mode_data result (`parseDevModeResult`) carrying `truncation` is taken and the field survives | drop `"truncation"` from the `optional` list at `result-validation.ts:2004` | 400 / 0 | **gap** | `a get_dev_mode_data result carrying every optional field survives parseReadResult` |
+| a navigate-family reaction action (`parseReactionAction`) carrying `destinationId` is taken and the field survives | drop `"destinationId"` from the `optional` list at `result-validation.ts:2033` | 400 / 0 | **gap** | `a get_reactions result carrying every optional field survives parseReadResult` |
+| a setVariable reaction action (`parseReactionAction`) carrying `variableId` is taken and the field survives | drop `"variableId"` from the `optional` list at `result-validation.ts:2048` | 400 / 0 | **gap** | `a get_reactions result carrying every optional field survives parseReadResult` |
+| a setVariableMode reaction action (`parseReactionAction`) carrying `variableCollectionId` is taken and the field survives | drop `"variableCollectionId"` from the `optional` list at `result-validation.ts:2055` | 400 / 0 | **gap** | `a get_reactions result carrying every optional field survives parseReadResult` |
+| a setVariableMode reaction action (`parseReactionAction`) carrying `variableModeId` is taken and the field survives | drop `"variableModeId"` from the `optional` list at `result-validation.ts:2055` | 400 / 0 | **gap** | `a get_reactions result carrying every optional field survives parseReadResult` |
+| an updateMediaRuntime reaction action (`parseReactionAction`) carrying `destinationId` is taken and the field survives | drop `"destinationId"` from the `optional` list at `result-validation.ts:2076` | 400 / 0 | **gap** | `a get_reactions result carrying every optional field survives parseReadResult` |
+| an updateMediaRuntime reaction action (`parseReactionAction`) carrying `amountToSkip` is taken and the field survives | drop `"amountToSkip"` from the `optional` list at `result-validation.ts:2076` | 400 / 0 | **gap** | `a get_reactions result carrying every optional field survives parseReadResult` |
+| an updateMediaRuntime reaction action (`parseReactionAction`) carrying `newTimestamp` is taken and the field survives | drop `"newTimestamp"` from the `optional` list at `result-validation.ts:2076` | 400 / 0 | **gap** | `a get_reactions result carrying every optional field survives parseReadResult` |
+| a reaction overlay (`parseReactionOverlay`) carrying `relativePosition` is taken and the field survives | drop `"relativePosition"` from the `optional` list at `result-validation.ts:2143` | 400 / 0 | **gap** | `a get_reactions result carrying every optional field survives parseReadResult` |
+| a reaction overlay (`parseReactionOverlay`) carrying `positionType` is taken and the field survives | drop `"positionType"` from the `optional` list at `result-validation.ts:2143` | 400 / 0 | **gap** | `a get_reactions result carrying every optional field survives parseReadResult` |
+| a reaction overlay (`parseReactionOverlay`) carrying `background` is taken and the field survives | drop `"background"` from the `optional` list at `result-validation.ts:2143` | 400 / 0 | **gap** | `a get_reactions result carrying every optional field survives parseReadResult` |
+| a reaction overlay (`parseReactionOverlay`) carrying `backgroundInteraction` is taken and the field survives | drop `"backgroundInteraction"` from the `optional` list at `result-validation.ts:2143` | 400 / 0 | **gap** | `a get_reactions result carrying every optional field survives parseReadResult` |
+| a reaction (`parseReaction`) carrying `transitionId` is taken and the field survives | drop `"transitionId"` from the `optional` list at `result-validation.ts:2193` | 400 / 0 | **gap** | `a get_reactions result carrying every optional field survives parseReadResult` |
+| a reaction (`parseReaction`) carrying `transitionDuration` is taken and the field survives | drop `"transitionDuration"` from the `optional` list at `result-validation.ts:2193` | 400 / 0 | **gap** | `a get_reactions result carrying every optional field survives parseReadResult` |
+| a reaction (`parseReaction`) carrying `overlay` is taken and the field survives | drop `"overlay"` from the `optional` list at `result-validation.ts:2193` | 400 / 0 | **gap** | `a get_reactions result carrying every optional field survives parseReadResult` |
+| a reaction (`parseReaction`) carrying `timeout` is taken and the field survives | drop `"timeout"` from the `optional` list at `result-validation.ts:2193` | 400 / 0 | **gap** | `a get_reactions result carrying every optional field survives parseReadResult` |
+| a reaction (`parseReaction`) carrying `delay` is taken and the field survives | drop `"delay"` from the `optional` list at `result-validation.ts:2193` | 400 / 0 | **gap** | `a get_reactions result carrying every optional field survives parseReadResult` |
+| a reaction (`parseReaction`) carrying `keyCodes` is taken and the field survives | drop `"keyCodes"` from the `optional` list at `result-validation.ts:2193` | 400 / 0 | **gap** | `a get_reactions result carrying every optional field survives parseReadResult` |
+| a reaction (`parseReaction`) carrying `device` is taken and the field survives | drop `"device"` from the `optional` list at `result-validation.ts:2193` | 400 / 0 | **gap** | `a get_reactions result carrying every optional field survives parseReadResult` |
+| a reaction (`parseReaction`) carrying `mediaHitTime` is taken and the field survives | drop `"mediaHitTime"` from the `optional` list at `result-validation.ts:2193` | 400 / 0 | **gap** | `a get_reactions result carrying every optional field survives parseReadResult` |
+| the get_reactions result (`parseReactionsResult`) carrying `truncation` is taken and the field survives | drop `"truncation"` from the `optional` list at `result-validation.ts:2278` | 400 / 0 | **gap** | `a get_reactions result carrying every optional field survives parseReadResult` |
+| a motion easing (`parseMotionEasing`) carrying `easingFunctionCubicBezier` is taken and the field survives | drop `"easingFunctionCubicBezier"` from the `optional` list at `result-validation.ts:2335` | 400 / 0 | **gap** | `a get_motion result carrying every optional field survives parseReadResult` |
+| a motion easing (`parseMotionEasing`) carrying `easingFunctionSpring` is taken and the field survives | drop `"easingFunctionSpring"` from the `optional` list at `result-validation.ts:2335` | 400 / 0 | **gap** | `a get_motion result carrying every optional field survives parseReadResult` |
+| an indexedItem keyframe field (`parseKeyframeField`) carrying `field` is taken and the field survives | drop `"field"` from the `optional` list at `result-validation.ts:2490` | 400 / 0 | **gap** | `a get_motion result carrying every optional field survives parseReadResult` |
+| an indexedItem keyframe field (`parseKeyframeField`) carrying `propertyId` is taken and the field survives | drop `"propertyId"` from the `optional` list at `result-validation.ts:2490` | 400 / 0 | **gap** | `a get_motion result carrying every optional field survives parseReadResult` |
+| an applied animation style (`parseAppliedStyle`) carrying `duration` is taken and the field survives | drop `"duration"` from the `optional` list at `result-validation.ts:2563` | 400 / 0 | **gap** | `a get_motion result carrying every optional field survives parseReadResult` |
+| an applied animation style (`parseAppliedStyle`) carrying `timelineOffset` is taken and the field survives | drop `"timelineOffset"` from the `optional` list at `result-validation.ts:2563` | 400 / 0 | **gap** | `a get_motion result carrying every optional field survives parseReadResult` |
+| an applied animation style (`parseAppliedStyle`) carrying `props` is taken and the field survives | drop `"props"` from the `optional` list at `result-validation.ts:2563` | 400 / 0 | **gap** | `a get_motion result carrying every optional field survives parseReadResult` |
+| an available animation style (`parseAvailableStyle`) carrying `description` is taken and the field survives | drop `"description"` from the `optional` list at `result-validation.ts:2593` | 400 / 0 | **gap** | `a get_motion result carrying every optional field survives parseReadResult` |
+| an available animation style (`parseAvailableStyle`) carrying `props` is taken and the field survives | drop `"props"` from the `optional` list at `result-validation.ts:2593` | 400 / 0 | **gap** | `a get_motion result carrying every optional field survives parseReadResult` |
+| the get_motion result (`parseMotionResult`) carrying `availableStyles` is taken and the field survives | drop `"availableStyles"` from the `optional` list at `result-validation.ts:2684` | 400 / 0 | **gap** | `a get_motion result carrying every optional field survives parseReadResult` |
+| the get_motion result (`parseMotionResult`) carrying `truncation` is taken and the field survives | drop `"truncation"` from the `optional` list at `result-validation.ts:2684` | 400 / 0 | **gap** | `a get_motion result carrying every optional field survives parseReadResult` |
+| an SVG screenshot asset (`parseScreenshotAsset`) carrying `rejection` is taken and the field survives | drop `"rejection"` from the `optional` list at `result-validation.ts:2748` | 399 / 1 | covered | — |
+| the get_screenshot result (`parseScreenshotResult`) carrying `truncation` is taken and the field survives | drop `"truncation"` from the `optional` list at `result-validation.ts:2789` | 400 / 0 | **gap** | `a get_screenshot result carrying every optional field survives parseReadResult` |
+
+### Where the duplicated names split
+
+Forty-seven pairs are a name that appears in more than one `optional` list.
+Which halves are held, and which are not:
+
+| Optional name | Sites | Verdicts |
+|---|---|---|
+| `truncation` | 13 result families | **all 13 gaps** — no half pinned anywhere |
+| `description` | 4 style types, component definition, dev-mode node, available animation style | paint style covered; **6 gaps** |
+| `component` | compact and full node data | **both gaps** |
+| `props` | applied and available animation style | **both gaps** |
+| `destinationId` | navigate-family and updateMediaRuntime actions | **both gaps** |
+| `autoLayout`, `constraints`, `instance` | compact and full node data | compact covered, **full a gap** |
+| `text` | compact and full node data | **compact a gap**, full covered |
+| `componentSetId` | component value, component definition | component value covered, **definition a gap** |
+| `bounds`, `geometry`, `key`, `name`, `unresolved` | 2–3 sites each | every half covered |
+
+The `text` row is the one worth a second look. Compact and full node data share
+six optional names, but `text` does not hold the same thing in each: compact
+carries a `TextSummary` (`characterCount`, `preview`) and full carries a
+`TextValue`. The plugin's two parsers agree with Rust's `CompactNodeData` and
+`FullNodeData` on this, so it is not a defect — but it does mean the two lists
+are not interchangeable, and the suite happened to pin whichever half the other
+one did not.
+
+### Whole families with no acceptance coverage of their optionals
+
+Thirty-eight of the 68 gaps are at a name occurring exactly once in the file,
+and the gaps cluster by parser rather than scattering. Every optional field of
+`parseReaction` (8),
+`parseReactionOverlay` (4), the four `parseReactionAction` arms (7),
+`parseDevModeNode` (4), `parseAppliedStyle` (3), `parseAvailableStyle` (2),
+`parseMotionEasing` (2) and `parseKeyframeField` (2) came back green. The
+reactions, motion and dev-mode families reach `parseReadResult` in no test at
+all; their own suites (`reactions.test.ts`, `motion.test.ts`,
+`dev-mode.test.ts`) stop at the serializer and never put the result through the
+wall that would reject it in production.
+
+### No production defect found
+
+Every mutation here answered a coverage question, not a correctness one. The
+`optional` lists at the sites with the most gaps were checked by hand against
+their Rust counterparts — `Truncation`, `Reaction`, `ReactionOverlay`,
+`AppliedAnimationStyle`, `AvailableAnimationStyle`, `DevModeNodeData`,
+`CompactNodeData`, `FullNodeData` — and each names exactly the fields Rust marks
+`#[serde(default, skip_serializing_if = "Option::is_none")]`, with the same
+types. Nothing to report as a bug.
+
+### Verification
+
+Each of the 68 gaps was verified twice, with the new tests in place:
+
+1. **Its own delete mutation re-applied.** Across all 68, the failing tests were
+   new tests and only new tests: one test where the field sits at a single
+   family's call site, thirteen for the three `parseTruncation` counters every
+   family's payload carries, four for `childIds` (the four payloads holding a
+   node summary), three for `childrenTruncation` (the three node-forest
+   payloads). No pre-existing test went red for any of them.
+2. **An accept-then-discard mutation**, one per distinct gap field name — 48 of
+   them: a clause added to `exact()` that leaves the allow-list untouched, so
+   nothing is refused, and strips that key from the record it hands back, so the
+   caller copies nothing. This is the mutation a `toBeDefined()` assertion
+   cannot see. All 48 turned a new test red. Three of them also caught a
+   pre-existing test, which is the short list of tests in this repository that
+   already assert a node-data optional *survives* rather than merely parses:
+   `accepts exact concrete payloads for all 13 Rust result families`,
+   `resolves instance compact data via getMainComponentAsync under dynamic-page`,
+   and the four `round-trips through the wire validator` line-height tests.
 
 ## tests/integration
 
