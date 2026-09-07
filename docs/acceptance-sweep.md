@@ -36,21 +36,37 @@ Counts are regex-dependent and are a starting point, not an authority.
 ## tests/contracts and crates/protocol
 
 The 23 refusal-named tests in `tests/contracts/mod.rs`, plus `allocation.rs` and
-`response_accounting.rs`, group into 22 accept paths — a group being what one
-mutation answers. Every mutation below was applied to production code, measured,
-and reverted; the committed diff adds tests only. Baseline before this task:
-**255 passed / 0 failed**. After: **259 passed / 0 failed**.
+`response_accounting.rs`, group into 23 accept paths — a group being what one
+mutation answers. (22 at first pass; the 23rd is the `read_frame` row below,
+split out once review showed the envelope guard has two readers and only one was
+pinned.) Every mutation below was applied to production code, measured, and
+reverted; the committed diff adds tests only. Baseline before this task:
+**255 passed / 0 failed**. After: **260 passed / 0 failed**.
 
 The worked example the plan cites — renaming `unresolved` so the decoder no
 longer recognises the wire key — is row 1, and it comes back **covered**: the
 fix for that defect landed with `the_forest_results_decode_an_unresolved_entry_and_keep_it`,
 which is exactly the test the brief proposed writing. It is redundant now.
 
-All four gaps are the same shape, and it is not the shape the plan expected: not
-a renamed wire key, but an **inclusive ceiling turned exclusive**. Every one is a
-single character. In each case the refusal at `limit + 1` was pinned and the
-acceptance at `limit` was not, so the suite could not tell an inclusive ceiling
-from an exclusive one — and `limit` is the one value each ceiling exists to admit.
+Five gaps, and none is the shape the plan expected — not one is a renamed wire
+key.
+
+Four of the five are one class: an **inclusive ceiling turned exclusive**, a
+single character each. In every one the refusal at `limit + 1` was pinned and
+the acceptance at `limit` was not, so the suite could not tell an inclusive
+ceiling from an exclusive one — and `limit` is the one value each ceiling exists
+to admit. That is the dominant shape here and the one to look for elsewhere.
+
+The fifth breaks the class, and is the more interesting finding. `read_frame`
+is a **second reader of a guard already pinned through `decode_frame`**: the
+comparison is not wrong at all, and no character of it changed. What was missing
+was any test of the other consumer. It also fails differently — `decode_frame`
+works on a slice that already holds the whole frame, so a short read there is
+invisible, while `read_frame` pulls from a stream and the bytes it leaves behind
+are the next frame's length prefix. Same guard, same value, one reader tested,
+and the untested one desynchronises the connection rather than refusing a call.
+The duplicated-guard sub-table at the end of this section is what that finding
+opened up.
 
 | Accept path | Mutation | Suite result | Verdict | Test added |
 |---|---|---|---|---|
@@ -106,11 +122,14 @@ enforced in two independent places, with the suite pinning only one of them:
   under-read is invisible) **and** by `read_frame` (the wire path, where it
   desynchronises the stream).
 
-Two instances is a pattern, so the protocol crate was swept for the rest. Every
-bounded collection here enforces its ceiling twice — once in a `TryFrom` that
-builds outbound values, once in a `Deserialize` that reads inbound ones — and
-the decode half is pinned far more often than the builder half. The remaining
-sites, measured but **not fixed** (reported for a ruling on scope):
+Two instances is a pattern, so the protocol crate was swept for the rest. Most
+bounded values here enforce their ceiling in more than one place — usually a
+`TryFrom` that builds outbound values paired with a `Deserialize` that reads
+inbound ones — and the decode half is pinned far more often than the builder
+half. Not all of them are pairs: `deferred.rs` carries three checks of the
+envelope ceiling and no matching decode counterpart at all, so "twice" is the
+common case rather than the rule. The remaining sites, measured but **not
+fixed** (reported for a ruling on scope):
 
 | Accept path | Mutation | Suite result | Verdict | Test added |
 |---|---|---|---|---|
@@ -121,11 +140,19 @@ sites, measured but **not fixed** (reported for a ruling on scope):
 | An error item list of exactly `MAX_INPUT_IDS` items is accepted, **decoded** | `error.rs` `ErrorItemListVisitor`: `while items.len() < MAX_INPUT_IDS` → `+ 1 <` | 260 / 0 | **gap** — this pair has *neither* half pinned | none — reported, not fixed |
 | A deferred JSON payload of exactly `MAX_ENVELOPE_BYTES` is accepted | `deferred.rs`: all three `> MAX_ENVELOPE_BYTES` → `>=` (lines 38, 65, 79) | 260 / 0 | **gap** — a third, independent implementation of the envelope ceiling | none — reported, not fixed |
 | A node whose children fill the remaining node budget exactly is accepted | `validate_node`: `node.children.len() > MAX_RETURNED_NODES - *count` → `>=` | 259 / 1 | covered — `outbound_node_collections_reject_wide_roots_and_children_without_auxiliary_growth` | — |
+| A `NodeIdList` / `PageIdList` / `NodeTypeList` **built** at exactly its ceiling is accepted | `bounded_list_newtype!`'s `TryFrom` (`common.rs:446`): `values.len() > $maximum` → `>=` | 260 / 0 | **gap** — the decode half is in the main table above, the builder half is in neither | none — reported, not fixed |
 
-Seven further comparison sites, five of them unpinned. The `error.rs` item list
-is the one worth flagging: it is the only pair where **neither** half is pinned,
-and `deferred.rs` is the only place where the envelope ceiling has a third
-implementation that `validate_body_length` knows nothing about.
+**Eight groups, six of them unpinned.** Counted by comparison site rather than by
+group it is ten, because the `deferred.rs` row bundles three separate checks that
+were mutated together.
+
+Two are worth ruling on first:
+
+- **`error.rs`'s item list is the only pair where neither half is pinned.**
+  Every other bound in the crate has at least one side held.
+- **`deferred.rs` is not a pair at all.** It holds a third, independent
+  implementation of the envelope ceiling that `validate_body_length` knows
+  nothing about, and nothing in the suite touches any of its three checks.
 
 ## plugin shared/validation.ts and shared/result-validation.ts
 

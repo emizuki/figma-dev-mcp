@@ -2329,9 +2329,34 @@ fn outbound_node_collections_reject_wide_roots_and_children_without_auxiliary_gr
 /// that kept the depth and set `childrenTruncated` on the deepest level, which
 /// tells the caller their tree was cut off when it was not. Only comparing what
 /// came back to what went in rules out both, and everything else of that shape.
+///
+/// The ceiling level holds two siblings, one reporting truncation and one not,
+/// because a fixture where every node at the ceiling agrees can only see the
+/// flag move one way. Of the two directions the cleared one is worse — it tells
+/// the caller the tree is complete when it was in fact cut, and the caller has
+/// no way to notice — but a fixture that pins only that direction is as partial
+/// as one that pins only the other. Both are reachable here.
 #[test]
 fn the_outbound_node_builder_accepts_a_tree_at_exactly_the_depth_ceiling() {
-    let fixture = nested_detail_node("minimal", MAX_DEPTH);
+    let fixture = {
+        // A walk stopped by the depth limit reports it; a branch that simply
+        // ended does not. Both sit at exactly MAX_DEPTH.
+        let mut cut_off = detail_node_fixture("minimal");
+        cut_off["childrenTruncated"] = json!(true);
+        cut_off["childrenTruncation"] = json!({
+            "reason": "depthLimit", "appliedDepth": MAX_DEPTH
+        });
+        let complete = detail_node_fixture("minimal");
+
+        let mut node = detail_node_fixture("minimal");
+        node["children"] = json!([cut_off, complete]);
+        for _ in 0..MAX_DEPTH - 1 {
+            let mut parent = detail_node_fixture("minimal");
+            parent["children"] = json!([node]);
+            node = parent;
+        }
+        node
+    };
     let at_ceiling: DesignNode<MinimalNodeDetails> =
         serde_json::from_value(fixture.clone()).expect("a tree at the depth ceiling decodes");
     let forest = NodeForest::try_from(vec![at_ceiling])
