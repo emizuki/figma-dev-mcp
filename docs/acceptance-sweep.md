@@ -62,7 +62,8 @@ from an exclusive one — and `limit` is the one value each ceiling exists to ad
 | An outbound forest of exactly `MAX_RETURNED_NODES` nodes is built | `validate_node`: `*count > MAX_RETURNED_NODES` → `>=` | 254 / 1 | covered — `outbound_node_collections_reject_wide_roots_and_children_without_auxiliary_growth` | — |
 | An outbound tree at exactly `MAX_DEPTH` is built | `validate_node`: `depth > MAX_DEPTH` → `>=` | 255 / 0 | **gap** | `the_outbound_node_builder_accepts_a_tree_at_exactly_the_depth_ceiling` |
 | An input asking for `depth: MAX_DEPTH` decodes at the boundary | `deserialize_optional_depth`: `depth > MAX_DEPTH` → `>=` | 255 / 0 | **gap** | `an_input_asking_for_exactly_the_maximum_depth_is_accepted` |
-| A frame declaring exactly `MAX_ENVELOPE_BYTES` gets past the length check | `validate_body_length`: `length > MAX_ENVELOPE_BYTES` → `>=` | 255 / 0 | **gap** | `a_frame_declaring_exactly_the_envelope_ceiling_is_not_refused_for_its_size` |
+| A frame declaring exactly `MAX_ENVELOPE_BYTES` gets past the length check **in `decode_frame`** | `validate_body_length`: `length > MAX_ENVELOPE_BYTES` → `>=` | 255 / 0 | **gap** | `a_frame_declaring_exactly_the_envelope_ceiling_is_not_refused_for_its_size` |
+| The same ceiling **in `read_frame`**, and the frame consumed exactly — the wire path, a second reader of the same guard | the same clamp applied in `read_frame` (`rpc.rs`), which `decode_frame`'s test cannot see | 259 / 0 | **gap** | `the_wire_read_path_takes_a_ceiling_frame_and_consumes_exactly_it` |
 | A `FrontendToLeader` frame's `rpcRequestId` decodes | rename the `RpcRequestId` arm of `FrontendMessageField` (`rpc.rs`) | 238 / 17 | covered — `unknown_fields_are_rejected_at_nested_boundaries` and 16 more | — |
 | A node's optional `childrenTruncation` decodes and survives | rename the `ChildrenTruncation` arm of `DesignNodeField` | 252 / 3 | covered — `minimal_results_preserve_recursive_depth_and_reject_flat_summaries` and 2 more | — |
 | A result's optional `truncation` decodes and survives | rename the `Truncation` arm in both `impl_detail_result_deserialize!` arms | 254 / 1 | covered — `both_detail_result_macro_arms_agree_on_every_shared_field` | — |
@@ -77,9 +78,54 @@ from an exclusive one — and `limit` is the one value each ceiling exists to ad
 | `NODE_NOT_VISIBLE` round-trips as a wire code | rename the `NodeNotVisible` serde tag (`error.rs`) | 250 / 5 | covered — `a_hidden_node_is_refused_by_name_rather_than_reported_missing` and 4 more | — |
 | A raster asset of exactly `MAX_RASTER_BASE64_BYTES` is returned whole | `content.rs`: `item.image_base64.len() <= MAX_RASTER_BASE64_BYTES` → `<` (both sites) | 255 / 0 | **gap** | `response_accounting::a_raster_asset_at_exactly_the_per_item_ceiling_is_returned_whole` |
 
-Totals: **18 covered, 4 gaps, 0 not applicable.** Each of the four new tests was
-verified by re-applying its own mutation: in every case that test — and only
-that test — went red (258 passed / 1 failed).
+Totals: **18 covered, 5 gaps, 0 not applicable.** Each new test was verified by
+re-applying its own mutation, and by a second mutation that *accepts* the
+boundary value and then drops or alters it — a test that only proves the value
+was not refused does not prove it survived. In every case that test, and only
+that test, went red.
+
+### Why the mutations are at the comparison, not the constant
+
+The plan suggests narrowing a bound in `crates/protocol/src/limits.rs`.
+`fixed_limits_match_the_reviewed_ceiling` asserts all 22 constants by value, so
+any edit there goes red for a reason that has nothing to do with the accept path
+being measured — it tells you the constant changed, not whether anything reads
+it correctly. Every ceiling mutation above therefore narrows the **comparison at
+the site that consumes the constant** instead. That is also the mutation that
+matches the real failure mode: nobody edits a reviewed constant by accident, and
+a `>` becoming a `>=` is one keystroke.
+
+### Duplicated guards: a decode half and a builder half
+
+Two of the five gaps above turned out to be the same structural fault — a bound
+enforced in two independent places, with the suite pinning only one of them:
+
+- `MAX_DEPTH` is checked in `DesignNodeListSeed` (decode, pinned) **and** in
+  `validate_node` (the outbound `TryFrom`, which was not).
+- `MAX_ENVELOPE_BYTES` is read by `decode_frame` (a slice, where a one-byte
+  under-read is invisible) **and** by `read_frame` (the wire path, where it
+  desynchronises the stream).
+
+Two instances is a pattern, so the protocol crate was swept for the rest. Every
+bounded collection here enforces its ceiling twice — once in a `TryFrom` that
+builds outbound values, once in a `Deserialize` that reads inbound ones — and
+the decode half is pinned far more often than the builder half. The remaining
+sites, measured but **not fixed** (reported for a ruling on scope):
+
+| Accept path | Mutation | Suite result | Verdict | Test added |
+|---|---|---|---|---|
+| A `ReturnedList` **built** from exactly `MAX_RETURNED_NODES` values is accepted | `ReturnedList::try_from`: `values.len() > MAX_RETURNED_NODES` → `>=` | 260 / 0 | **gap** — the decode half is pinned, the builder half is not | none — reported, not fixed |
+| A `NodeBatch` **built** from exactly `MAX_INPUT_IDS` items is accepted | `NodeBatch::try_from`: `items.len() > MAX_INPUT_IDS` → `>=` | 260 / 0 | **gap** — same split | none — reported, not fixed |
+| A `NodeBatch` **decoded** with exactly `MAX_INPUT_IDS` items is accepted | its visitor: `while items.len() < MAX_INPUT_IDS` → `+ 1 <` | 259 / 1 | covered — `recursive_results_enforce_depth_and_global_returned_node_budgets` | — |
+| An error item list of exactly `MAX_INPUT_IDS` items is accepted, **built** | `error.rs` `validate_item_count`: `count > MAX_INPUT_IDS` → `>=` | 260 / 0 | **gap** | none — reported, not fixed |
+| An error item list of exactly `MAX_INPUT_IDS` items is accepted, **decoded** | `error.rs` `ErrorItemListVisitor`: `while items.len() < MAX_INPUT_IDS` → `+ 1 <` | 260 / 0 | **gap** — this pair has *neither* half pinned | none — reported, not fixed |
+| A deferred JSON payload of exactly `MAX_ENVELOPE_BYTES` is accepted | `deferred.rs`: all three `> MAX_ENVELOPE_BYTES` → `>=` (lines 38, 65, 79) | 260 / 0 | **gap** — a third, independent implementation of the envelope ceiling | none — reported, not fixed |
+| A node whose children fill the remaining node budget exactly is accepted | `validate_node`: `node.children.len() > MAX_RETURNED_NODES - *count` → `>=` | 259 / 1 | covered — `outbound_node_collections_reject_wide_roots_and_children_without_auxiliary_growth` | — |
+
+Seven further comparison sites, five of them unpinned. The `error.rs` item list
+is the one worth flagging: it is the only pair where **neither** half is pinned,
+and `deferred.rs` is the only place where the envelope ceiling has a third
+implementation that `validate_body_length` knows nothing about.
 
 ## plugin shared/validation.ts and shared/result-validation.ts
 

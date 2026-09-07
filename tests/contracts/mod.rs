@@ -27,7 +27,9 @@ use figma_dev_mcp_protocol::{
         MAX_RASTER_DECODED_BYTES, MAX_RASTER_PIXELS, MAX_RASTER_SIDE, MAX_RETURNED_NODES,
         MAX_SVG_BYTES, MAX_TEXT_BYTES, MAX_VISITED_NODES, STALE_SESSION_SECS, TOTAL_TIMEOUT_SECS,
     },
-    rpc::{FrontendToLeader, LeaderToFrontend, RpcRequestId, decode_frame, encode_frame},
+    rpc::{
+        FrontendToLeader, LeaderToFrontend, RpcRequestId, decode_frame, encode_frame, read_frame,
+    },
     wire::{
         BrokerCall, BrokerToPlugin, Hello, PluginToBroker, ReadOperation, ReadResult, SelectionFlag,
     },
@@ -1005,6 +1007,50 @@ fn a_frame_declaring_exactly_the_envelope_ceiling_is_not_refused_for_its_size() 
         error.to_string().contains("exceeds"),
         "a frame one byte over the ceiling must still be refused, got: {error}"
     );
+}
+
+/// The same ceiling on the *wire* path, which is a second reader of the same
+/// guard and the one a real session runs on.
+///
+/// `decode_frame` takes a slice that already holds the whole frame, so a
+/// one-byte under-read there is invisible. `read_frame` pulls the body off a
+/// stream, and the bytes it leaves behind are the next frame's length prefix —
+/// so the same slip that is cosmetic in one path desynchronises the connection
+/// in the other, which drops the session rather than one call. Pinning one
+/// reader of a shared guard is not pinning the guard.
+///
+/// The frame is padded with trailing spaces, which JSON ignores, so the body
+/// reaches the ceiling without needing a payload that large. A second frame
+/// follows, and reading it is the assertion that matters: it is only reachable
+/// if the first read consumed exactly what it declared.
+#[test]
+fn the_wire_read_path_takes_a_ceiling_frame_and_consumes_exactly_it() {
+    let expected: FrontendToLeader = serde_json::from_value(json!({
+        "type": "cancel", "rpcRequestId": "rpc-1"
+    }))
+    .unwrap();
+
+    let mut body = serde_json::to_vec(&expected).unwrap();
+    assert!(body.len() < MAX_ENVELOPE_BYTES);
+    body.resize(MAX_ENVELOPE_BYTES, b' ');
+
+    let mut stream = (MAX_ENVELOPE_BYTES as u32).to_be_bytes().to_vec();
+    stream.extend_from_slice(&body);
+    stream.extend_from_slice(&encode_frame(&expected).unwrap());
+    let mut reader = Cursor::new(stream);
+
+    let first: FrontendToLeader =
+        read_frame(&mut reader).expect("a frame at exactly the envelope ceiling must be read");
+    assert_eq!(first, expected);
+    assert_eq!(
+        reader.position(),
+        (4 + MAX_ENVELOPE_BYTES) as u64,
+        "a ceiling frame must be consumed whole, or the next frame starts mid-prefix"
+    );
+
+    let second: FrontendToLeader =
+        read_frame(&mut reader).expect("the frame behind it must still be readable");
+    assert_eq!(second, expected);
 }
 
 #[test]
@@ -2275,29 +2321,25 @@ fn outbound_node_collections_reject_wide_roots_and_children_without_auxiliary_gr
 /// the plugin had already done the work.
 ///
 /// The over-limit half is asserted alongside so the accept half cannot pass by
-/// the fixture being shallower than it claims. The accept half measures the
-/// depth the builder actually returned rather than checking `is_ok`: a builder
-/// that accepted the tree and pruned it back to the level above would satisfy
-/// `is_ok` while dropping exactly the level under test.
+/// the fixture being shallower than it claims.
+///
+/// The accept half compares the whole forest against the fixture rather than
+/// checking `is_ok`, or any single number derived from it. `is_ok` passes on a
+/// builder that accepted the tree and pruned it; a depth count passes on one
+/// that kept the depth and set `childrenTruncated` on the deepest level, which
+/// tells the caller their tree was cut off when it was not. Only comparing what
+/// came back to what went in rules out both, and everything else of that shape.
 #[test]
 fn the_outbound_node_builder_accepts_a_tree_at_exactly_the_depth_ceiling() {
-    fn deepest_level<D>(node: &DesignNode<D>) -> u8 {
-        node.children
-            .iter()
-            .map(|child| deepest_level(child) + 1)
-            .max()
-            .unwrap_or(0)
-    }
-
+    let fixture = nested_detail_node("minimal", MAX_DEPTH);
     let at_ceiling: DesignNode<MinimalNodeDetails> =
-        serde_json::from_value(nested_detail_node("minimal", MAX_DEPTH))
-            .expect("a tree at the depth ceiling decodes");
+        serde_json::from_value(fixture.clone()).expect("a tree at the depth ceiling decodes");
     let forest = NodeForest::try_from(vec![at_ceiling])
         .expect("the builder must accept the depth the decoder accepts");
     assert_eq!(
-        deepest_level(&forest.as_slice()[0]),
-        MAX_DEPTH,
-        "the accepted tree must come back at the depth it went in at, not pruned"
+        serde_json::to_value(&forest).expect("a forest re-encodes"),
+        json!([fixture]),
+        "the accepted tree must come back exactly as it went in"
     );
 
     // One level deeper cannot be decoded — the decoder refuses it — so the
