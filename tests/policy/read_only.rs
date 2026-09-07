@@ -242,6 +242,39 @@ fn plugin_source_denies_mutation_private_and_motion_write_apis() {
     }
 }
 
+/// Only `common.test.ts` defines its own `installFigma`.
+///
+/// Nine read test files each built their own fake Figma, and they disagreed —
+/// `loadAsync` modelled in five of them and absent in two, `nodes` meaning a
+/// lookup map in eight and page children in the ninth. A test that agrees with
+/// a wrong model stays green, so the divergence could not be found by running
+/// anything.
+///
+/// `common.test.ts` keeps its own: it installs a deliberately incomplete host
+/// to test capability detection, which a harness that always builds a complete
+/// API cannot express.
+#[test]
+fn read_tests_share_one_figma_harness() {
+    let read = workspace_root().join("plugin/src/read");
+    let mut offenders = Vec::new();
+    for entry in fs::read_dir(&read).expect("read test directory is readable") {
+        let path = entry.expect("read test entry is readable").path();
+        let name = path.to_string_lossy().to_string();
+        if !name.ends_with(".test.ts") || name.ends_with("common.test.ts") {
+            continue;
+        }
+        let source = fs::read_to_string(&path).expect("test source is readable");
+        if source.contains("function installFigma") {
+            offenders.push(name);
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "these read tests still define their own Figma harness instead of \
+         importing plugin/tests/figma-harness.ts: {offenders:?}"
+    );
+}
+
 #[test]
 fn manifest_is_dev_mode_inspect_dynamic_page_loopback() {
     let source = fs::read_to_string(workspace_root().join("plugin/manifest.json")).unwrap();
