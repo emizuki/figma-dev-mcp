@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 
+import { installFigma } from "../../tests/figma-harness"
 import { LocalCancellationController } from "../main/cancellation"
 import { PluginReadError } from "./navigation"
 import { getVariables } from "./variables"
@@ -53,92 +54,6 @@ function bound(id: string, variableIds: string[], children: unknown[] = []) {
   }
 }
 
-function findNode(raw: unknown, id: string): unknown {
-  if (raw === null || typeof raw !== "object") return null
-  const node = raw as { id?: unknown; children?: unknown }
-  if (node.id === id) return raw
-  const children = Array.isArray(node.children) ? node.children : []
-  for (const child of children) {
-    const found = findNode(child, id)
-    if (found !== null) return found
-  }
-  return null
-}
-
-function installFigma(options: {
-  /** Roots on the current page; these are what a scope walk can see. */
-  nodes?: unknown[]
-  /** Variables reachable by id — local or library, the caller cannot tell. */
-  variables?: unknown[]
-  /** Collections reachable by id. */
-  collections?: unknown[]
-  byId?: Map<string, unknown>
-  collectionsById?: Map<string, unknown>
-  /** Per-id lookup delay in ms; a non-finite value never settles at all. */
-  lookupDelayMs?: Record<string, number>
-}): {
-  variableLookups: string[]
-  collectionLookups: string[]
-} {
-  const variableLookups: string[] = []
-  const collectionLookups: string[] = []
-  const byId = options.byId ?? new Map()
-  const collectionsById = options.collectionsById ?? new Map()
-  for (const item of options.variables ?? []) {
-    const record = item as { id: string }
-    if (!byId.has(record.id)) byId.set(record.id, item)
-  }
-  for (const item of options.collections ?? []) {
-    const record = item as { id: string }
-    if (!collectionsById.has(record.id)) collectionsById.set(record.id, item)
-  }
-  const currentPage = {
-    id: "0:1",
-    name: "Page 1",
-    type: "PAGE",
-    children: options.nodes ?? [],
-  }
-  const api = {
-    root: { name: "Checkout flow", children: [currentPage] },
-    currentPage,
-    editorType: "dev",
-    loadAllPagesAsync: async () => {
-      throw new Error("variables must not call loadAllPagesAsync")
-    },
-    getNodeByIdAsync: async (id: string) => findNode(currentPage, id),
-    variables: {
-      // Local enumeration answers a different question than the caller asked;
-      // these throw so a regression back to it fails loudly rather than
-      // silently returning a set the scope does not bind.
-      getLocalVariableCollectionsAsync: async () => {
-        throw new Error("variables must not enumerate local collections")
-      },
-      getLocalVariablesAsync: async () => {
-        throw new Error("variables must not enumerate local variables")
-      },
-      getVariableByIdAsync: async (id: string) => {
-        variableLookups.push(id)
-        const delay = options.lookupDelayMs?.[id]
-        if (delay !== undefined) {
-          if (Number.isFinite(delay)) {
-            await new Promise((resolve) => setTimeout(resolve, delay))
-          } else {
-            // A library that never answers. settleOrSkip is what must end this.
-            await new Promise(() => {})
-          }
-        }
-        return byId.get(id) ?? null
-      },
-      getVariableCollectionByIdAsync: async (id: string) => {
-        collectionLookups.push(id)
-        return collectionsById.get(id) ?? null
-      },
-    },
-  }
-  ;(globalThis as typeof globalThis & { figma: unknown }).figma = api
-  return { variableLookups, collectionLookups }
-}
-
 const idsOf = (result: { collections: { variables: { id: string }[] }[] }) =>
   result.collections.flatMap((item) => item.variables.map((v) => v.id))
 
@@ -153,7 +68,7 @@ describe("get_variables", () => {
     const libraryId = "VariableID:abc123/9:9"
     const libraryCollectionId = "VariableCollectionId:abc123/9:1"
     installFigma({
-      nodes: [bound("1:1", [libraryId])],
+      pageChildren: [bound("1:1", [libraryId])],
       collections: [
         collection({
           id: libraryCollectionId,
@@ -180,7 +95,7 @@ describe("get_variables", () => {
   test("a different scope returns a different set", async () => {
     // Proves selector is live: before this every scope returned the same list.
     installFigma({
-      nodes: [bound("1:1", ["V:a"]), bound("2:2", ["V:b"])],
+      pageChildren: [bound("1:1", ["V:a"]), bound("2:2", ["V:b"])],
       collections: [
         collection({
           id: "C:theme",
@@ -214,7 +129,7 @@ describe("get_variables", () => {
 
   test("a scope that binds nothing returns nothing", async () => {
     installFigma({
-      nodes: [bound("1:1", []), bound("2:2", ["V:a"])],
+      pageChildren: [bound("1:1", []), bound("2:2", ["V:a"])],
       collections: [
         collection({
           id: "C:theme",
@@ -252,7 +167,7 @@ describe("get_variables", () => {
       },
     }
     const { variableLookups } = installFigma({
-      nodes: [bound("1:1", ["V:a"], [child])],
+      pageChildren: [bound("1:1", ["V:a"], [child])],
       collections: [
         collection({
           id: "C:theme",
@@ -284,7 +199,7 @@ describe("get_variables", () => {
 
   test("groups the bound variables by their own collection, resolved once per id", async () => {
     const { collectionLookups } = installFigma({
-      nodes: [bound("1:1", ["V:a", "V:b", "V:z"])],
+      pageChildren: [bound("1:1", ["V:a", "V:b", "V:z"])],
       collections: [
         collection({
           id: "C:theme",
@@ -368,7 +283,7 @@ describe("get_variables", () => {
     })
 
     installFigma({
-      nodes: [bound("1:1", ["V:bg", "V:enabled"])],
+      pageChildren: [bound("1:1", ["V:bg", "V:enabled"])],
       collections: [theme],
       variables: [enabled, bg],
     })
@@ -446,7 +361,7 @@ describe("get_variables", () => {
       },
     })
     installFigma({
-      nodes: [bound("1:1", ["V:alias"])],
+      pageChildren: [bound("1:1", ["V:alias"])],
       collections: [theme],
       variables: [alias, target],
     })
@@ -473,7 +388,7 @@ describe("get_variables", () => {
     // variable behaves.
     const libraryId = "VariableID:abc123/9:9"
     installFigma({
-      nodes: [bound("1:1", [libraryId])],
+      pageChildren: [bound("1:1", [libraryId])],
       collections: [
         collection({
           id: "VariableCollectionId:abc123/9:1",
@@ -541,7 +456,7 @@ describe("get_variables", () => {
       },
     })
     const { variableLookups } = installFigma({
-      nodes: [bound("1:1", ["V:mid", "V:root"])],
+      pageChildren: [bound("1:1", ["V:mid", "V:root"])],
       collections: [theme],
       variables: [mid, root],
       byId: new Map<string, unknown>([[leaf.id, leaf]]),
@@ -588,7 +503,7 @@ describe("get_variables", () => {
       },
     })
     installFigma({
-      nodes: [bound("1:1", ["V:broken"])],
+      pageChildren: [bound("1:1", ["V:broken"])],
       collections: [theme],
       variables: [broken],
     })
@@ -632,7 +547,7 @@ describe("get_variables", () => {
       },
     })
     installFigma({
-      nodes: [bound("1:1", ["V:a", "V:b"])],
+      pageChildren: [bound("1:1", ["V:a", "V:b"])],
       collections: [theme],
       variables: [a, b],
     })
@@ -663,7 +578,7 @@ describe("get_variables", () => {
 
   test("an unreachable variable is skipped rather than failing the read", async () => {
     installFigma({
-      nodes: [bound("1:1", ["V:gone", "V:a"])],
+      pageChildren: [bound("1:1", ["V:gone", "V:a"])],
       collections: [
         collection({
           id: "C:theme",
@@ -691,7 +606,7 @@ describe("get_variables", () => {
     // and its mode names. The mode *ids* are not lost: they are the host-supplied
     // keys of valuesByMode, so the values are reported rather than dropped.
     installFigma({
-      nodes: [bound("1:1", ["VariableID:abc123/9:9"])],
+      pageChildren: [bound("1:1", ["VariableID:abc123/9:9"])],
       variables: [
         variable({
           id: "VariableID:abc123/9:9",
@@ -744,7 +659,7 @@ describe("get_variables", () => {
 
   test("an unresolved collection resolves aliases too", async () => {
     installFigma({
-      nodes: [bound("1:1", ["VariableID:abc123/9:9"])],
+      pageChildren: [bound("1:1", ["VariableID:abc123/9:9"])],
       variables: [
         variable({
           id: "VariableID:abc123/9:9",
@@ -791,7 +706,7 @@ describe("get_variables", () => {
         valuesByMode: { "M:default": { type: "VARIABLE_ALIAS", id: target } },
       })
     const { variableLookups } = installFigma({
-      nodes: [bound("1:1", ["V:a", "V:b", "V:c"])],
+      pageChildren: [bound("1:1", ["V:a", "V:b", "V:c"])],
       collections: [
         collection({
           id: "C:theme",
@@ -841,7 +756,7 @@ describe("get_variables", () => {
 
   test("a walk that ran out outranks a byte-limit cut", async () => {
     installFigma({
-      nodes: [bound("1:1", ["V:a"], [bound("1:2", ["V:b"])])],
+      pageChildren: [bound("1:1", ["V:a"], [bound("1:2", ["V:b"])])],
       collections: [
         collection({
           id: "C:theme",
@@ -872,7 +787,7 @@ describe("get_variables", () => {
 
   test("a spent budget outranks a byte-limit cut", async () => {
     const { variableLookups } = installFigma({
-      nodes: [bound("1:1", ["V:a", "V:b"])],
+      pageChildren: [bound("1:1", ["V:a", "V:b"])],
       collections: [
         collection({
           id: "C:theme",
@@ -911,7 +826,7 @@ describe("get_variables", () => {
 
   test("a byte-limit cut is reported when nothing earlier stopped the read", async () => {
     installFigma({
-      nodes: [bound("1:1", ["V:a"])],
+      pageChildren: [bound("1:1", ["V:a"])],
       collections: [
         collection({
           id: "C:theme",
@@ -970,7 +885,7 @@ describe("get_variables", () => {
     const cancellation = new LocalCancellationController()
     const byId = new Map<string, unknown>()
     installFigma({
-      nodes: [bound("1:1", ["V:a", "V:b"])],
+      pageChildren: [bound("1:1", ["V:a", "V:b"])],
       byId,
     })
     byId.set("V:a", {
@@ -1003,7 +918,7 @@ describe("get_variables", () => {
         return bound("1:52", [])
       },
     })
-    installFigma({ nodes: [bound("1:1", [], children)] })
+    installFigma({ pageChildren: [bound("1:1", [], children)] })
 
     await expect(
       getVariables({ selector: { nodeId: "1:1" } }, cancellation.signal),
