@@ -164,10 +164,10 @@ wire.
 is imported by exactly one production file, and has no dedicated test file of
 its own. Its wall is `exact(value, label, required, optional)`, which refuses
 any key outside `required ∪ optional`. There are **129 `exact(` call sites**;
-**53 of them pass an `optional` list**, and those lists hold **116 (call site,
+**53 of them pass an `optional` list**, and those lists hold **122 (call site,
 optional field) pairs**.
 
-Those 116 pairs are the 116 groups, and the grouping is forced rather than
+Those 122 pairs are the 122 groups, and the grouping is forced rather than
 chosen. A group is what one mutation answers, and deleting one name from one
 site's `optional` list refuses exactly the payloads carrying that field at that
 site — nothing wider, nothing narrower. Grouping by result family, as the plan
@@ -180,13 +180,13 @@ reverted; the committed diff adds tests only. Baseline before this task:
 **400 pass / 0 fail / 1841 expect() calls / 25 files**. After: **413 pass /
 0 fail / 1854 expect() calls / 26 files**.
 
-**48 covered, 68 gaps, 0 not applicable.**
+**48 covered, 74 gaps, 0 not applicable.**
 
 Neither of Task 2's shapes transfers cleanly. The inclusive-ceiling class cannot
 arise at all: `exact()` is an allow-list, not a comparison, so there is no
 character to move. The duplicated-guard class does arise, and where it does it
-is stark — but it is not the majority. **47 of the 116 pairs are a field name
-that appears in more than one `optional` list; 30 of those 47 are gaps. The
+is stark — but it is not the majority. **54 of the 122 pairs are a field name
+that appears in more than one `optional` list; 36 of those 54 are gaps. The
 other 38 gaps are at a name that occurs exactly once.** The bulk of the finding
 is therefore simpler than Task 2's: whole result families — reactions, motion,
 dev-mode — have no acceptance coverage of their optional fields at all.
@@ -196,9 +196,11 @@ dev-mode — have no acceptance coverage of their optional fields at all.
 `truncation` is optional on every one of the thirteen result families, and each
 family names it in its own `exact()` call. All thirteen mutations stayed green.
 Not one half of this thirteen-way duplication was held by anything in the plugin
-suite, and Rust carries the field as `#[serde(default, skip_serializing_if =
-"Option::is_none")]` on all thirteen — so the two ends could have drifted
-silently in either direction. `parseTruncation`'s own three optional counters
+suite, and Rust omits the field entirely when it is absent — every one of its
+`truncation: Option<Truncation>` fields carries
+`skip_serializing_if = "Option::is_none"`, most of them alongside `default`
+(`BoundedItems` is the exception) — so the two ends could have drifted silently
+in either direction. `parseTruncation`'s own three optional counters
 (`appliedDepth`, `visitedNodes`, `encodedBytes`) were likewise unpinned, which
 means a truncated response — the response the plugin sends precisely when a
 read hit a safety limit — was the least-tested shape in the file.
@@ -216,20 +218,28 @@ accepted the field and then dropped it. Re-running all 48 covered mutations and
 recording which tests went red puts a number on it: **21 of the 48 covered rows
 were held by nothing but those seven tests.**
 
-The thirteen new tests therefore carry **all 116 optional fields**, not only the
-68 unpinned ones, and compare the whole parsed tree against the payload with
+The thirteen new tests therefore carry **all 122 optional fields**, not only the
+74 unpinned ones, and compare the whole parsed tree against the payload with
 `toEqual`. That re-run confirms it: every one of the 48 covered mutations turned
 a new test red as well, so every covered row above now has a survival assertion
 behind it too.
 
-### Where the new tests live
+### How this enumeration went wrong the first time
 
-In a new `plugin/src/shared/result-validation.test.ts`, not in
-`validation.test.ts`. The brief left this open until the gap count was known,
-and 68 gaps is well past a handful: thirteen tests about `parseReadResult`
-would have doubled a file that is about the transport envelope and the message
-tags. The module also had no test file of its own, which is part of what this
-section found.
+The first pass of this section counted 116 pairs, not 122. Four `exact()` calls
+pass `[...STYLE_IDENTITY_FIELDS]`, a three-name constant, and the enumerator
+printed the spread rather than the names it stands for; transcribing that by
+hand kept one representative per site instead of three. All six missing pairs
+(`remote` and `key` at the text, effect and grid style sites) were then measured
+against the same pre-commit tree, and all six are gaps.
+
+Task 2's survey failed the same way — it grepped for a bound by the constant's
+name and missed a site that compared against a macro parameter. The rule both
+misses share:
+
+> **An enumeration must expand its indirections before anything is counted: a
+> shared constant, a spread, or a macro parameter left standing reads as one
+> item where it stands for many, and the count loses the difference silently.**
 
 ### The table
 
@@ -300,8 +310,14 @@ section found.
 | a **paint** style (`parseStyle`) carrying `remote` is taken and the field survives | drop `"remote"` from the `optional` list at `result-validation.ts:1564` | 399 / 1 | covered | — |
 | a **paint** style (`parseStyle`) carrying `key` is taken and the field survives | drop `"key"` from the `optional` list at `result-validation.ts:1564` | 399 / 1 | covered | — |
 | a **text** style (`parseStyle`) carrying `description` is taken and the field survives | drop `"description"` from the `optional` list at `result-validation.ts:1577` | 400 / 0 | **gap** | `a get_styles result carrying every optional field survives parseReadResult` |
+| a **text** style (`parseStyle`) carrying `remote` is taken and the field survives | drop `"remote"` from the `optional` list at `result-validation.ts:1577` | 400 / 0 | **gap** | `a get_styles result carrying every optional field survives parseReadResult` |
+| a **text** style (`parseStyle`) carrying `key` is taken and the field survives | drop `"key"` from the `optional` list at `result-validation.ts:1577` | 400 / 0 | **gap** | `a get_styles result carrying every optional field survives parseReadResult` |
 | an **effect** style (`parseStyle`) carrying `description` is taken and the field survives | drop `"description"` from the `optional` list at `result-validation.ts:1590` | 400 / 0 | **gap** | `a get_styles result carrying every optional field survives parseReadResult` |
+| an **effect** style (`parseStyle`) carrying `remote` is taken and the field survives | drop `"remote"` from the `optional` list at `result-validation.ts:1590` | 400 / 0 | **gap** | `a get_styles result carrying every optional field survives parseReadResult` |
+| an **effect** style (`parseStyle`) carrying `key` is taken and the field survives | drop `"key"` from the `optional` list at `result-validation.ts:1590` | 400 / 0 | **gap** | `a get_styles result carrying every optional field survives parseReadResult` |
 | a **grid** style (`parseStyle`) carrying `description` is taken and the field survives | drop `"description"` from the `optional` list at `result-validation.ts:1603` | 400 / 0 | **gap** | `a get_styles result carrying every optional field survives parseReadResult` |
+| a **grid** style (`parseStyle`) carrying `remote` is taken and the field survives | drop `"remote"` from the `optional` list at `result-validation.ts:1603` | 400 / 0 | **gap** | `a get_styles result carrying every optional field survives parseReadResult` |
+| a **grid** style (`parseStyle`) carrying `key` is taken and the field survives | drop `"key"` from the `optional` list at `result-validation.ts:1603` | 400 / 0 | **gap** | `a get_styles result carrying every optional field survives parseReadResult` |
 | the get_styles result (`parseStylesResult`) carrying `truncation` is taken and the field survives | drop `"truncation"` from the `optional` list at `result-validation.ts:1622` | 400 / 0 | **gap** | `a get_styles result carrying every optional field survives parseReadResult` |
 | a variable mode value (`parseVariableModeValue`) carrying `resolved` is taken and the field survives | drop `"resolved"` from the `optional` list at `result-validation.ts:1658` | 400 / 0 | **gap** | `a get_variables result carrying every optional field survives parseReadResult` |
 | a variable mode value (`parseVariableModeValue`) carrying `error` is taken and the field survives | drop `"error"` from the `optional` list at `result-validation.ts:1658` | 399 / 1 | covered | — |
@@ -354,20 +370,27 @@ section found.
 
 ### Where the duplicated names split
 
-Forty-seven pairs are a name that appears in more than one `optional` list.
+Fifty-four pairs are a name that appears in more than one `optional` list.
 Which halves are held, and which are not:
 
 | Optional name | Sites | Verdicts |
 |---|---|---|
 | `truncation` | 13 result families | **all 13 gaps** — no half pinned anywhere |
 | `description` | 4 style types, component definition, dev-mode node, available animation style | paint style covered; **6 gaps** |
+| `remote` | 4 style types | paint style covered; **3 gaps** |
+| `key` | file metadata, 4 style types | file metadata and paint style covered; **3 gaps** |
 | `component` | compact and full node data | **both gaps** |
 | `props` | applied and available animation style | **both gaps** |
 | `destinationId` | navigate-family and updateMediaRuntime actions | **both gaps** |
 | `autoLayout`, `constraints`, `instance` | compact and full node data | compact covered, **full a gap** |
 | `text` | compact and full node data | **compact a gap**, full covered |
 | `componentSetId` | component value, component definition | component value covered, **definition a gap** |
-| `bounds`, `geometry`, `key`, `name`, `unresolved` | 2–3 sites each | every half covered |
+| `bounds`, `geometry`, `name`, `unresolved` | 2–3 sites each | every half covered |
+
+The three style-identity names are the clearest instance of the shape: one
+`STYLE_IDENTITY_FIELDS` constant, read at four `exact()` calls, with the paint
+site pinned and the text, effect and grid sites carrying nine unpinned pairs
+between them.
 
 The `text` row is the one worth a second look. Compact and full node data share
 six optional names, but `text` does not hold the same thing in each: compact
@@ -379,7 +402,7 @@ one did not.
 
 ### Whole families with no acceptance coverage of their optionals
 
-Thirty-eight of the 68 gaps are at a name occurring exactly once in the file,
+Thirty-eight of the 74 gaps are at a name occurring exactly once in the file,
 and the gaps cluster by parser rather than scattering. Every optional field of
 `parseReaction` (8),
 `parseReactionOverlay` (4), the four `parseReactionAction` arms (7),
@@ -396,28 +419,33 @@ Every mutation here answered a coverage question, not a correctness one. The
 `optional` lists at the sites with the most gaps were checked by hand against
 their Rust counterparts — `Truncation`, `Reaction`, `ReactionOverlay`,
 `AppliedAnimationStyle`, `AvailableAnimationStyle`, `DevModeNodeData`,
-`CompactNodeData`, `FullNodeData` — and each names exactly the fields Rust marks
-`#[serde(default, skip_serializing_if = "Option::is_none")]`, with the same
-types. Nothing to report as a bug.
+`CompactNodeData`, `FullNodeData` — and each names exactly the fields Rust makes
+optional (`Option<…>` with `skip_serializing_if = "Option::is_none"`, usually
+alongside `default`), with the same types. Nothing to report as a bug.
 
 ### Verification
 
-Each of the 68 gaps was verified twice, with the new tests in place:
+Each of the 74 gaps was verified twice, with the new tests in place:
 
-1. **Its own delete mutation re-applied.** Across all 68, the failing tests were
+1. **Its own delete mutation re-applied.** Across all 74, the failing tests were
    new tests and only new tests: one test where the field sits at a single
-   family's call site, thirteen for the three `parseTruncation` counters every
-   family's payload carries, four for `childIds` (the four payloads holding a
-   node summary), three for `childrenTruncation` (the three node-forest
-   payloads). No pre-existing test went red for any of them.
-2. **An accept-then-discard mutation**, one per distinct gap field name — 48 of
+   family's call site — including each of the six style-identity pairs, every
+   one of which turned only the `get_styles` test red — thirteen for the three
+   `parseTruncation` counters every family's payload carries, four for
+   `childIds` (the four payloads holding a node summary), three for
+   `childrenTruncation` (the three node-forest payloads). No pre-existing test
+   went red for any of them.
+2. **An accept-then-discard mutation**, one per distinct gap field name — 50 of
    them: a clause added to `exact()` that leaves the allow-list untouched, so
    nothing is refused, and strips that key from the record it hands back, so the
    caller copies nothing. This is the mutation a `toBeDefined()` assertion
-   cannot see. All 48 turned a new test red. Three of them also caught a
-   pre-existing test, which is the short list of tests in this repository that
-   already assert a node-data optional *survives* rather than merely parses:
+   cannot see. All 50 turned a new test red. Five of them (`description`,
+   `instance`, `text`, `remote`, `key`) also caught a pre-existing test, and
+   that union is the whole list of tests in this repository that already assert
+   an optional field *survives* rather than merely parses:
    `accepts exact concrete payloads for all 13 Rust result families`,
+   `Rust fixtures decode and re-encode without shape drift`,
+   `normalizes Rust-defaulted capability fields`,
    `resolves instance compact data via getMainComponentAsync under dynamic-page`,
    and the four `round-trips through the wire validator` line-height tests.
 
