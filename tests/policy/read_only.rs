@@ -246,6 +246,15 @@ fn plugin_source_denies_mutation_private_and_motion_write_apis() {
 /// `function installFigma(`, or as a `const`/`let`/`var installFigma =` —
 /// rather than merely mentioning a longer name that happens to start with it
 /// (`installFigmaHost`) or calling it.
+///
+/// Known limit: this only recognises those two syntactic shapes. A builder
+/// written as an object property (`{ installFigma: () => {} }`), a class
+/// method (`class H { installFigma() {} }`), or a plain property assignment
+/// (`globals.installFigma = () => {}`) defines the same identifier but is not
+/// detected — name-matching cannot fix that, and widening the shapes forever
+/// is not this predicate's job. Such a builder still has to install a host to
+/// do anything, so it is normally still caught, just by `assigns_figma` and
+/// the import assertion below rather than by this one.
 fn defines_install_figma(source: &str) -> bool {
     const DEFINING_KEYWORDS: [&str; 4] = ["function", "const", "let", "var"];
     let is_ident_char = |ch: char| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$';
@@ -258,7 +267,7 @@ fn defines_install_figma(source: &str) -> bool {
         let before = source[..index].trim_end_matches(char::is_whitespace);
         DEFINING_KEYWORDS.iter().any(|keyword| {
             before.ends_with(keyword)
-                && before.len() > keyword.len()
+                && before.len() >= keyword.len()
                 && before[..before.len() - keyword.len()]
                     .chars()
                     .next_back()
@@ -267,50 +276,103 @@ fn defines_install_figma(source: &str) -> bool {
     })
 }
 
-/// True if `source` assigns `figma` a value (`(...).figma = {...}` or
-/// `something.figma = something`), the way a test installs a fake host
-/// inline without going through any builder function at all. `==`/`===`
-/// comparisons against `.figma` do not count.
-fn assigns_global_figma(source: &str) -> bool {
-    source.match_indices(".figma").any(|(index, needle)| {
-        let after = source[index + needle.len()..].trim_start_matches([' ', '\t']);
+/// True if `source` assigns `figma` a value, either through a receiver
+/// (`(...).figma = {...}`) or bare (`figma = {...}`). `==`/`===` comparisons
+/// do not count, and a longer identifier that merely contains `figma`
+/// (`figmaType`, `myFigma`) does not either.
+///
+/// Known limit: only the dotted-or-bare `figma =` form is recognised, which
+/// is the repo's one idiom (`(globalThis as ...).figma = api`, used by both
+/// the harness and `navigation.test.ts`). `globalThis["figma"] = ...` and
+/// `Object.assign(globalThis, { figma })` are not detected.
+fn assigns_figma(source: &str) -> bool {
+    let is_ident_char = |ch: char| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$';
+    source.match_indices("figma").any(|(index, needle)| {
+        let before = source[..index].chars().next_back();
+        if before.is_some_and(is_ident_char) {
+            return false; // e.g. myFigma
+        }
+        let after = source[index + needle.len()..].chars().next();
+        if after.is_some_and(is_ident_char) {
+            return false; // e.g. figmaType
+        }
+        let after = source[index + needle.len()..].trim_start_matches(char::is_whitespace);
         after.starts_with('=') && !after.starts_with("==")
     })
 }
 
-/// Every read test installs its fake Figma one of two sanctioned ways:
-/// importing the shared builder in `plugin/tests/figma-harness.ts`, or —
-/// solely `common.test.ts` — defining its own `installFigma`, because that
-/// file tests capability detection when a capability is absent and needs a
-/// host the harness, which always builds a complete one, cannot express.
+/// True if `source` has an `import` line naming the shared harness module, as
+/// opposed to merely containing the string anywhere (a stale comment left
+/// behind by a migration away from it, for instance).
+fn imports_figma_harness(source: &str) -> bool {
+    source.lines().any(|line| {
+        let trimmed = line.trim_start();
+        trimmed.starts_with("import") && trimmed.contains("/tests/figma-harness\"")
+    })
+}
+
+const COMMON_TEST_PATH: &str = "plugin/src/read/common.test.ts";
+
+/// Read tests migrated onto the shared harness by this plan. Not exhaustive
+/// of every read test — see the exemptions below — but if the walk stops
+/// seeing one of these, something moved, was renamed, or was deleted, and the
+/// other assertions here would otherwise report success over whatever is
+/// left, `common.test.ts` included.
+const HARNESS_MIGRATED_FILES: [&str; 9] = [
+    "plugin/src/read/components.test.ts",
+    "plugin/src/read/dev-mode.test.ts",
+    "plugin/src/read/fonts.test.ts",
+    "plugin/src/read/motion.test.ts",
+    "plugin/src/read/reactions.test.ts",
+    "plugin/src/read/render.test.ts",
+    "plugin/src/read/search.test.ts",
+    "plugin/src/read/styles.test.ts",
+    "plugin/src/read/variables.test.ts",
+];
+
+/// Every read test installs its fake Figma one of two sanctioned ways —
+/// importing the shared builder in `plugin/tests/figma-harness.ts`, or,
+/// solely `common.test.ts`, defining its own `installFigma` because that file
+/// tests capability detection when a capability is absent and needs a host
+/// the harness, which always builds a complete one, cannot express — plus one
+/// documented exception below (`navigation.test.ts`).
 ///
-/// This checks three things over every `*.test.ts` file under
-/// `plugin/src/read`: no file other than `common.test.ts` defines its own
-/// `installFigma`; every file that installs a fake Figma host at all still
-/// imports the shared harness, rather than drifting back to a local builder;
-/// and `common.test.ts` itself still defines its own host, so that exemption
-/// cannot rot into a dead branch that always passes.
+/// Whether a file installs a host at all is derived — `defines_install_figma`
+/// or `assigns_figma` — not listed, so a future test file that never touches
+/// `figma` needs no entry here and drops out on its own, while a future file
+/// that does install one and skips the harness is caught automatically
+/// instead of requiring someone to remember to add it to an exemption list.
+/// Known limit shared by both predicates: name- and syntax-matching, not
+/// parsing, so an unrecognised spelling of either can still slip through:
+/// `defines_install_figma`'s and `assigns_figma`'s doc comments say which.
 ///
-/// Whether a file installs a host is derived — `defines_install_figma` or
-/// `assigns_global_figma` — not listed, so a future test file that never
-/// touches `figma` needs no entry here and drops out on its own, while a
-/// future file that does install one and skips the harness is caught
-/// automatically instead of requiring someone to remember to add it to an
-/// exemption list.
+/// Only two exact repo-relative paths are named. `COMMON_TEST_PATH` is the
+/// positive control below. `plugin/src/read/navigation.test.ts` installs its
+/// hosts by hand, inline, 36 times over — with no shared builder, one
+/// block-scoped helper covering one of those sites aside — the same defect
+/// class the harness was built to retire, just never folded into this
+/// migration. It is exempted from the import requirement, not because it has
+/// no host to migrate, but because migrating a file this size belongs in its
+/// own change, not inside this test's fix. Matching on the full relative path
+/// rather than the bare file name means a future nested
+/// `plugin/src/read/**/navigation.test.ts` or `.../common.test.ts` does not
+/// inherit either exemption for free.
 ///
-/// Only two files are named explicitly. `common.test.ts` is the positive
-/// control above. `navigation.test.ts` installs its hosts by hand, inline,
-/// once per test, with no reusable builder at all — the same defect class the
-/// harness was built to retire, just never folded into this migration. It is
-/// exempted from the import requirement, not because it has no host to
-/// migrate, but because migrating a file this size belongs in its own change,
-/// not inside this test's fix.
+/// This makes five assertions: the walk actually reaches `common.test.ts`
+/// (otherwise every check below could pass over an empty or renamed
+/// directory); it also reaches every file in `HARNESS_MIGRATED_FILES`
+/// (otherwise the first floor alone would still pass with only
+/// `common.test.ts` left); `common.test.ts` still defines its own host, so
+/// its exemption cannot rot into a dead branch that always passes; no other
+/// file defines its own builder; and every file that installs a host and
+/// is not named above imports the shared harness.
 #[test]
 fn read_tests_share_one_figma_harness() {
-    const NAMED_EXEMPT_FROM_HARNESS_IMPORT: [&str; 1] = ["navigation.test.ts"];
+    const NAMED_EXEMPT_FROM_HARNESS_IMPORT: [&str; 1] = ["plugin/src/read/navigation.test.ts"];
 
     let root = workspace_root();
     let mut pending = vec![root.join("plugin/src/read")];
+    let mut seen_paths = Vec::new();
     let mut found_common_test = false;
     let mut common_test_defines_its_own_host = false;
     let mut own_builder_offenders = Vec::new();
@@ -329,16 +391,17 @@ fn read_tests_share_one_figma_harness() {
             if !file_name.ends_with(".test.ts") {
                 continue;
             }
-            let file_name = file_name.to_owned();
             let relative = path
                 .strip_prefix(&root)
                 .expect("read test path is inside the workspace")
                 .to_string_lossy()
                 .into_owned();
+            seen_paths.push(relative.clone());
+
             let source = fs::read_to_string(&path).expect("test source is readable");
             let defines_own_builder = defines_install_figma(&source);
 
-            if file_name == "common.test.ts" {
+            if relative == COMMON_TEST_PATH {
                 found_common_test = true;
                 common_test_defines_its_own_host = defines_own_builder;
                 continue;
@@ -347,10 +410,10 @@ fn read_tests_share_one_figma_harness() {
                 own_builder_offenders.push(relative.clone());
             }
 
-            let installs_a_host = defines_own_builder || assigns_global_figma(&source);
+            let installs_a_host = defines_own_builder || assigns_figma(&source);
             if installs_a_host
-                && !NAMED_EXEMPT_FROM_HARNESS_IMPORT.contains(&file_name.as_str())
-                && !source.contains("tests/figma-harness")
+                && !NAMED_EXEMPT_FROM_HARNESS_IMPORT.contains(&relative.as_str())
+                && !imports_figma_harness(&source)
             {
                 missing_import_offenders.push(relative);
             }
@@ -359,10 +422,21 @@ fn read_tests_share_one_figma_harness() {
     own_builder_offenders.sort();
     missing_import_offenders.sort();
 
+    let missing_migrated_files: Vec<&str> = HARNESS_MIGRATED_FILES
+        .into_iter()
+        .filter(|expected| !seen_paths.iter().any(|seen| seen == expected))
+        .collect();
+
     assert!(
         found_common_test,
-        "expected the walk to find plugin/src/read/common.test.ts; the walk \
-         or its exemption list has drifted from the files on disk"
+        "expected the walk to find {COMMON_TEST_PATH}; the walk or its \
+         exemption list has drifted from the files on disk"
+    );
+    assert!(
+        missing_migrated_files.is_empty(),
+        "expected the walk to find these files this plan migrated onto the \
+         shared harness, but they were renamed, moved, or deleted: \
+         {missing_migrated_files:?}"
     );
     assert!(
         common_test_defines_its_own_host,
