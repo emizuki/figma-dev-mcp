@@ -117,6 +117,13 @@ describe("get_styles", () => {
     const result = await getStyles({ source: "local" })
 
     expect(localCalls).toEqual(["paint", "text", "effect", "grid"])
+    // Restates the claim; it does not enforce it. `forbidGetStyle` installs
+    // `getStyleByIdAsync` as a thrower, so a local read that touched it would
+    // blow this test up before reaching here — and this recorder, which only
+    // the non-forbidding reader ever pushes to, could not have caught it
+    // either way. The thrower is the tripwire; this line documents what it
+    // guards. (Verified: injecting `figma.getStyleByIdAsync?.("MUTANT")` into
+    // `emitLocal` fails this test via the thrower, not via this assertion.)
     expect(styleLookups).toEqual([])
     expect(result.truncated).toBe(false)
     expect(result.observation.startedAt).toMatch(/Z$/)
@@ -289,6 +296,10 @@ describe("get_styles", () => {
         }
       ).figma.currentPage.id,
     ).toBe(current.id)
+    // Same shape as the note at the `styleLookups` assertion above:
+    // `forbidLocal` installs the four `getLocal*StylesAsync` readers as
+    // throwers, so a referenced read that enumerated local styles fails here
+    // loudly. This line records the intent; the throwers enforce it.
     expect(localCalls).toEqual([])
     expect(styleLookups).toEqual([
       "S:fill",
@@ -422,10 +433,14 @@ describe("get_styles", () => {
   })
 
   test("fails when required style APIs are unavailable", async () => {
+    // `omit*`, not `forbid*`: this is the one styles test whose subject *is*
+    // the missing-capability path, so the readers have to be genuinely absent
+    // for production's `=== undefined` checks to reach CAPABILITY_UNAVAILABLE.
+    // `forbid*` installs throwers, which are present and would blow up here.
     installFigma({
       currentPage: page("0:1", "Page 1"),
-      forbidLocal: true,
-      forbidGetStyle: true,
+      omitLocal: true,
+      omitGetStyle: true,
     })
 
     await expect(getStyles({ source: "local" })).rejects.toMatchObject({
