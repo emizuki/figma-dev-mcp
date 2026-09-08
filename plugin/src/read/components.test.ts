@@ -873,4 +873,56 @@ describe("get_components", () => {
       },
     ])
   })
+
+  // `throwIfAbortedAtBatch` polls only when `index % 100 === 0`, and the
+  // instance pass steps sixteen at a time, so an abort raised during the first
+  // batch is seen by nothing but the unconditional check beside it.
+  test("the instance pass checks cancellation on every batch", async () => {
+    const cancellation = new LocalCancellationController()
+    const icon = standaloneComponent("3:1", "Icon")
+    const instances = Array.from({ length: 17 }, (_, index) => ({
+      id: `5:${index + 1}`,
+      name: `Instance ${index + 1}`,
+      type: "INSTANCE",
+      visible: true,
+      children: [],
+      getMainComponentAsync: async () => {
+        if (index === 0) cancellation.abort()
+        return { id: "3:1" }
+      },
+    }))
+    installFigma({
+      currentPage: page("0:2", "Current", [icon, ...instances]),
+    })
+
+    await expect(getComponents({}, cancellation.signal)).rejects.toThrow(
+      "Operation cancelled",
+    )
+  })
+
+  test("the component loop checks cancellation on every component", async () => {
+    const cancellation = new LocalCancellationController()
+    // Not `parent`: `visibilityOf` reads that during the walk, and the read
+    // would then reject before ever reaching the loop under test.
+    // `variantProperties` is read only by serializeComponent.
+    const first = standaloneComponent("3:1", "First") as Record<string, unknown>
+    Object.defineProperty(first, "variantProperties", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        cancellation.abort()
+        return null
+      },
+    })
+    installFigma({
+      currentPage: page("0:2", "Current", [
+        first,
+        standaloneComponent("3:2", "Second"),
+      ]),
+    })
+
+    await expect(getComponents({}, cancellation.signal)).rejects.toThrow(
+      "Operation cancelled",
+    )
+  })
 })

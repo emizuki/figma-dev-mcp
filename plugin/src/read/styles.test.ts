@@ -849,4 +849,50 @@ describe("get_styles", () => {
       { styleType: "paint", id: "S:found", name: "Found", paints: [] },
     ])
   })
+
+  // `throwIfAbortedAtBatch` polls only when `index % 100 === 0`, so in a
+  // catalogue shorter than a hundred entries an abort raised between batch
+  // boundaries is seen by nothing but the unconditional check beside it.
+  test("the local style pass checks cancellation on every style", async () => {
+    const cancellation = new LocalCancellationController()
+    const paints = [paintStyle("S:a", "A"), paintStyle("S:b", "B")]
+    Object.defineProperty(paints, 1, {
+      configurable: true,
+      enumerable: true,
+      get() {
+        cancellation.abort()
+        return paintStyle("S:b", "B")
+      },
+    })
+    installFigma({
+      currentPage: page("0:2", "Current"),
+      local: { paint: paints },
+      forbidGetStyle: true,
+    })
+
+    await expect(
+      getStyles({ source: "local" }, cancellation.signal),
+    ).rejects.toThrow("Operation cancelled")
+  })
+
+  test("the referenced style pass checks cancellation on every id", async () => {
+    const cancellation = new LocalCancellationController()
+    installFigma({
+      currentPage: page("0:2", "Current", [
+        node("1:1", "Card", { fillStyleId: "S:a", strokeStyleId: "S:b" }),
+      ]),
+      forbidLocal: true,
+    })
+    const host = (
+      globalThis as typeof globalThis & { figma: Record<string, unknown> }
+    ).figma
+    host.getStyleByIdAsync = async (id: string) => {
+      if (id === "S:a") cancellation.abort()
+      return { id, name: id, type: "PAINT", paints: [] }
+    }
+
+    await expect(
+      getStyles({ source: "referenced" }, cancellation.signal),
+    ).rejects.toThrow("Operation cancelled")
+  })
 })

@@ -1328,4 +1328,136 @@ describe("get_variables", () => {
     expect(capped.collections).toEqual([first])
     expect(capped.truncation?.reason).toBe("byteLimit")
   })
+
+  // `throwIfAbortedAtBatch` polls only when `index % 100 === 0`, so an abort
+  // raised between batch boundaries in a list shorter than a hundred is seen
+  // by nothing but the unconditional check beside it.
+  test("the variable lookup loop checks cancellation on every id", async () => {
+    const cancellation = new LocalCancellationController()
+    // The host answers nothing for either id, so no collection is ever
+    // grouped and no later loop runs; and the first lookup takes longer than
+    // the budget, so on the second pass the loop would `break` before reaching
+    // any other check. The one guard left is the one under test.
+    installFigma({
+      pageChildren: [bound("1:1", ["V:a", "V:b"])],
+      lookupDelayMs: { "V:a": 30 },
+    })
+    const host = (
+      globalThis as typeof globalThis & {
+        figma: { variables: Record<string, unknown> }
+      }
+    ).figma
+    const inner = host.variables.getVariableByIdAsync as (
+      id: string,
+    ) => Promise<unknown>
+    host.variables.getVariableByIdAsync = async (id: string) => {
+      if (id === "V:a") cancellation.abort()
+      return inner(id)
+    }
+
+    await expect(
+      getVariables({ selector: { nodeId: "1:1" } }, cancellation.signal, {
+        variableLookupBudgetMs: 10,
+      }),
+    ).rejects.toThrow("Operation cancelled")
+  })
+
+  test("the collection loop checks cancellation on every collection", async () => {
+    const cancellation = new LocalCancellationController()
+    const aborting = {
+      id: "V:a",
+      name: "a",
+      variableCollectionId: "C:1",
+      valuesByMode: { "M:1": 1 },
+      codeSyntax: {},
+      // Read last, while the first collection is being serialized.
+      get scopes(): string[] {
+        cancellation.abort()
+        return []
+      },
+    }
+    installFigma({
+      pageChildren: [bound("1:1", ["V:a", "V:orphan"])],
+      collections: [
+        collection({
+          id: "C:1",
+          name: "One",
+          modes: [{ modeId: "M:1", name: "Default" }],
+        }),
+      ],
+      variables: [
+        aborting,
+        {
+          id: "V:orphan",
+          name: "orphan",
+          // No collection, so the second pass through the loop reaches the
+          // cancellation check and nothing else.
+          variableCollectionId: "",
+          valuesByMode: {},
+          scopes: [],
+          codeSyntax: {},
+        },
+      ],
+    })
+
+    await expect(
+      getVariables({ selector: { nodeId: "1:1" } }, cancellation.signal),
+    ).rejects.toThrow("Operation cancelled")
+  })
+
+  test("the definition loop checks cancellation on every variable", async () => {
+    const cancellation = new LocalCancellationController()
+    const aborting = {
+      id: "V:a",
+      name: "a",
+      variableCollectionId: "C:1",
+      valuesByMode: { "M:1": 1 },
+      codeSyntax: {},
+      get scopes(): string[] {
+        cancellation.abort()
+        return []
+      },
+    }
+    installFigma({
+      pageChildren: [bound("1:1", ["V:a", "V:blank"])],
+      collections: [
+        collection({
+          id: "C:1",
+          name: "One",
+          modes: [{ modeId: "M:1", name: "Default" }],
+        }),
+      ],
+      variables: [
+        aborting,
+        // An id-less variable: readDefinition returns before it looks its
+        // collection up, so the second pass through the loop reaches the
+        // cancellation check and nothing else.
+        {
+          id: "",
+          name: "blank",
+          variableCollectionId: "C:1",
+          valuesByMode: {},
+          scopes: [],
+          codeSyntax: {},
+        },
+      ],
+      byId: new Map<string, unknown>([
+        [
+          "V:blank",
+          {
+            id: "",
+            name: "blank",
+            variableCollectionId: "C:1",
+            valuesByMode: {},
+            scopes: [],
+            codeSyntax: {},
+          },
+        ],
+      ]),
+    })
+
+    await expect(
+      getVariables({ selector: { nodeId: "1:1" } }, cancellation.signal),
+    ).rejects.toThrow("Operation cancelled")
+  })
 })

@@ -3673,3 +3673,87 @@ describe("what the three pre-passes accept", () => {
     ]).toEqual([])
   })
 })
+
+// `throwIfAbortedAtBatch` only polls when `index % 100 === 0`, so in a walk
+// shorter than a hundred children an abort raised between batch boundaries is
+// seen by nothing but the unconditional check at the top of each visit. These
+// fixtures abort while the *first* child is being handled, which puts the next
+// visit at index 1 — a position the batched check never looks at.
+describe("cancellation between batch boundaries", () => {
+  const abortingFirstChild = (cancellation: LocalCancellationController) => {
+    const first: Record<string, unknown> = {
+      id: "1:2",
+      name: "First",
+      type: "FRAME",
+      visible: true,
+    }
+    Object.defineProperty(first, "children", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        cancellation.abort()
+        return []
+      },
+    })
+    return {
+      id: "1:1",
+      name: "Root",
+      type: "FRAME",
+      visible: true,
+      children: [
+        first,
+        {
+          id: "1:3",
+          name: "Second",
+          type: "FRAME",
+          visible: true,
+          children: [],
+        },
+      ],
+    }
+  }
+
+  test("the forest walk checks cancellation on every node", () => {
+    const cancellation = new LocalCancellationController()
+    const root = abortingFirstChild(cancellation)
+
+    expect(() =>
+      walkNodeForest([root], { signal: cancellation.signal }, () => {}),
+    ).toThrow("Operation cancelled")
+  })
+
+  test("the instance pre-pass checks cancellation on every node", async () => {
+    const cancellation = new LocalCancellationController()
+    const root = abortingFirstChild(cancellation)
+
+    await expect(
+      collectInstanceIdentities([root], cancellation.signal),
+    ).rejects.toThrow("Operation cancelled")
+  })
+
+  test("the style-name pre-pass checks cancellation on every node", async () => {
+    const cancellation = new LocalCancellationController()
+    const root = abortingFirstChild(cancellation)
+
+    await expect(
+      collectStyleNames(
+        [root],
+        async () => ({ name: "Brand" }),
+        cancellation.signal,
+      ),
+    ).rejects.toThrow("Operation cancelled")
+  })
+
+  test("the variable-name pre-pass checks cancellation on every node", async () => {
+    const cancellation = new LocalCancellationController()
+    const root = abortingFirstChild(cancellation)
+
+    await expect(
+      collectVariableNames(
+        [root],
+        async () => ({ name: "brand/blue" }),
+        cancellation.signal,
+      ),
+    ).rejects.toThrow("Operation cancelled")
+  })
+})

@@ -909,4 +909,31 @@ describe("get_reactions", () => {
       encodedBytes: byteLength(value(1)) + byteLength(value(2)),
     })
   })
+
+  // `throwIfAbortedAtBatch` polls only when `index % 100 === 0`, so an abort
+  // raised between batch boundaries is seen by nothing but the unconditional
+  // check beside it.
+  test("the reactions item loop checks cancellation on every item", async () => {
+    const cancellation = new LocalCancellationController()
+    const first = frame("5:1")
+    Object.defineProperty(first, "reactions", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        cancellation.abort()
+        return []
+      },
+    })
+    const second = frame("5:2", {
+      reactions: [{ trigger: { type: "ON_CLICK" }, action: { type: "BACK" } }],
+    })
+    installFigma({ currentPage: page("0:2", "Current", [first, second]) })
+
+    await expect(
+      getReactions(
+        { selector: { nodeIds: ["5:1", "5:2"] } },
+        cancellation.signal,
+      ),
+    ).rejects.toThrow("Operation cancelled")
+  })
 })

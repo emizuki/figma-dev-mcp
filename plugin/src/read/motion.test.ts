@@ -1146,4 +1146,34 @@ describe("get_motion", () => {
       encodedBytes: byteLength(item(1)) + byteLength(item(2)),
     })
   })
+
+  // `throwIfAbortedAtBatch` polls only when `index % 100 === 0`, so an abort
+  // raised between batch boundaries is seen by nothing but the unconditional
+  // check beside it.
+  test("the motion item loop checks cancellation on every item", async () => {
+    const cancellation = new LocalCancellationController()
+    const first = motionNode("6:1")
+    Object.defineProperty(first, "animationStyles", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        cancellation.abort()
+        return []
+      },
+    })
+    const second = motionNode("6:2", {
+      animationStyles: [appliedStyle("a-2")],
+    })
+    installFigma({
+      currentPage: page("0:2", "Current", [first, second]),
+      nodes: new Map<string, unknown>([
+        ["6:1", first],
+        ["6:2", second],
+      ]),
+    })
+
+    await expect(
+      getMotion({ selector: { nodeIds: ["6:1", "6:2"] } }, cancellation.signal),
+    ).rejects.toThrow("Operation cancelled")
+  })
 })

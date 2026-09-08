@@ -484,4 +484,26 @@ describe("get_dev_mode_data", () => {
       encodedBytes: byteLength(value(1)) + byteLength(value(2)),
     })
   })
+
+  // `throwIfAbortedAtBatch` polls only when `index % 100 === 0`, so an abort
+  // raised between batch boundaries is seen by nothing but the unconditional
+  // check beside it.
+  test("the dev-mode item loop checks cancellation on every item", async () => {
+    const first = frame("4:1", {
+      getDevResourcesAsync: async () => {
+        cancellation.abort()
+        return []
+      },
+    })
+    const second = frame("4:2", { description: "Second" })
+    const cancellation = new LocalCancellationController()
+    installFigma({ currentPage: page("0:2", "Current", [first, second]) })
+
+    await expect(
+      getDevModeData(
+        { selector: { nodeIds: ["4:1", "4:2"] } },
+        cancellation.signal,
+      ),
+    ).rejects.toThrow("Operation cancelled")
+  })
 })

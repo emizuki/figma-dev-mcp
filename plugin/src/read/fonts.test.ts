@@ -496,4 +496,31 @@ describe("get_fonts", () => {
     expect(result.fonts[0]?.nodeIds).toHaveLength(MAX_INPUT_IDS)
     expect(result.fonts[0]?.nodeIds.at(-1)).toBe(`1:${MAX_INPUT_IDS}`)
   })
+
+  // The font loop's own check: nothing batched guards it, and the catalogue
+  // read that precedes it polls the signal before the await, not after.
+  test("the font loop checks cancellation on every font", async () => {
+    const cancellation = new LocalCancellationController()
+    const text = {
+      id: "1:1",
+      name: "1:1",
+      type: "TEXT",
+      visible: true,
+      children: [],
+      characters: "Hi",
+      fontName: { family: "Inter", style: "Regular" },
+    }
+    installFigma({ currentPage: page("0:2", "Current", [text]) })
+    const host = (
+      globalThis as typeof globalThis & { figma: Record<string, unknown> }
+    ).figma
+    host.listAvailableFontsAsync = async () => {
+      cancellation.abort()
+      return []
+    }
+
+    await expect(getFonts({}, cancellation.signal)).rejects.toThrow(
+      "Operation cancelled",
+    )
+  })
 })
