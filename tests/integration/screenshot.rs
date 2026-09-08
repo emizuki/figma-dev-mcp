@@ -42,6 +42,18 @@ fn observation() -> Value {
     })
 }
 
+/// Bounded, and panicking here rather than as a confusing failure inside the
+/// spawned plugin task if the session never registers.
+async fn wait_for_session(broker: &Broker) {
+    for _ in 0..400 {
+        if broker.live_file_count().await == 1 {
+            return;
+        }
+        tokio::task::yield_now().await;
+    }
+    panic!("the plugin session must register before the test proceeds");
+}
+
 fn decoded_len(base64: &str) -> usize {
     let padding = base64
         .bytes()
@@ -378,12 +390,7 @@ async fn jpeg_scale_and_the_three_svg_options_reach_the_plugin_intact() {
         .insert("Origin", "null".parse().unwrap());
     let (mut plugin, _) = connect_async(request).await.unwrap();
     plugin.send(hello(CONNECTION)).await.unwrap();
-    for _ in 0..20 {
-        if broker.live_file_count().await == 1 {
-            break;
-        }
-        tokio::task::yield_now().await;
-    }
+    wait_for_session(&broker).await;
 
     let (server_io, client_io) = tokio::io::duplex(64 * 1024);
     let server_task = tokio::spawn(async move {

@@ -459,23 +459,24 @@ on a real WebSocket.
 The Scope row above is confirmed rather than corrected: re-running Task 1's
 command against this tree gives 20 refusal-named tests in `tests/integration`,
 of which 4 also name an accept (`still_`, `accepts`, `round_trips`), leaving 16
-refusal-only. Those 20 tests, with every indirection expanded, are **46 accept
+refusal-only. Those 20 tests, with every indirection expanded, are **54 accept
 paths**: `TOOL_NAMES` is fourteen names and `PROMPT_NAMES` three, the screenshot
 format rule pairs four fields with two format families, `search must include
 query or types` is a disjunction with two satisfying halves, and
-`handle_incoming` refreshes session liveness from three separate match arms.
-Grouping any of those by their shared constant would have hidden the findings:
-every one of the seven gaps is one member of a group whose siblings are pinned.
+`handle_incoming` both refreshes session liveness from three separate match arms
+and dispatches four separate accepted plugin frame kinds. Grouping any of those
+by their shared constant would have hidden the findings: every one of the ten
+gaps is one member of a group whose siblings are pinned.
 
 Every mutation below was applied to production code, measured, and reverted;
 the committed diff adds tests only. Baseline before this task: **260 passed /
-0 failed**. After: **264 passed / 0 failed**.
+0 failed**. After: **267 passed / 0 failed**.
 
-**35 covered, 7 gaps, 4 not applicable.**
+**44 covered, 10 gaps, 0 not applicable.**
 
 Only one of Task 2's two shapes appears, and it accounts for every gap. There
 is no inclusive-ceiling row here at all — this seam holds no ceilings of its
-own — but all seven gaps are the untested member of a rule written in more than
+own — but all ten gaps are the untested member of a rule written in more than
 one place:
 
 - `scale` is refused for SVG and accepted for raster in **two** arms, `Png`
@@ -486,11 +487,18 @@ one place:
 - `search must include query or types` has two satisfying halves. `query`
   alone is what every other search test sends; `types` alone was unpinned.
 - `handle_incoming` refreshes liveness from three arms — text, pong, ping.
-  Only the text arm is on the path the suite drives.
+  Only the text arm is on the path the suite drives, and each control arm
+  turned out to hold **two** separable properties, not one: is the frame
+  accepted, and does the accepted frame refresh the clock.
+- `handle_incoming`'s text arm dispatches four accepted plugin frame kinds —
+  progress, response, error, pong. Three are pinned. The **error** frame is
+  not, and the test that looks like it pins it passes for the wrong reason.
 
-The last of those is the one worth reading twice. Turning either control-frame
-arm into `NonTextProtocolFrame` unregisters the plugin session on the next ping
-or pong a real client sends, and all 260 tests stayed green.
+Turning either control-frame arm into `NonTextProtocolFrame` unregisters the
+plugin session on the next ping or pong a real client sends, and all 260 tests
+stayed green. Keeping the frame accepted and deleting only its two-line
+liveness refresh is quieter still and equally fatal, and is a separate row per
+arm for exactly that reason.
 
 ### What the covered rows prove
 
@@ -507,19 +515,42 @@ such — `types`/`cursor` survive trimming is held only by
 `SessionRegistry::try_send_to` is held only by a unit test of an API production
 does not call at all (see the note after the table).
 
-### Mutations that hang, and why the row is empty
+### Mutations that stall the run, and the reading rule that cost four rows
 
-Narrowing `deferred.rs` wedged this binary for Task 2; four mutations here are
-in the same family and two were measured doing it. Any mutation that refuses a
-whole class of connection — the frontend protocol check, the frontend lease,
-the plugin hello, the plugin lease — leaves roughly fifteen integration tests
-spinning on an unbounded `while broker.live_file_count().await != 1 { yield }`
-loop with no timeout anywhere. Both attempts were killed at 600s with the
-`integration` binary still running and the other eleven binaries already green;
-nothing is concluded from either. The two remaining mutations of that family
-were not attempted. **This is itself a finding: `tests/integration` has no
-watchdog on session establishment, so a broker that stops accepting connections
-does not fail the suite, it stalls it.**
+Four mutations here refuse a whole class of connection — the frontend protocol
+check, the frontend lease, the plugin hello, the plugin lease. Every one of
+them leaves roughly fifteen integration tests spinning on an unbounded
+`while broker.live_file_count().await != 1 { yield }` loop with no timeout
+anywhere, so the `integration` binary never prints its `test result:` line and
+a plain `cargo test` run never terminates. **That part is a real finding about
+this suite and it stands: `tests/integration` has no watchdog on session
+establishment, so a broker that stops accepting connections does not fail the
+suite, it stalls it.**
+
+What does *not* follow is that the rows are unmeasurable, and the first pass of
+this section wrongly recorded all four as `not applicable` — two killed at 600s
+and two never attempted at all, on the inference that they were "the same
+family". All four are `covered`, by a wide margin, and the evidence was already
+on screen in the killed runs:
+
+> **When a run is killed, the stream is still evidence; only the summary is
+> lost.** `cargo test` prints `test … FAILED` per test as it goes and the
+> per-binary `test result:` line only at the end. Reading for the summary and
+> finding none is not the same as measuring nothing.
+
+Re-running the plugin-lease mutation under plain `cargo test` and killing it at
+150s reproduces exactly that: **10 `test … FAILED` lines streamed, 0
+`test result:` lines**. Ten genuine assertion failures were sitting in the
+output the first pass discarded.
+
+The four rows below were then re-measured under `cargo nextest`, whose
+per-test watchdog (`slow-timeout = { period = "15s", terminate-after = 2 }`)
+turns the stall into a bounded `TIMEOUT` verdict per test and still reports the
+rest, so a whole-workspace answer takes about a minute. Their `Suite result`
+cells carry three numbers — passed / failed / timed out — and name the harness,
+because a timed-out test is neither a pass nor an assertion failure and
+flattening it into either would misreport what was seen. Every other row in
+this table is a plain `cargo test` run.
 
 | Accept path | Mutation | Suite result | Verdict | Test added |
 |---|---|---|---|---|
@@ -565,31 +596,85 @@ does not fail the suite, it stalls it.**
 | A WebSocket **ping** frame is taken and answered — the third arm | `Message::Ping(_)` arm → `return Err(BrokerError::NonTextProtocolFrame)` | 260 / 0 | **gap** | `ws_origin::a_control_ping_is_answered_and_leaves_the_session_routable` |
 | The wire version the shipped plugin announces is the one the broker accepts | `PLUGIN_PROTOCOL_VERSION`: `"4"` → `"5"`, which every Rust fake plugin follows because it imports the constant | 259 / 1 | covered — `contracts::both_ends_declare_the_same_wire_version`, which reads `plugin/src/ui/hello.ts` | — |
 | A response arriving while its request is still pending is delivered to the caller | `PendingMap::complete`: drop the result instead of sending it, still returning `true` | 239 / 21 | covered — 21 tests | — |
-| A frontend announcing the current `FRONTEND_PROTOCOL_VERSION` is answered `Ready` | `rpc::serve_frontend`: `!=` → `==` | hangs — killed at 600s, `integration` still running | not applicable — not measurable by this mutation | — |
-| A frontend lease is granted while the broker is not closing | `Activity::frontend_lease`: `if state.closing` → `if !state.closing` | hangs — killed at 600s, `integration` still running | not applicable — not measurable by this mutation | — |
-| A well-formed `hello` first frame registers a session | `handle_socket`: treat a valid `Hello` as `FirstFrameNotHello` | not run | not applicable — same family as the two hangs above; not attempted | — |
-| A plugin lease is granted while the broker is not closing | `Activity::plugin_lease`: `if state.closing` → `if !state.closing` | not run | not applicable — same family; not attempted | — |
+| A frontend announcing the current `FRONTEND_PROTOCOL_VERSION` is answered `Ready` | `rpc::serve_frontend`: `!=` → `==` | 243 passed / 15 failed / 6 timed out (nextest) | covered — `multi_client::frontend_handshake_rejects_protocol_mismatch_before_registering_lease`, `multi_client::remote_broker_client_can_back_an_mcp_frontend` and 13 more | — |
+| A frontend lease is granted while the broker is not closing | `Activity::frontend_lease`: `if state.closing` → `if !state.closing` | 233 passed / 21 failed / 10 timed out (nextest) | covered — all three `idle_lifetime::*`, `runtime::the_service_is_up_before_any_election_has_happened` and 17 more | — |
+| A well-formed `hello` first frame registers a session | `handle_socket`: refuse any hello carrying a non-empty `connectionId`, i.e. every real one | 213 passed / 36 failed / 15 timed out (nextest) | covered — `all_tools::every_tool_and_prompt_round_trips_through_mcp_service` and 35 more | — |
+| A plugin lease is granted while the broker is not closing | `Activity::plugin_lease`: `if state.closing` → `if !state.closing` | 213 passed / 36 failed / 15 timed out (nextest) | covered — the same 36 | — |
+| An omitted `match` on a `search_nodes` call defaults to `contains` | `SearchMatchMode`: move `#[default]` from `Contains` to `Exact` | 262 / 2 (nextest) | covered — `search::search_nodes_public_contract_trims_defaults_and_rejects_invalid_values`, `contracts::tools_catalog::schema_snapshots_are_stable` | — |
+| An omitted `limit` on a `search_nodes` call defaults to 50 | `default_search_limit()`: `50` → `51` | 262 / 2 (nextest) | covered — the same two | — |
+| A plugin **progress** frame reaches its pending call | `handle_incoming`'s `Progress` arm: short-circuit the `note_progress` call | 262 / 2 (nextest) | covered — `resource_control::progress_resets_inactivity_but_not_the_total_deadline`, `resource_control::bounded_progress_is_forwarded_without_design_content` | — |
+| A plugin **response** frame completes its pending call | the `Response` arm: short-circuit the `complete` call | 241 / 23 (nextest) | covered — 23 tests | — |
+| A plugin **error** frame completes its pending call — the third of four accepted frame kinds | the `Error` arm: short-circuit the `complete` call | 264 / 0 (confirmed under both nextest and `cargo test`) | **gap** — and the test that looks like it covers it passes for the wrong reason; see below | `ws_origin::a_plugin_error_frame_completes_the_call_with_the_code_the_plugin_sent` |
+| A plugin **pong** frame (the JSON heartbeat reply, not the WebSocket control frame) is accepted | the `Pong` arm: `{}` → `return Err(BrokerError::SecondHello)` | 250 / 14 (nextest) | covered — 14 tests | — |
+| An accepted WebSocket **pong** refreshes the session's liveness clock — the *other* property of that arm | `Message::Pong` arm keeps accepting and returning `Ok`; only the `last_seen`/`touch_socket` pair is deleted | 264 / 0 | **gap** | `ws_origin::control_pongs_alone_hold_a_session_across_staleness_windows` |
+| An accepted WebSocket **ping** refreshes the session's liveness clock, pong reply unchanged | the same deletion in the `Message::Ping` arm, `send_with_shutdown` left in place | 264 / 0 | **gap** | `ws_origin::control_pings_alone_hold_a_session_across_staleness_windows` |
 
-### The three-armed liveness refresh, and the two arms nothing reaches
+### The three-armed liveness refresh, and the two properties per arm
 
 `handle_incoming` refreshes `last_seen` and calls `touch_socket` from three
 arms of one match — `Message::Text`, `Message::Pong`, `Message::Ping` — and
 `Message::Ping` additionally owes the sender a pong. The three are the same
 rule written three times, and the suite reaches exactly one of them:
 
-| Arm | Reached by | Verdict |
-|---|---|---|
-| `Message::Text` | every plugin response and progress frame | covered, by one test |
-| `Message::Pong` | nothing — the broker's heartbeat is a JSON `{"type":"ping"}` text frame, so no WebSocket pong ever arrives from a fake plugin | **gap** |
-| `Message::Ping` | nothing — no test client sends a WebSocket ping | **gap** |
+| Arm | Reached by | Accepted at all? | Refreshes the clock? |
+|---|---|---|---|
+| `Message::Text` | every plugin response and progress frame | covered (the arm cannot be refused without breaking everything) | covered, by one test |
+| `Message::Pong` | nothing — the broker's heartbeat is a JSON `{"type":"ping"}` text frame, so no WebSocket pong ever arrives from a fake plugin | **gap** | **gap** |
+| `Message::Ping` | nothing — no test client sends a WebSocket ping | **gap** | **gap** |
 
-The consequence is not cosmetic. Both arms fall through to a single
-`cleanup_socket`, so turning either into a refusal *unregisters the plugin
-session* on the next control frame a real client sends. Nothing in 260 tests
-saw it. Both new tests therefore assert more than "no error": each sends its
-control frame, then calls `broker.invoke` and reads the request frame back off
-the same socket, so the test fails if the session is gone or has stopped
-routing.
+Four rows, because *accepted* and *refreshes the clock* are two properties and
+one mutation each. The first pass of this section wrote only the acceptance
+half, and that was the same defect this sweep exists to find, one level up: a
+test that catches the frame being **refused** does not catch the frame being
+accepted and then silently hollowed out. Deleting only the two-line refresh
+from both control arms — frames still accepted, `Ok` still returned, the ping
+still answered — leaves the workspace at 264/0 with both acceptance tests
+green.
+
+The production shape each half misses is different, and both are real. Refusal
+falls through to `cleanup_socket`, so a real client's next control frame
+*unregisters the session immediately*. A dropped refresh is quieter: a plugin
+idle except for browser-level ping/pong keeps the socket open and is reaped by
+`HeartbeatExpired` once `stale_after` elapses, with the suite green throughout.
+
+The two liveness tests are written in virtual time (`#[tokio::test(start_paused = true)]`)
+against a broker configured with a 2s staleness window and a 200ms heartbeat,
+both far under the production ceilings. That is deliberate and it is the whole
+design: a wall-clock version of this test asserts "the session is still alive
+after N milliseconds", which a loaded machine can falsify while the code is
+correct — and it falsifies it *looking exactly like the bug*, which is how a
+liveness test gets muted and the row ends up worse than uncovered. Under paused
+time the clock moves only where the test moves it: each round opens a 500ms gap
+inside a 2s window, six rounds carry the session 3s past registration, and the
+smallest margin the passing path ever runs is 1.5s. The failing path is exact —
+under the dropped refresh the assertion fires at round 3, the first round past
+2.0s. Ten consecutive runs of the `ws_origin` tests and five consecutive runs
+of the whole 109-test integration binary were green.
+
+### The error frame: a covering test that passes for the wrong reason
+
+`handle_incoming`'s text arm dispatches four accepted plugin frame kinds, and
+they are four accept paths, not one. Progress, response and pong are pinned.
+The **error** frame is not, and it is the most interesting row in this section
+because it does not look unpinned.
+`ws_origin::wrong_socket_response_cannot_complete_a_real_pending_request` sends
+an error frame on the owning socket and ends with
+
+```rust
+assert!((&mut call.result).await.unwrap().is_err());
+```
+
+Short-circuiting the `complete` call in that arm leaves the workspace at
+**264 / 0** and that test green. Its broker runs on `Limits::reduced_for_test`,
+whose staleness window is 100ms; the test takes 114ms. The socket goes stale,
+`cleanup_socket` fails the pending call with `CONNECTION_LOST`, and `is_err()`
+is satisfied by *the session dying* rather than by the frame arriving. It is
+Lesson 2 with the assertion inverted: not "the value was accepted, therefore
+fine", but "an error came back, therefore the right error came back".
+
+The new test asserts the code the plugin actually sent — `NODE_NOT_FOUND`,
+which no connection-failure path can produce — on a broker whose staleness
+window the test cannot outlive.
 
 ### `SessionRegistry::try_send` and `try_send_to` are unreachable from production
 

@@ -216,12 +216,35 @@ fn metadata_request(request_id: &str) -> figma_dev_mcp_protocol::wire::Request {
     .unwrap()
 }
 
-/// Production heartbeat timings, so a control-frame test is not racing the
-/// 100ms staleness window `Limits::reduced_for_test` sets.
+type PluginSocket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// Production heartbeat timings, so a real-time control-frame test is not
+/// racing the 100ms staleness window `Limits::reduced_for_test` sets.
 async fn broker_with_production_heartbeat() -> (SocketAddr, Broker, tokio::task::JoinHandle<()>) {
+    serving(Limits::production()).await
+}
+
+/// A two-second staleness window with a heartbeat an order of magnitude
+/// shorter, for the virtual-time liveness tests. Both are far below the
+/// production ceilings `Limits::checked` enforces, and neither is ever reached
+/// in wall-clock time: those tests move the clock themselves.
+async fn broker_with_short_staleness() -> (SocketAddr, Broker, tokio::task::JoinHandle<()>) {
+    let limits = Limits::checked(
+        64 * 1024,
+        64 * 1024,
+        4,
+        Duration::from_millis(200),
+        Duration::from_secs(2),
+    )
+    .expect("a 200ms heartbeat and a 2s staleness window are below production");
+    serving(limits).await
+}
+
+async fn serving(limits: Limits) -> (SocketAddr, Broker, tokio::task::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
-    let broker = Broker::new(BrokerConfig::for_test(Limits::production()).unwrap());
+    let broker = Broker::new(BrokerConfig::for_test(limits).unwrap());
     let server = broker.clone();
     let task = tokio::spawn(async move {
         server.serve(listener).await.unwrap();
@@ -229,15 +252,35 @@ async fn broker_with_production_heartbeat() -> (SocketAddr, Broker, tokio::task:
     (address, broker, task)
 }
 
+/// Connects a plugin socket, sends its hello, and waits — bounded, and
+/// panicking here rather than somewhere confusing later — for the session to
+/// appear in the registry. `yield_now` rather than `sleep` so the same helper
+/// works under `start_paused`, where a sleep would move the clock the liveness
+/// tests below are measuring.
+async fn established_plugin_socket(
+    address: SocketAddr,
+    broker: &Broker,
+    connection_id: &str,
+    file_name: &str,
+) -> PluginSocket {
+    let (mut socket, _) = connect_async(request(address, Some("null"))).await.unwrap();
+    socket
+        .send(hello_frame(connection_id, file_name))
+        .await
+        .unwrap();
+    for _ in 0..400 {
+        if broker.live_file_count().await == 1 {
+            return socket;
+        }
+        tokio::task::yield_now().await;
+    }
+    panic!("the plugin session must register before the test proceeds");
+}
+
 /// Reads frames until the broker asks the plugin for `request_id`, skipping the
 /// heartbeat pings that share the socket. Reaching the frame is the proof the
 /// session is still routable, which `live_file_count` alone would not give.
-async fn expect_broker_request(
-    socket: &mut tokio_tungstenite::WebSocketStream<
-        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-    >,
-    request_id: &str,
-) {
+async fn expect_broker_request(socket: &mut PluginSocket, request_id: &str) {
     tokio::time::timeout(Duration::from_secs(2), async {
         loop {
             match socket.next().await {
@@ -261,24 +304,20 @@ async fn expect_broker_request(
 /// suite drives. A WebSocket control frame is a legal thing for a plugin socket
 /// to send at any time, and the two control arms answer for whether one is
 /// taken or treated as a protocol violation. Turning either arm into
-/// `NonTextProtocolFrame` left the whole workspace green, so this pins the
-/// pong arm and the test below pins the ping arm.
+/// `NonTextProtocolFrame` left the whole workspace green.
+///
+/// This is the *acceptance* half only: it fails when the frame is refused, and
+/// the assertion that actually fires is the session count — `broker.invoke`
+/// and the frame read both still succeed against a session already on its way
+/// out, so `expect_broker_request` loses the race with `cleanup_socket` and is
+/// here for the routing claim rather than for detection. The *liveness* half —
+/// an accepted frame that fails to refresh the clock — is a different property
+/// and is pinned separately below.
 #[tokio::test]
 async fn an_unsolicited_control_pong_keeps_the_session_routable() {
     const CONNECTION: &str = "123e4567-e89b-42d3-a456-426614174030";
     let (address, broker, task) = broker_with_production_heartbeat().await;
-    let (mut socket, _) = connect_async(request(address, Some("null"))).await.unwrap();
-    socket
-        .send(hello_frame(CONNECTION, "Control pong"))
-        .await
-        .unwrap();
-    for _ in 0..20 {
-        if broker.live_file_count().await == 1 {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(1)).await;
-    }
-    assert_eq!(broker.live_file_count().await, 1);
+    let mut socket = established_plugin_socket(address, &broker, CONNECTION, "Control pong").await;
 
     socket
         .send(Message::Pong(b"unsolicited".to_vec().into()))
@@ -291,7 +330,11 @@ async fn an_unsolicited_control_pong_keeps_the_session_routable() {
         .await
         .expect("a control pong must not unregister the session");
     expect_broker_request(&mut socket, "pong-request").await;
-    assert_eq!(broker.live_file_count().await, 1);
+    assert_eq!(
+        broker.live_file_count().await,
+        1,
+        "a control pong must not close the plugin session"
+    );
     task.abort();
 }
 
@@ -302,18 +345,7 @@ async fn an_unsolicited_control_pong_keeps_the_session_routable() {
 async fn a_control_ping_is_answered_and_leaves_the_session_routable() {
     const CONNECTION: &str = "123e4567-e89b-42d3-a456-426614174031";
     let (address, broker, task) = broker_with_production_heartbeat().await;
-    let (mut socket, _) = connect_async(request(address, Some("null"))).await.unwrap();
-    socket
-        .send(hello_frame(CONNECTION, "Control ping"))
-        .await
-        .unwrap();
-    for _ in 0..20 {
-        if broker.live_file_count().await == 1 {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(1)).await;
-    }
-    assert_eq!(broker.live_file_count().await, 1);
+    let mut socket = established_plugin_socket(address, &broker, CONNECTION, "Control ping").await;
 
     socket
         .send(Message::Ping(b"figma".to_vec().into()))
@@ -338,7 +370,133 @@ async fn a_control_ping_is_answered_and_leaves_the_session_routable() {
         .await
         .expect("a control ping must not unregister the session");
     expect_broker_request(&mut socket, "ping-request").await;
-    assert_eq!(broker.live_file_count().await, 1);
+    assert_eq!(
+        broker.live_file_count().await,
+        1,
+        "a control ping must not close the plugin session"
+    );
+    task.abort();
+}
+
+/// The liveness half of the pong arm, and the half the acceptance test above
+/// cannot see: keep accepting the frame, keep returning `Ok`, and delete only
+/// the two-line `last_seen`/`touch_socket` refresh, and the whole workspace
+/// stays green. In production that is the more likely regression — a plugin
+/// idle except for browser-level control frames is then reaped by
+/// `HeartbeatExpired` after `stale_after`, with nothing to say so.
+///
+/// Virtual time, not wall-clock, so the assertion cannot lose a race with a
+/// loaded machine and report a liveness regression that is not there: the clock
+/// moves only where this test moves it, and each round opens a 500ms gap inside
+/// a 2s staleness window. Six rounds carry the session 3s past its registration
+/// — one and a half full windows — so a dropped refresh is reaped during round
+/// five while a working one is never within 1.5s of the deadline.
+#[tokio::test(start_paused = true)]
+async fn control_pongs_alone_hold_a_session_across_staleness_windows() {
+    const CONNECTION: &str = "123e4567-e89b-42d3-a456-426614174032";
+    let (address, broker, task) = broker_with_short_staleness().await;
+    let mut socket = established_plugin_socket(address, &broker, CONNECTION, "Pong liveness").await;
+
+    for round in 0..6 {
+        socket
+            .send(Message::Pong(b"keepalive".to_vec().into()))
+            .await
+            .unwrap();
+        settle().await;
+        tokio::time::advance(Duration::from_millis(500)).await;
+        settle().await;
+        assert_eq!(
+            broker.live_file_count().await,
+            1,
+            "round {round}: a control pong must refresh the session's liveness clock"
+        );
+    }
+    task.abort();
+}
+
+/// The ping arm of the same property. A ping is answered by the broker whether
+/// or not the arm refreshes anything, so the reply assertion in the acceptance
+/// test says nothing about liveness; this is what says it.
+#[tokio::test(start_paused = true)]
+async fn control_pings_alone_hold_a_session_across_staleness_windows() {
+    const CONNECTION: &str = "123e4567-e89b-42d3-a456-426614174033";
+    let (address, broker, task) = broker_with_short_staleness().await;
+    let mut socket = established_plugin_socket(address, &broker, CONNECTION, "Ping liveness").await;
+
+    for round in 0..6 {
+        socket
+            .send(Message::Ping(b"keepalive".to_vec().into()))
+            .await
+            .unwrap();
+        settle().await;
+        tokio::time::advance(Duration::from_millis(500)).await;
+        settle().await;
+        assert_eq!(
+            broker.live_file_count().await,
+            1,
+            "round {round}: a control ping must refresh the session's liveness clock"
+        );
+    }
+    task.abort();
+}
+
+/// Lets the broker task run the frame that was just written without moving the
+/// clock. Under `start_paused` tokio only auto-advances when the runtime has
+/// nothing to do, so keeping a task ready is what stops the staleness timer
+/// from firing before the frame has been read.
+async fn settle() {
+    for _ in 0..100 {
+        tokio::task::yield_now().await;
+    }
+}
+
+/// The text arm dispatches four accepted plugin frames — progress, response,
+/// error and pong — and the error frame is the one nothing pinned. It looks
+/// pinned: `wrong_socket_response_cannot_complete_a_real_pending_request` ends
+/// with `assert!((&mut call.result).await.unwrap().is_err())` after sending an
+/// error frame on the owning socket. But that broker runs on
+/// `Limits::reduced_for_test`, so 100ms later the socket goes stale,
+/// `cleanup_socket` fails the pending call with `CONNECTION_LOST`, and the
+/// `is_err()` is satisfied by the session dying rather than by the frame
+/// arriving. Skipping the `complete` call entirely leaves the workspace at
+/// 264/0. The fix is to assert the code the plugin actually sent, on a broker
+/// whose staleness window the test cannot outlive.
+#[tokio::test]
+async fn a_plugin_error_frame_completes_the_call_with_the_code_the_plugin_sent() {
+    const CONNECTION: &str = "123e4567-e89b-42d3-a456-426614174034";
+    let (address, broker, task) = broker_with_production_heartbeat().await;
+    let mut socket = established_plugin_socket(address, &broker, CONNECTION, "Error frame").await;
+
+    let connection = ConnectionId::try_from(CONNECTION).unwrap();
+    let mut call = broker
+        .invoke(&connection, metadata_request("error-request"))
+        .await
+        .expect("a live session must accept an invocation");
+    expect_broker_request(&mut socket, "error-request").await;
+
+    socket
+        .send(Message::Text(
+            serde_json::to_string(&json!({
+                "type": "error",
+                "requestId": "error-request",
+                "error": {"code": "NODE_NOT_FOUND", "retryable": false}
+            }))
+            .unwrap()
+            .into(),
+        ))
+        .await
+        .unwrap();
+
+    let error = tokio::time::timeout(Duration::from_secs(5), &mut call.result)
+        .await
+        .expect("a plugin error frame must complete its pending call")
+        .expect("the pending sender must not be dropped")
+        .expect_err("an error frame completes the call as an error");
+    assert_eq!(
+        error.code(),
+        figma_dev_mcp_protocol::error::ErrorCode::NodeNotFound,
+        "the caller must see the plugin's own code, not a connection failure"
+    );
     task.abort();
 }
 
