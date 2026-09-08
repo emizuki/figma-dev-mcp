@@ -77,24 +77,16 @@ const EMPTY_INPUTS: Record<
 }
 
 describe("closed read dispatcher", () => {
-  test("every named milestone operation returns a typed unavailable error", async () => {
+  // Was "every named milestone operation returns a typed unavailable error",
+  // whose body `continue`d on all thirteen names in OPERATION_NAMES and so
+  // executed nothing: every milestone operation is implemented now, and the
+  // list of exceptions had grown to cover the list itself. The claim worth
+  // keeping is the complement — no name in OPERATION_NAMES falls through to
+  // the unavailable answer — and this asserts it once per name.
+  test("every named operation is dispatched rather than answered as unavailable", async () => {
+    installFigma({})
+    let dispatched = 0
     for (const [index, operation] of OPERATION_NAMES.entries()) {
-      if (
-        operation === "get_metadata" ||
-        operation === "get_selection" ||
-        operation === "get_nodes" ||
-        operation === "search_nodes" ||
-        operation === "get_design_context" ||
-        operation === "get_styles" ||
-        operation === "get_variables" ||
-        operation === "get_components" ||
-        operation === "get_fonts" ||
-        operation === "get_dev_mode_data" ||
-        operation === "get_reactions" ||
-        operation === "get_motion" ||
-        operation === "get_screenshot"
-      )
-        continue
       const correlationId = controllerRequestId(index)
       const request = parseControllerBoundMessage({
         type: "request",
@@ -104,17 +96,19 @@ describe("closed read dispatcher", () => {
         target: {},
         operation: { operation, input: EMPTY_INPUTS[operation] },
       })
-      expect(request.type).toBe("request")
       if (request.type !== "request")
         throw new Error("test request did not decode")
 
-      expect(await dispatchControllerMessage(request)).toEqual({
-        type: "error",
+      const answer = await dispatchControllerMessage(request)
+      dispatched += 1
+      expect(answer).toMatchObject({
+        type: "response",
         controllerRequestId: correlationId,
         requestId: `plugin-${index}`,
-        error: { code: "CAPABILITY_UNAVAILABLE", retryable: false },
       })
     }
+    expect(dispatched).toBe(OPERATION_NAMES.length)
+    expect(dispatched).toBe(13)
   })
 
   test("get_metadata returns bounded file and page metadata", async () => {
