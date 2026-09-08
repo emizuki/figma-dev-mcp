@@ -358,3 +358,176 @@ async fn screenshot_rejects_svg_scale_before_dispatch() {
     server_task.abort();
     broker_task.abort();
 }
+
+/// `scale` belongs to the two raster formats and `svgOutlineText`,
+/// `svgIdAttribute` and `svgSimplifyStroke` to SVG, and the screenshot visitor
+/// enforces that pairing in three separate arms. The test above pins one
+/// refusal — `svg` plus `scale` — and this pins the four acceptances that
+/// refusal is the mirror of. It pins them by what the plugin is asked for
+/// rather than by the call merely not failing: three of the four options are
+/// booleans with serde defaults, so a call that was accepted and then quietly
+/// served the default would look identical from the client side. Every value
+/// sent here is the opposite of its default.
+#[tokio::test]
+async fn jpeg_scale_and_the_three_svg_options_reach_the_plugin_intact() {
+    const CONNECTION: &str = "123e4567-e89b-42d3-a456-426614174002";
+    let (address, broker, broker_task) = running_broker().await;
+    let mut request = format!("ws://{address}/").into_client_request().unwrap();
+    request
+        .headers_mut()
+        .insert("Origin", "null".parse().unwrap());
+    let (mut plugin, _) = connect_async(request).await.unwrap();
+    plugin.send(hello(CONNECTION)).await.unwrap();
+    for _ in 0..20 {
+        if broker.live_file_count().await == 1 {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+
+    let (server_io, client_io) = tokio::io::duplex(64 * 1024);
+    let server_task = tokio::spawn(async move {
+        McpService::new(broker.clone())
+            .serve(server_io)
+            .await
+            .unwrap()
+    });
+    let client = ().serve(client_io).await.unwrap();
+
+    let plugin_task = tokio::spawn(async move {
+        for _ in 0..2 {
+            let request = loop {
+                let Some(Ok(Message::Text(frame))) = plugin.next().await else {
+                    panic!("plugin did not receive request")
+                };
+                let request: Value = serde_json::from_str(&frame).unwrap();
+                if request["type"] == "request" {
+                    break request;
+                }
+            };
+            assert_eq!(request["operation"]["operation"], "get_screenshot");
+            let request_id = request["requestId"].as_str().unwrap().to_owned();
+            let input = request["operation"]["input"].clone();
+            let result = if input["format"] == "jpeg" {
+                assert_eq!(
+                    input["scale"],
+                    json!(3.0),
+                    "jpeg scale must survive: {input}"
+                );
+                assert!(
+                    input.get("svgOutlineText").is_none(),
+                    "a raster call must not carry SVG options: {input}"
+                );
+                json!({
+                    "assets": [{
+                        "status": "success",
+                        "value": {
+                            "format": "jpeg",
+                            "nodeId": "8:1",
+                            "dataBase64": TINY_PNG_BASE64,
+                            "width": 1,
+                            "height": 1
+                        }
+                    }],
+                    "truncated": false,
+                    "observation": observation()
+                })
+            } else {
+                assert_eq!(
+                    input["format"], "svg",
+                    "unexpected screenshot input {input}"
+                );
+                assert_eq!(
+                    input["svgOutlineText"],
+                    json!(false),
+                    "svgOutlineText must survive: {input}"
+                );
+                assert_eq!(
+                    input["svgIdAttribute"],
+                    json!(true),
+                    "svgIdAttribute must survive: {input}"
+                );
+                assert_eq!(
+                    input["svgSimplifyStroke"],
+                    json!(false),
+                    "svgSimplifyStroke must survive: {input}"
+                );
+                assert!(
+                    input.get("scale").is_none(),
+                    "an SVG call must not carry a scale: {input}"
+                );
+                json!({
+                    "assets": [{
+                        "status": "success",
+                        "value": {
+                            "format": "svg",
+                            "nodeId": "9:1",
+                            "source": SAFE_SVG,
+                            "safe": true
+                        }
+                    }],
+                    "truncated": false,
+                    "observation": observation()
+                })
+            };
+            plugin
+                .send(Message::Text(
+                    json!({
+                        "type": "response",
+                        "requestId": request_id,
+                        "result": {"operation": "get_screenshot", "result": result}
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await
+                .unwrap();
+        }
+    });
+
+    let connection = ("connectionId".to_owned(), json!(CONNECTION));
+
+    let jpeg = client
+        .call_tool(
+            rmcp::model::CallToolRequestParams::new("get_screenshot").with_arguments(
+                serde_json::Map::from_iter([
+                    connection.clone(),
+                    ("format".to_owned(), json!("jpeg")),
+                    ("selector".to_owned(), json!({"nodeId": "8:1"})),
+                    ("scale".to_owned(), json!(3.0)),
+                ]),
+            ),
+        )
+        .await
+        .expect("a jpeg screenshot may carry a scale");
+    assert_ne!(jpeg.is_error, Some(true));
+    let jpeg_value = jpeg.structured_content.clone().unwrap();
+    assert_eq!(jpeg_value["assets"][0]["value"]["format"], "jpeg");
+    assert_eq!(jpeg_value["assets"][0]["value"]["nodeId"], "8:1");
+
+    let svg = client
+        .call_tool(
+            rmcp::model::CallToolRequestParams::new("get_screenshot").with_arguments(
+                serde_json::Map::from_iter([
+                    connection,
+                    ("format".to_owned(), json!("svg")),
+                    ("selector".to_owned(), json!({"nodeId": "9:1"})),
+                    ("svgOutlineText".to_owned(), json!(false)),
+                    ("svgIdAttribute".to_owned(), json!(true)),
+                    ("svgSimplifyStroke".to_owned(), json!(false)),
+                ]),
+            ),
+        )
+        .await
+        .expect("an SVG screenshot may carry every SVG option");
+    assert_ne!(svg.is_error, Some(true));
+    assert_eq!(
+        svg.structured_content.clone().unwrap()["assets"][0]["value"]["source"],
+        SAFE_SVG
+    );
+
+    plugin_task.await.unwrap();
+    drop(client);
+    server_task.abort();
+    broker_task.abort();
+}

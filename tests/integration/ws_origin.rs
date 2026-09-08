@@ -216,6 +216,132 @@ fn metadata_request(request_id: &str) -> figma_dev_mcp_protocol::wire::Request {
     .unwrap()
 }
 
+/// Production heartbeat timings, so a control-frame test is not racing the
+/// 100ms staleness window `Limits::reduced_for_test` sets.
+async fn broker_with_production_heartbeat() -> (SocketAddr, Broker, tokio::task::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let broker = Broker::new(BrokerConfig::for_test(Limits::production()).unwrap());
+    let server = broker.clone();
+    let task = tokio::spawn(async move {
+        server.serve(listener).await.unwrap();
+    });
+    (address, broker, task)
+}
+
+/// Reads frames until the broker asks the plugin for `request_id`, skipping the
+/// heartbeat pings that share the socket. Reaching the frame is the proof the
+/// session is still routable, which `live_file_count` alone would not give.
+async fn expect_broker_request(
+    socket: &mut tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >,
+    request_id: &str,
+) {
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            match socket.next().await {
+                Some(Ok(Message::Text(frame))) => {
+                    let value: serde_json::Value = serde_json::from_str(&frame).unwrap();
+                    if value["type"] == "request" && value["requestId"] == request_id {
+                        return;
+                    }
+                }
+                Some(Ok(_)) => {}
+                other => panic!("socket ended before the request arrived: {other:?}"),
+            }
+        }
+    })
+    .await
+    .expect("the broker must still route to this session");
+}
+
+/// `handle_incoming` refreshes a session's liveness from three separate arms —
+/// text, pong and ping — and only the text arm is on the path the rest of the
+/// suite drives. A WebSocket control frame is a legal thing for a plugin socket
+/// to send at any time, and the two control arms answer for whether one is
+/// taken or treated as a protocol violation. Turning either arm into
+/// `NonTextProtocolFrame` left the whole workspace green, so this pins the
+/// pong arm and the test below pins the ping arm.
+#[tokio::test]
+async fn an_unsolicited_control_pong_keeps_the_session_routable() {
+    const CONNECTION: &str = "123e4567-e89b-42d3-a456-426614174030";
+    let (address, broker, task) = broker_with_production_heartbeat().await;
+    let (mut socket, _) = connect_async(request(address, Some("null"))).await.unwrap();
+    socket
+        .send(hello_frame(CONNECTION, "Control pong"))
+        .await
+        .unwrap();
+    for _ in 0..20 {
+        if broker.live_file_count().await == 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+    assert_eq!(broker.live_file_count().await, 1);
+
+    socket
+        .send(Message::Pong(b"unsolicited".to_vec().into()))
+        .await
+        .unwrap();
+
+    let connection = ConnectionId::try_from(CONNECTION).unwrap();
+    let _call = broker
+        .invoke(&connection, metadata_request("pong-request"))
+        .await
+        .expect("a control pong must not unregister the session");
+    expect_broker_request(&mut socket, "pong-request").await;
+    assert_eq!(broker.live_file_count().await, 1);
+    task.abort();
+}
+
+/// The ping arm of the same match, and it owes the sender a reply as well as a
+/// live session: a plugin that pings and is answered with a closed socket has
+/// no way to tell a healthy broker from a wedged one.
+#[tokio::test]
+async fn a_control_ping_is_answered_and_leaves_the_session_routable() {
+    const CONNECTION: &str = "123e4567-e89b-42d3-a456-426614174031";
+    let (address, broker, task) = broker_with_production_heartbeat().await;
+    let (mut socket, _) = connect_async(request(address, Some("null"))).await.unwrap();
+    socket
+        .send(hello_frame(CONNECTION, "Control ping"))
+        .await
+        .unwrap();
+    for _ in 0..20 {
+        if broker.live_file_count().await == 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+    assert_eq!(broker.live_file_count().await, 1);
+
+    socket
+        .send(Message::Ping(b"figma".to_vec().into()))
+        .await
+        .unwrap();
+    let payload = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            match socket.next().await {
+                Some(Ok(Message::Pong(payload))) => return payload,
+                Some(Ok(_)) => {}
+                other => panic!("socket ended before the pong arrived: {other:?}"),
+            }
+        }
+    })
+    .await
+    .expect("a control ping must be answered");
+    assert_eq!(payload.as_ref(), b"figma");
+
+    let connection = ConnectionId::try_from(CONNECTION).unwrap();
+    let _call = broker
+        .invoke(&connection, metadata_request("ping-request"))
+        .await
+        .expect("a control ping must not unregister the session");
+    expect_broker_request(&mut socket, "ping-request").await;
+    assert_eq!(broker.live_file_count().await, 1);
+    task.abort();
+}
+
 #[tokio::test]
 async fn wrong_socket_response_cannot_complete_a_real_pending_request() {
     let (address, broker, task) = running_broker().await;

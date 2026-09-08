@@ -451,8 +451,172 @@ Each of the 74 gaps was verified twice, with the new tests in place:
 
 ## tests/integration
 
+A gap here means a tool errors on a valid request, or a live plugin session is
+dropped, and nothing notices. The seam is a real MCP request travelling through
+the production `McpService`, the production broker, and a scripted fake plugin
+on a real WebSocket.
+
+The Scope row above is confirmed rather than corrected: re-running Task 1's
+command against this tree gives 20 refusal-named tests in `tests/integration`,
+of which 4 also name an accept (`still_`, `accepts`, `round_trips`), leaving 16
+refusal-only. Those 20 tests, with every indirection expanded, are **46 accept
+paths**: `TOOL_NAMES` is fourteen names and `PROMPT_NAMES` three, the screenshot
+format rule pairs four fields with two format families, `search must include
+query or types` is a disjunction with two satisfying halves, and
+`handle_incoming` refreshes session liveness from three separate match arms.
+Grouping any of those by their shared constant would have hidden the findings:
+every one of the seven gaps is one member of a group whose siblings are pinned.
+
+Every mutation below was applied to production code, measured, and reverted;
+the committed diff adds tests only. Baseline before this task: **260 passed /
+0 failed**. After: **264 passed / 0 failed**.
+
+**35 covered, 7 gaps, 4 not applicable.**
+
+Only one of Task 2's two shapes appears, and it accounts for every gap. There
+is no inclusive-ceiling row here at all — this seam holds no ceilings of its
+own — but all seven gaps are the untested member of a rule written in more than
+one place:
+
+- `scale` is refused for SVG and accepted for raster in **two** arms, `Png`
+  and `Jpeg`. The png half is pinned; the jpeg half was not.
+- The three `svg*` options are three separate fields in one arm, and the
+  refusal `reject_svg_fields` is called from both raster arms. Not one of the
+  three acceptances was pinned.
+- `search must include query or types` has two satisfying halves. `query`
+  alone is what every other search test sends; `types` alone was unpinned.
+- `handle_incoming` refreshes liveness from three arms — text, pong, ping.
+  Only the text arm is on the path the suite drives.
+
+The last of those is the one worth reading twice. Turning either control-frame
+arm into `NonTextProtocolFrame` unregisters the plugin session on the next ping
+or pong a real client sends, and all 260 tests stayed green.
+
+### What the covered rows prove
+
+The fourteen tool rows all rest on `all_tools::every_tool_and_prompt_round_trips_through_mcp_service`
+plus one per-family round-trip test, and both use `assert_structured_success`,
+which validates the payload against the tool's published output schema and
+compares the compatibility text block to the structured content. That is a
+survival assertion, not an `is_ok()`, and it was measured rather than read: the
+`content::structured` row below empties the payload while keeping the call
+successful, and 22 tests go red. Two covered rows are weaker and are marked as
+such — `types`/`cursor` survive trimming is held only by
+`search_nodes_public_contract_trims_defaults_and_rejects_invalid_values`, a
+`serde_json::from_value` unit test that never reaches the seam, and
+`SessionRegistry::try_send_to` is held only by a unit test of an API production
+does not call at all (see the note after the table).
+
+### Mutations that hang, and why the row is empty
+
+Narrowing `deferred.rs` wedged this binary for Task 2; four mutations here are
+in the same family and two were measured doing it. Any mutation that refuses a
+whole class of connection — the frontend protocol check, the frontend lease,
+the plugin hello, the plugin lease — leaves roughly fifteen integration tests
+spinning on an unbounded `while broker.live_file_count().await != 1 { yield }`
+loop with no timeout anywhere. Both attempts were killed at 600s with the
+`integration` binary still running and the other eleven binaries already green;
+nothing is concluded from either. The two remaining mutations of that family
+were not attempted. **This is itself a finding: `tests/integration` has no
+watchdog on session establishment, so a broker that stops accepting connections
+does not fail the suite, it stalls it.**
+
 | Accept path | Mutation | Suite result | Verdict | Test added |
 |---|---|---|---|---|
+| A valid `tools/call` for `get_components` reaches its handler | `ToolName::try_from`: `.find(\|name\| name.as_str() == value && *name != Self::GetComponents)` | 258 / 2 | covered — `all_tools::every_tool_and_prompt_round_trips_through_mcp_service`, `components_fonts::components_and_fonts_round_trip_through_server_broker_and_plugin` | — |
+| The same for `get_design_context` | the same exclusion, `Self::GetDesignContext` | 258 / 2 | covered — `all_tools::…round_trips…`, `navigation::navigation_tools_round_trip_through_server_broker_and_plugin` | — |
+| The same for `get_dev_mode_data` | the same exclusion, `Self::GetDevModeData` | 258 / 2 | covered — `all_tools::…round_trips…`, `dev_mode::dev_mode_reactions_and_motion_round_trip_through_server_broker_and_plugin` | — |
+| The same for `get_fonts` | the same exclusion, `Self::GetFonts` | 258 / 2 | covered — `all_tools::…round_trips…`, `components_fonts::…` | — |
+| The same for `get_metadata` | the same exclusion, `Self::GetMetadata` | 244 / 16 | covered — `metadata::get_metadata_round_trips_through_server_broker_and_plugin` and 15 more | — |
+| The same for `get_motion` | the same exclusion, `Self::GetMotion` | 258 / 2 | covered — `all_tools::…round_trips…`, `dev_mode::…` | — |
+| The same for `get_nodes` | the same exclusion, `Self::GetNodes` | 258 / 2 | covered — `all_tools::…round_trips…`, `navigation::…` | — |
+| The same for `get_reactions` | the same exclusion, `Self::GetReactions` | 258 / 2 | covered — `all_tools::…round_trips…`, `dev_mode::…` | — |
+| The same for `get_screenshot` | the same exclusion, `Self::GetScreenshot` | 256 / 4 | covered — `screenshot::screenshot_round_trips_raster_bytes_and_validated_svg_source` and 3 more | — |
+| The same for `get_selection` | the same exclusion, `Self::GetSelection` | 258 / 2 | covered — `all_tools::…round_trips…`, `navigation::…` | — |
+| The same for `get_styles` | the same exclusion, `Self::GetStyles` | 258 / 2 | covered — `all_tools::…round_trips…`, `design_system::styles_and_variables_round_trip_through_server_broker_and_plugin` | — |
+| The same for `get_variables` | the same exclusion, `Self::GetVariables` | 258 / 2 | covered — `all_tools::…round_trips…`, `design_system::…` | — |
+| The same for `list_files` | the same exclusion, `Self::ListFiles` | 251 / 9 | covered — `runtime::the_service_is_up_before_any_election_has_happened` and 8 more | — |
+| The same for `search_nodes` | the same exclusion, `Self::SearchNodes` | 256 / 4 | covered — the three `search::search_nodes_without_connection_id_*` tests and 1 more | — |
+| Every name `ToolName::ALL` dispatches is also advertised by `tools_catalog()` — two independent enumerations of the same fourteen | delete the `definition::<GetFontsInput, GetFontsResult>` entry from the `tools_catalog()` vec | 249 / 11 | covered — `tools_catalog::tools_catalog_is_complete_sorted_read_only_and_cacheable` and 10 more | — |
+| A tool's structured payload reaches the client intact, not merely successfully | `content::structured`: return `CallToolResult::structured({})`, discarding the value | 238 / 22 | covered — every `assert_structured_success` caller; this is what makes the fourteen rows above survival rows | — |
+| `prompts/get` resolves `prototype_flow_strategy` with its body | `get_prompt_result`: `prompt_by_name(name).filter(\|p\| p.name != "prototype_flow_strategy")` | 256 / 4 | covered — `prompts::prompts_get_returns_one_user_text_message_and_rejects_unknown_names` and 3 more | — |
+| The same for `read_design_strategy` | the same filter, `read_design_strategy` | 256 / 4 | covered — same four | — |
+| The same for `style_audit_strategy` | the same filter, `style_audit_strategy` | 256 / 4 | covered — same four | — |
+| `resources/read` serves the body at `figma://strategy/prototype_flow_strategy` | `read_resource_result`: `.filter(\|p\| p.name != "prototype_flow_strategy")` after the prefix strip | 257 / 3 | covered — `strategy_resources::resources_read_serves_the_same_text_as_prompts_get` and 2 more | — |
+| The same for `read_design_strategy` | the same filter, `read_design_strategy` | 256 / 4 | covered — same, plus `modern_2026_07_28_discover_and_stateless_lists_over_real_stdio` | — |
+| The same for `style_audit_strategy` | the same filter, `style_audit_strategy` | 257 / 3 | covered — same three | — |
+| A `png` screenshot carrying `scale` is accepted and dispatched with it | `ScreenshotFormatTag::Png` arm: `if scale.is_some() { return Err(…) }` | 258 / 2 | covered — `screenshot::screenshot_round_trips_raster_bytes_and_validated_svg_source`, `all_tools::…round_trips…` | — |
+| A `jpeg` screenshot carrying `scale` is accepted and dispatched with it — the second arm of the same rule | the same clamp in the `Jpeg` arm | 260 / 0 | **gap** | `screenshot::jpeg_scale_and_the_three_svg_options_reach_the_plugin_intact` |
+| An `svg` screenshot carrying `svgOutlineText` is accepted and the value survives | `Svg` arm: `if svg_outline_text.is_some() { return Err(…) }` | 260 / 0 | **gap** | the same test |
+| An `svg` screenshot carrying `svgIdAttribute` is accepted and the value survives | `Svg` arm: `if svg_id_attribute.is_some() { return Err(…) }` | 260 / 0 | **gap** | the same test |
+| An `svg` screenshot carrying `svgSimplifyStroke` is accepted and the value survives | `Svg` arm: `if svg_simplify_stroke.is_some() { return Err(…) }` | 260 / 0 | **gap** | the same test |
+| A `search_nodes` call carrying `query` and no `types` is accepted | `SearchNodesInput::deserialize`: `query.is_none() && types.is_empty()` → `types.is_empty()` | 256 / 4 | covered — the three `search::search_nodes_without_connection_id_*` tests and 1 more | — |
+| A `search_nodes` call carrying `types` and no `query` is accepted — the other half of the same disjunction | the same guard → `input.query.is_none()` | 260 / 0 | **gap** | `search::a_search_carrying_only_node_types_is_dispatched_with_those_types` |
+| A `types` list survives trimming into the dispatched input | replace the rebuilt list with `["TEXT"]` | 259 / 1 | covered — `search::search_nodes_public_contract_trims_defaults_and_rejects_invalid_values`, a `from_value` unit test that never reaches the seam | — |
+| A `query` survives trimming into the dispatched input | replace the trimmed query with `"Zzz"` | 257 / 3 | covered — the same test plus two that assert it at the plugin | — |
+| A `cursor` survives trimming into the dispatched input | `input.cursor = None` after trimming | 259 / 1 | covered — the same `from_value` unit test only | — |
+| With exactly one live session and no `connectionId`, the registry selects it | `SessionRegistry::select`: `(Some(session), None) => Selection::Ambiguous` | 257 / 3 | covered — `session_registry::selection_requires_exactly_one_live_session_and_never_falls_back` and 2 more | — |
+| An explicit, live `connectionId` selects that session | `select`: `.map_or(Selection::Missing, \|_\| Selection::Missing)` | 226 / 34 | covered — 34 tests, including `multi_client::leader_routes_explicit_calls_and_rejects_ambiguous_omissions` | — |
+| Two sessions with the same `fileName` both register | add a `file_name` duplicate check to `SessionRegistry::insert` | 258 / 2 | covered — `session_registry::duplicate_connection_id_is_rejected_but_duplicate_file_name_is_allowed` and 1 more | — |
+| `SessionRegistry::try_send_to` delivers to the session's current socket | invert `session.socket_id != expected_socket_id` | 259 / 1 | covered — `session_registry::outbound_queue_reports_full_without_waiting` only, and that API is unreachable from production (see below) | — |
+| A WebSocket handshake with `Origin: null` is accepted | `require_null_origin`: `==` → `!=` | 211 / 49 | covered — 49 tests | — |
+| A plugin text frame refreshes the session's liveness | delete the `last_seen`/`touch_socket` pair from the `Message::Text` arm | 259 / 1 | covered — `resource_control::progress_resets_inactivity_but_not_the_total_deadline` only | — |
+| A WebSocket **pong** frame from the plugin is taken, not treated as a protocol violation — the second of three liveness arms | `Message::Pong(_)` arm → `return Err(BrokerError::NonTextProtocolFrame)` | 260 / 0 | **gap** | `ws_origin::an_unsolicited_control_pong_keeps_the_session_routable` |
+| A WebSocket **ping** frame is taken and answered — the third arm | `Message::Ping(_)` arm → `return Err(BrokerError::NonTextProtocolFrame)` | 260 / 0 | **gap** | `ws_origin::a_control_ping_is_answered_and_leaves_the_session_routable` |
+| The wire version the shipped plugin announces is the one the broker accepts | `PLUGIN_PROTOCOL_VERSION`: `"4"` → `"5"`, which every Rust fake plugin follows because it imports the constant | 259 / 1 | covered — `contracts::both_ends_declare_the_same_wire_version`, which reads `plugin/src/ui/hello.ts` | — |
+| A response arriving while its request is still pending is delivered to the caller | `PendingMap::complete`: drop the result instead of sending it, still returning `true` | 239 / 21 | covered — 21 tests | — |
+| A frontend announcing the current `FRONTEND_PROTOCOL_VERSION` is answered `Ready` | `rpc::serve_frontend`: `!=` → `==` | hangs — killed at 600s, `integration` still running | not applicable — not measurable by this mutation | — |
+| A frontend lease is granted while the broker is not closing | `Activity::frontend_lease`: `if state.closing` → `if !state.closing` | hangs — killed at 600s, `integration` still running | not applicable — not measurable by this mutation | — |
+| A well-formed `hello` first frame registers a session | `handle_socket`: treat a valid `Hello` as `FirstFrameNotHello` | not run | not applicable — same family as the two hangs above; not attempted | — |
+| A plugin lease is granted while the broker is not closing | `Activity::plugin_lease`: `if state.closing` → `if !state.closing` | not run | not applicable — same family; not attempted | — |
+
+### The three-armed liveness refresh, and the two arms nothing reaches
+
+`handle_incoming` refreshes `last_seen` and calls `touch_socket` from three
+arms of one match — `Message::Text`, `Message::Pong`, `Message::Ping` — and
+`Message::Ping` additionally owes the sender a pong. The three are the same
+rule written three times, and the suite reaches exactly one of them:
+
+| Arm | Reached by | Verdict |
+|---|---|---|
+| `Message::Text` | every plugin response and progress frame | covered, by one test |
+| `Message::Pong` | nothing — the broker's heartbeat is a JSON `{"type":"ping"}` text frame, so no WebSocket pong ever arrives from a fake plugin | **gap** |
+| `Message::Ping` | nothing — no test client sends a WebSocket ping | **gap** |
+
+The consequence is not cosmetic. Both arms fall through to a single
+`cleanup_socket`, so turning either into a refusal *unregisters the plugin
+session* on the next control frame a real client sends. Nothing in 260 tests
+saw it. Both new tests therefore assert more than "no error": each sends its
+control frame, then calls `broker.invoke` and reads the request frame back off
+the same socket, so the test fails if the session is gone or has stopped
+routing.
+
+### `SessionRegistry::try_send` and `try_send_to` are unreachable from production
+
+Inverting the socket-identity comparison in `try_send_to` — which should break
+every routed call in the workspace — turned exactly one test red, and that test
+is a unit test of the registry. Grepping the callers explains it: production
+routes through `Broker::invoke` and `Broker::cancel`, which call
+`registry.route_for(connection_id)` and then a free `encoded_plugin_send`
+helper in `lib.rs`. Nothing outside `registry.rs` calls `try_send` or
+`try_send_to`. The `RouteError::ConnectionChanged` guard inside `try_send_to`
+therefore has no production counterpart at all — `route_for` reads the current
+socket rather than comparing against an expected one, so there is no second
+implementation to disagree with. This is **not** a bug under the ruling (there
+are not two implementations that differ); it is dead API carrying a guard, and
+a test that pins behaviour the product never executes. Reported, not fixed:
+deleting a public API is outside a sweep that adds tests.
+
+### Why this area has no inclusive-ceiling row
+
+Task 2's dominant shape does not appear here. Every bound this seam observes —
+envelope size, queue depth, returned-node counts, the raster scale range — is
+enforced in `crates/protocol` and was swept in the `tests/contracts` section
+above. What `tests/integration` owns is *routing and admission*: which name
+dispatches, which session is selected, which frame is accepted on the socket.
+Those are membership decisions, not comparisons, and their failure mode is a
+missing member rather than an off-by-one — which is why every gap here is one
+untested member of a group whose siblings were pinned.
 
 ## tests/policy
 
