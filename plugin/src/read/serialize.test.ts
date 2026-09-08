@@ -4,6 +4,7 @@ import { LocalCancellationController } from "../main/cancellation"
 import { createProgressReporter, type ProgressFrame } from "../main/progress"
 import { parseReadResult } from "../shared/result-validation"
 import {
+  byteLength,
   clampText,
   collectInstanceIdentities,
   collectStyleNames,
@@ -2488,4 +2489,1187 @@ test("no node summary carries a visible field", () => {
     expect(summary).toBeDefined()
     expect(Object.hasOwn(summary as object, "visible")).toBe(false)
   }
+})
+
+describe("every named enum the serializer maps", () => {
+  const fullData = (node: Record<string, unknown>) =>
+    serializeNodeForest([node], {
+      detail: "full",
+      depth: 0,
+      dedupeComponents: false,
+    }).nodes[0]?.data as Record<string, unknown>
+
+  test("every blend mode is reported, and the two Figma defaults are omitted", () => {
+    const mapped: [string, string | undefined][] = [
+      ["PASS_THROUGH", undefined],
+      ["NORMAL", undefined],
+      ["DARKEN", "darken"],
+      ["MULTIPLY", "multiply"],
+      ["LINEAR_BURN", "linearBurn"],
+      ["COLOR_BURN", "colorBurn"],
+      ["LIGHTEN", "lighten"],
+      ["SCREEN", "screen"],
+      ["LINEAR_DODGE", "linearDodge"],
+      ["COLOR_DODGE", "colorDodge"],
+      ["OVERLAY", "overlay"],
+      ["SOFT_LIGHT", "softLight"],
+      ["HARD_LIGHT", "hardLight"],
+      ["DIFFERENCE", "difference"],
+      ["EXCLUSION", "exclusion"],
+      ["HUE", "hue"],
+      ["SATURATION", "saturation"],
+      ["COLOR", "color"],
+      ["LUMINOSITY", "luminosity"],
+      ["FUTURE_MODE", undefined],
+    ]
+    expect(
+      mapped.map(([blendMode]) => fullData(base({ blendMode })).blendMode),
+    ).toEqual(mapped.map(([, wire]) => wire))
+  })
+
+  test("every image scale mode is reported, and an unknown one falls back to fill", () => {
+    const mapped: [unknown, "fill" | "fit" | "crop" | "tile"][] = [
+      ["FILL", "fill"],
+      ["FIT", "fit"],
+      ["CROP", "crop"],
+      ["TILE", "tile"],
+      ["FUTURE_MODE", "fill"],
+      [undefined, "fill"],
+    ]
+    expect(
+      mapped.map(
+        ([scaleMode]) =>
+          paints([{ type: "IMAGE", imageHash: "img", scaleMode }])[0],
+      ),
+    ).toEqual(
+      mapped.map(([, wire]) => ({
+        type: "image",
+        imageRef: "img",
+        scaleMode: wire,
+        opacity: 1,
+      })),
+    )
+  })
+
+  test("every effect the serializer models is reported under its own tag", () => {
+    expect(
+      effects([
+        {
+          type: "DROP_SHADOW",
+          color: { r: 1, g: 0, b: 0, a: 1 },
+          offset: { x: 1, y: 2 },
+          radius: 3,
+          spread: 4,
+        },
+        {
+          type: "INNER_SHADOW",
+          color: { r: 0, g: 1, b: 0, a: 1 },
+          offset: { x: 5, y: 6 },
+          radius: 7,
+          spread: 8,
+        },
+        { type: "LAYER_BLUR", radius: 9 },
+        { type: "BACKGROUND_BLUR", radius: 10 },
+      ]),
+    ).toEqual([
+      {
+        type: "dropShadow",
+        color: { r: 1, g: 0, b: 0, a: 1 },
+        offsetX: 1,
+        offsetY: 2,
+        radius: 3,
+        spread: 4,
+      },
+      {
+        type: "innerShadow",
+        color: { r: 0, g: 1, b: 0, a: 1 },
+        offsetX: 5,
+        offsetY: 6,
+        radius: 7,
+        spread: 8,
+      },
+      { type: "layerBlur", radius: 9 },
+      { type: "backgroundBlur", radius: 10 },
+    ])
+  })
+
+  test("every stroke align, text align and auto-resize is reported", () => {
+    const aligns: [string, string][] = [
+      ["INSIDE", "inside"],
+      ["OUTSIDE", "outside"],
+      ["CENTER", "center"],
+    ]
+    expect(
+      aligns.map(([strokeAlign]) => {
+        const data = fullData(
+          base({
+            strokes: [{ type: "SOLID", color: { r: 0, g: 0, b: 0, a: 1 } }],
+            strokeAlign,
+          }),
+        )
+        return (data.strokes as { align?: string }).align
+      }),
+    ).toEqual(aligns.map(([, wire]) => wire))
+
+    const horizontals: [string, string | undefined][] = [
+      ["LEFT", undefined],
+      ["CENTER", "center"],
+      ["RIGHT", "right"],
+      ["JUSTIFIED", "justified"],
+    ]
+    const verticals: [string, string | undefined][] = [
+      ["TOP", undefined],
+      ["CENTER", "center"],
+      ["BOTTOM", "bottom"],
+    ]
+    const resizes: [string, string | undefined][] = [
+      ["NONE", undefined],
+      ["WIDTH_AND_HEIGHT", "widthAndHeight"],
+      ["HEIGHT", "height"],
+      ["TRUNCATE", "truncate"],
+    ]
+    const textData = (extras: Record<string, unknown>) =>
+      fullData(base({ type: "TEXT", characters: "Hi", ...extras })).text as {
+        alignHorizontal?: string
+        alignVertical?: string
+        autoResize?: string
+      }
+    expect(
+      horizontals.map(
+        ([textAlignHorizontal]) =>
+          textData({ textAlignHorizontal }).alignHorizontal,
+      ),
+    ).toEqual(horizontals.map(([, wire]) => wire))
+    expect(
+      verticals.map(
+        ([textAlignVertical]) => textData({ textAlignVertical }).alignVertical,
+      ),
+    ).toEqual(verticals.map(([, wire]) => wire))
+    expect(
+      resizes.map(
+        ([textAutoResize]) => textData({ textAutoResize }).autoResize,
+      ),
+    ).toEqual(resizes.map(([, wire]) => wire))
+  })
+
+  test("every axis align, sizing mode and constraint axis is reported", () => {
+    const aligns: [string, string | undefined][] = [
+      ["MIN", "min"],
+      ["CENTER", "center"],
+      ["MAX", "max"],
+      ["SPACE_BETWEEN", "spaceBetween"],
+      ["BASELINE", "baseline"],
+      ["FUTURE", undefined],
+    ]
+    const layoutOf = (extras: Record<string, unknown>) =>
+      fullData(base({ layoutMode: "HORIZONTAL", ...extras })).autoLayout as {
+        primaryAlign?: string
+        counterAlign?: string
+        mode: string
+        primarySizing: string
+        counterSizing: string
+      }
+    expect(
+      aligns.map(
+        ([primaryAxisAlignItems]) =>
+          layoutOf({ primaryAxisAlignItems }).primaryAlign,
+      ),
+    ).toEqual(aligns.map(([, wire]) => wire))
+    expect(
+      aligns.map(
+        ([counterAxisAlignItems]) =>
+          layoutOf({ counterAxisAlignItems }).counterAlign,
+      ),
+    ).toEqual(aligns.map(([, wire]) => wire))
+
+    expect(
+      (["HORIZONTAL", "VERTICAL", "GRID"] as const).map(
+        (layoutMode) => fullData(base({ layoutMode })).autoLayout,
+      ),
+    ).toEqual(
+      (["horizontal", "vertical", "grid"] as const).map((mode) => ({
+        mode,
+        primarySizing: "fixed",
+        counterSizing: "fixed",
+        gap: 0,
+        paddingTop: 0,
+        paddingRight: 0,
+        paddingBottom: 0,
+        paddingLeft: 0,
+      })),
+    )
+
+    const sizings: [string, string][] = [
+      ["FIXED", "fixed"],
+      ["AUTO", "hug"],
+      ["FILL", "fill"],
+    ]
+    expect(
+      sizings.map(
+        ([counterAxisSizingMode]) =>
+          layoutOf({ counterAxisSizingMode }).counterSizing,
+      ),
+    ).toEqual(sizings.map(([, wire]) => wire))
+
+    const axes: [string, string][] = [
+      ["MIN", "min"],
+      ["CENTER", "center"],
+      ["MAX", "max"],
+      ["STRETCH", "stretch"],
+      ["SCALE", "scale"],
+    ]
+    expect(
+      axes.map(
+        ([horizontal]) =>
+          fullData(base({ constraints: { horizontal, vertical: "STRETCH" } }))
+            .constraints,
+      ),
+    ).toEqual(
+      axes.map(([, wire]) => ({ horizontal: wire, vertical: "stretch" })),
+    )
+    expect(
+      axes.map(
+        ([vertical]) =>
+          fullData(base({ constraints: { horizontal: "STRETCH", vertical } }))
+            .constraints,
+      ),
+    ).toEqual(
+      axes.map(([, wire]) => ({ horizontal: "stretch", vertical: wire })),
+    )
+    expect(
+      fullData(base({ constraints: { horizontal: "MIN", vertical: "MIN" } }))
+        .constraints,
+    ).toBeUndefined()
+    expect(
+      fullData(base({ constraints: { horizontal: "MIN", vertical: "MAX" } }))
+        .constraints,
+    ).toEqual({ horizontal: "min", vertical: "max" })
+  })
+
+  test("every style id field is reported under its own kind", () => {
+    const data = fullData(
+      base({
+        fillStyleId: "S:fill",
+        strokeStyleId: "S:stroke",
+        textStyleId: "S:text",
+        effectStyleId: "S:effect",
+        gridStyleId: "S:grid",
+      }),
+    )
+    expect(data.styleReferences).toEqual([
+      { id: "S:fill", kind: "paint" },
+      { id: "S:stroke", kind: "stroke" },
+      { id: "S:text", kind: "text" },
+      { id: "S:effect", kind: "effect" },
+      { id: "S:grid", kind: "grid" },
+    ])
+  })
+})
+
+describe("what a full node carries about its own geometry and text", () => {
+  test("geometry carries rotation, opacity, transform and bounds", () => {
+    const node = base({
+      rotation: 0.5,
+      opacity: 0.25,
+      absoluteTransform: [
+        [2, 3, 4],
+        [5, 6, 7],
+      ],
+    })
+    const result = serializeNodeForest([node], {
+      detail: "compact",
+      depth: 0,
+      dedupeComponents: false,
+    })
+    expect((result.nodes[0]?.data as { geometry: unknown }).geometry).toEqual({
+      rotation: 0.5,
+      opacity: 0.25,
+      transform: { m00: 2, m01: 3, m02: 4, m10: 5, m11: 6, m12: 7 },
+      bounds: { x: 10, y: 20, width: 300, height: 200 },
+    })
+
+    const bare = serializeNodeForest(
+      [{ id: "1:9", name: "Bare", type: "FRAME", visible: true, children: [] }],
+      { detail: "compact", depth: 0, dedupeComponents: false },
+    )
+    expect((bare.nodes[0]?.data as { geometry: unknown }).geometry).toEqual({
+      rotation: 0,
+      opacity: 1,
+      transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+    })
+  })
+
+  test("styled ranges are asked for every field the serializer reports, on the node itself", () => {
+    const asked: unknown[][] = []
+    const node = base({
+      type: "TEXT",
+      characters: "Hello",
+      badge: "from-this",
+      getStyledTextSegments(this: { badge: string }, fields: unknown[]) {
+        asked.push(fields)
+        return [
+          {
+            start: 1,
+            end: 4,
+            fontName: { family: this.badge, style: "Regular" },
+            fontSize: 12,
+            fontWeight: 700,
+            textDecoration: "UNDERLINE",
+            lineHeight: { unit: "PERCENT", value: 150 },
+            letterSpacing: { unit: "PERCENT", value: 2 },
+            fills: [],
+          },
+        ]
+      },
+    })
+
+    const data = serializeNodeForest([node], {
+      detail: "full",
+      depth: 0,
+      dedupeComponents: false,
+    }).nodes[0]?.data as { text: { styledRanges: unknown[] } }
+
+    expect(asked).toEqual([
+      [
+        "fontName",
+        "fontSize",
+        "fontWeight",
+        "textDecoration",
+        "lineHeight",
+        "letterSpacing",
+        "fills",
+      ],
+    ])
+    expect(data.text.styledRanges).toEqual([
+      {
+        start: 1,
+        end: 4,
+        style: {
+          fontFamily: "from-this",
+          fontStyle: "Regular",
+          paints: [],
+          fontSize: 12,
+          fontWeight: 700,
+          textDecoration: "underline",
+          lineHeight: { unit: "percent", value: 150 },
+          letterSpacing: { unit: "percent", value: 2 },
+        },
+      },
+    ])
+  })
+
+  test("a mixed paint list, a mixed stroke list and a mixed corner radius are each reported", () => {
+    expect(paints("mixed")).toEqual([{ type: "mixed" }])
+    expect(paints([Symbol("figma.mixed")])).toEqual([{ type: "mixed" }])
+
+    const data = serializeNodeForest(
+      [
+        base({
+          strokes: "mixed",
+          strokeWeight: 2,
+          strokeAlign: "INSIDE",
+          cornerRadius: "mixed",
+          topLeftRadius: 1,
+          topRightRadius: 2,
+          bottomRightRadius: 3,
+          bottomLeftRadius: 4,
+        }),
+      ],
+      { detail: "full", depth: 0, dedupeComponents: false },
+    ).nodes[0]?.data as Record<string, unknown>
+
+    expect(data.strokes).toEqual({
+      paints: [{ type: "mixed" }],
+      weight: 2,
+      align: "inside",
+    })
+    expect(data.cornerRadius).toEqual({
+      kind: "perCorner",
+      topLeft: 1,
+      topRight: 2,
+      bottomRight: 3,
+      bottomLeft: 4,
+    })
+  })
+
+  test("a variable bound inside an array or one level deeper is found", () => {
+    const data = serializeNodeForest(
+      [
+        base({
+          boundVariables: {
+            fills: [{ type: "VARIABLE_ALIAS", id: "V:in-array" }],
+            componentProperties: {
+              Label: { type: "VARIABLE_ALIAS", id: "V:nested" },
+            },
+            width: { type: "VARIABLE_ALIAS", id: "V:direct" },
+          },
+        }),
+      ],
+      { detail: "compact", depth: 0, dedupeComponents: false },
+    ).nodes[0]?.data as { variableReferences: { id: string }[] }
+
+    expect(
+      data.variableReferences.map((reference) => reference.id).sort(),
+    ).toEqual(["V:direct", "V:in-array", "V:nested"])
+  })
+
+  test("every component property kind carries its own value", () => {
+    expect(
+      namedComponentProperties({
+        componentProperties: {
+          Copy: { type: "TEXT", value: "Buy now" },
+          Toggle: { type: "BOOLEAN", value: true },
+          Swap: { type: "INSTANCE_SWAP", value: "3:1" },
+          Size: { type: "VARIANT", value: "Large" },
+          Future: { type: "SLOT", value: "x" },
+        },
+      }),
+    ).toEqual([
+      { name: "Copy", value: { kind: "text", value: "Buy now" } },
+      { name: "Size", value: { kind: "variant", value: "Large" } },
+      { name: "Swap", value: { kind: "instanceSwap", value: "3:1" } },
+      { name: "Toggle", value: { kind: "boolean", value: true } },
+    ])
+  })
+})
+
+describe("what the bounded walk and the serializer account for", () => {
+  const leaf = (id: string, extras: Record<string, unknown> = {}) => ({
+    id,
+    name: id,
+    type: "FRAME",
+    visible: true,
+    children: [],
+    ...extras,
+  })
+
+  test("byteLength counts UTF-8, not code units", () => {
+    // Each expectation is the UTF-8 length of the JSON text, counted from the
+    // encoding rules rather than from what the function returns: two quotes
+    // plus one, two, three or four bytes for the character between them.
+    expect(byteLength("")).toBe(2)
+    expect(byteLength("a")).toBe(3)
+    expect(byteLength("é")).toBe(4)
+    expect(byteLength("€")).toBe(5)
+    expect(byteLength("😀")).toBe(6)
+  })
+
+  test("the walk reports what it visited and what it returned", () => {
+    const root = {
+      id: "1:1",
+      name: "Root",
+      type: "FRAME",
+      visible: true,
+      children: [leaf("1:2"), leaf("1:3")],
+    }
+    const seen: string[] = []
+    const walked = walkNodeForest([root], {}, (node, context) => {
+      seen.push(String((node as { id: string }).id))
+      context.tryReturn(node)
+    })
+
+    expect(seen).toEqual(["1:1", "1:2", "1:3"])
+    expect(walked).toEqual({
+      truncated: false,
+      visitedNodes: 3,
+      returnedNodes: 3,
+    })
+  })
+
+  test("the walk stops at the visit ceiling, and at the node and byte ceilings it returns under", () => {
+    const root = {
+      id: "1:1",
+      name: "Root",
+      type: "FRAME",
+      visible: true,
+      children: [leaf("1:2"), leaf("1:3")],
+    }
+
+    const visitCut = walkNodeForest(
+      [root],
+      { limits: { visitedNodes: 2 } },
+      () => {},
+    )
+    expect(visitCut).toEqual({
+      truncated: true,
+      truncation: { reason: "nodeLimit", visitedNodes: 2 },
+      visitedNodes: 2,
+      returnedNodes: 0,
+    })
+
+    const returned: boolean[] = []
+    const nodeCut = walkNodeForest(
+      [root],
+      { limits: { returnedNodes: 2 } },
+      (node, context) => {
+        returned.push(context.tryReturn(node))
+      },
+    )
+    expect(returned).toEqual([true, true, false])
+    expect(nodeCut.truncation).toEqual({
+      reason: "nodeLimit",
+      visitedNodes: 3,
+    })
+    expect(nodeCut.returnedNodes).toBe(2)
+
+    const payload = { badge: "x" }
+    const budget = byteLength(payload) * 2 - 1
+    const accepted: boolean[] = []
+    const byteCut = walkNodeForest(
+      [root],
+      { limits: { encodedBytes: budget } },
+      (_node, context) => {
+        accepted.push(context.tryReturn(payload))
+      },
+    )
+    expect(accepted).toEqual([true, false])
+    expect(byteCut.truncation).toEqual({
+      reason: "byteLimit",
+      encodedBytes: byteLength(payload) * 2,
+    })
+    expect(byteCut.returnedNodes).toBe(1)
+    // Once a budget is spent the walk stops rather than finishing the tree.
+    expect(byteCut.visitedNodes).toBe(2)
+
+    // Spending it on the very first node stops the walk before that node's
+    // own children, and before any later root.
+    const atOnce = walkNodeForest(
+      [root, leaf("2:1")],
+      { limits: { encodedBytes: byteLength(payload) - 1 } },
+      (_node, context) => {
+        context.tryReturn(payload)
+      },
+    )
+    expect(atOnce.visitedNodes).toBe(1)
+    expect(atOnce.returnedNodes).toBe(0)
+  })
+
+  test("the walk descends every root and never revisits an ancestor", () => {
+    const child: Record<string, unknown> = leaf("1:2")
+    const root: Record<string, unknown> = {
+      id: "1:1",
+      name: "Root",
+      type: "FRAME",
+      visible: true,
+      children: [child],
+    }
+    child.children = [root]
+    const seen: string[] = []
+    const walked = walkNodeForest([root, leaf("2:1")], {}, (node) => {
+      seen.push(String((node as { id: string }).id))
+    })
+
+    expect(seen).toEqual(["1:1", "1:2", "1:1", "2:1"])
+    expect(walked.visitedNodes).toBe(4)
+    expect(walked.truncated).toBe(false)
+  })
+
+  test("the serializer's ceilings are inclusive and its bytes accumulate", () => {
+    const root = {
+      id: "1:1",
+      name: "Root",
+      type: "FRAME",
+      visible: true,
+      children: [leaf("1:2"), leaf("1:3")],
+    }
+    const options = {
+      detail: "minimal" as const,
+      depth: 5,
+      dedupeComponents: false,
+    }
+
+    expect(
+      serializeNodeForest([root], { ...options, limits: { visitedNodes: 3 } })
+        .truncated,
+    ).toBe(false)
+    const visitCut = serializeNodeForest([root], {
+      ...options,
+      limits: { visitedNodes: 2 },
+    })
+    expect(visitCut.truncation).toEqual({
+      reason: "nodeLimit",
+      visitedNodes: 2,
+    })
+
+    expect(
+      serializeNodeForest([root], { ...options, limits: { returnedNodes: 3 } })
+        .truncated,
+    ).toBe(false)
+    const nodeCut = serializeNodeForest([root], {
+      ...options,
+      limits: { returnedNodes: 2 },
+    })
+    expect(nodeCut.truncation).toEqual({ reason: "nodeLimit", visitedNodes: 3 })
+
+    // Each node is measured on its own, before its children are attached, so
+    // the budget is spent across three payloads of the shape the protocol
+    // declares — not on one assembled tree.
+    const rootPayload = {
+      summary: {
+        id: "1:1",
+        name: "Root",
+        nodeType: "FRAME",
+        childIds: ["1:2", "1:3"],
+      },
+      data: {},
+      children: [],
+      childrenTruncated: false,
+    }
+    const leafPayload = {
+      summary: { id: "1:2", name: "1:2", nodeType: "FRAME" },
+      data: {},
+      children: [],
+      childrenTruncated: false,
+    }
+    const byteCut = serializeNodeForest([root], {
+      ...options,
+      limits: {
+        encodedBytes: byteLength(rootPayload) + byteLength(leafPayload) - 1,
+      },
+    })
+    expect(byteCut.truncation).toEqual({
+      reason: "byteLimit",
+      encodedBytes: byteLength(rootPayload) + byteLength(leafPayload),
+    })
+    expect(byteCut.nodes[0]?.children).toEqual([])
+    expect(byteCut.nodes[0]?.childrenTruncated).toBe(true)
+  })
+
+  test("a repeated component becomes a stub that is measured and counted like any node", () => {
+    const component = {
+      id: "3:1",
+      name: "Icon",
+      type: "COMPONENT",
+      visible: true,
+      children: [leaf("3:2")],
+    }
+    const set = {
+      id: "2:1",
+      name: "Buttons",
+      type: "COMPONENT_SET",
+      visible: true,
+      children: [leaf("2:2")],
+    }
+    const root = {
+      id: "1:1",
+      name: "Root",
+      type: "FRAME",
+      visible: true,
+      children: [component, component, set, set],
+    }
+    const options = {
+      detail: "minimal" as const,
+      depth: 5,
+      dedupeComponents: true,
+    }
+
+    const result = serializeNodeForest([root], options)
+    expect(
+      result.nodes[0]?.children.map((child) => [
+        child.summary.id,
+        child.childrenTruncated,
+      ]),
+    ).toEqual([
+      ["3:1", false],
+      ["3:1", true],
+      ["2:1", false],
+      ["2:1", true],
+    ])
+
+    // The stub is a returned node like any other, and its bytes are spent.
+    // Four returned nodes are the root, the component, the component's own
+    // child and the stub — the set does not fit, which it would if the stub
+    // were free.
+    const stub = result.nodes[0]?.children[1]
+    const upToStub = serializeNodeForest([root], {
+      ...options,
+      limits: { returnedNodes: 4 },
+    })
+    expect(
+      upToStub.nodes[0]?.children.map((child) => [
+        child.summary.id,
+        child.childrenTruncated,
+      ]),
+    ).toEqual([
+      ["3:1", false],
+      ["3:1", true],
+    ])
+    const stubBytes = byteLength(stub)
+    const wholeBytes = byteLength(result.nodes[0])
+    const byteCut = serializeNodeForest([root], {
+      ...options,
+      limits: { encodedBytes: wholeBytes - stubBytes },
+    })
+    expect(byteCut.truncation?.reason).toBe("byteLimit")
+  })
+
+  test("the byte ceiling is exclusive at a dedupe stub's boundary", () => {
+    const component = {
+      id: "3:1",
+      name: "Icon",
+      type: "COMPONENT",
+      visible: true,
+      children: [],
+    }
+    const root = {
+      id: "1:1",
+      name: "Root",
+      type: "FRAME",
+      visible: true,
+      children: [component, component],
+    }
+    const options = {
+      detail: "minimal" as const,
+      depth: 3,
+      dedupeComponents: true,
+    }
+    const summary = { id: "3:1", name: "Icon", nodeType: "COMPONENT" }
+    const rootPayload = {
+      summary: {
+        id: "1:1",
+        name: "Root",
+        nodeType: "FRAME",
+        childIds: ["3:1", "3:1"],
+      },
+      data: {},
+      children: [],
+      childrenTruncated: false,
+    }
+    const componentPayload = {
+      summary,
+      data: {},
+      children: [],
+      childrenTruncated: false,
+    }
+    const stubPayload = {
+      summary,
+      data: {},
+      children: [],
+      childrenTruncated: true,
+    }
+    const upTo =
+      byteLength(rootPayload) +
+      byteLength(componentPayload) +
+      byteLength(stubPayload)
+
+    expect(
+      serializeNodeForest([root], {
+        ...options,
+        limits: { encodedBytes: upTo },
+      }).truncated,
+    ).toBe(false)
+    const cut = serializeNodeForest([root], {
+      ...options,
+      limits: { encodedBytes: upTo - 1 },
+    })
+    expect(cut.truncation).toEqual({ reason: "byteLimit", encodedBytes: upTo })
+    expect(cut.nodes[0]?.children).toHaveLength(1)
+  })
+
+  test("a component that is its own ancestor is cut, not replaced by a stub", () => {
+    const component: Record<string, unknown> = {
+      id: "3:1",
+      name: "Icon",
+      type: "COMPONENT",
+      visible: true,
+    }
+    const inner: Record<string, unknown> = {
+      id: "3:2",
+      name: "Glyph",
+      type: "FRAME",
+      visible: true,
+      children: [component],
+    }
+    component.children = [inner]
+
+    const result = serializeNodeForest([component], {
+      detail: "minimal",
+      depth: 9,
+      dedupeComponents: true,
+    })
+    const repeated = result.nodes[0]?.children[0]?.children[0]
+    expect(repeated?.summary.id).toBe("3:1")
+    // A stub would carry no childrenTruncation; a cycle cut names its reason.
+    expect(repeated?.childrenTruncation).toEqual({
+      reason: "nodeLimit",
+      visitedNodes: 3,
+    })
+  })
+
+  test("a childless component is remembered for dedupe too", () => {
+    const component = {
+      id: "3:1",
+      name: "Icon",
+      type: "COMPONENT",
+      visible: true,
+      children: [],
+    }
+    const root = {
+      id: "1:1",
+      name: "Root",
+      type: "FRAME",
+      visible: true,
+      children: [component, component],
+    }
+
+    const result = serializeNodeForest([root], {
+      detail: "minimal",
+      depth: 5,
+      dedupeComponents: true,
+    })
+    expect(
+      result.nodes[0]?.children.map((child) => child.childrenTruncated),
+    ).toEqual([false, true])
+  })
+
+  test("a cycle is cut at the node that repeats, with its own reason", () => {
+    const child: Record<string, unknown> = {
+      id: "1:2",
+      name: "Child",
+      type: "FRAME",
+      visible: true,
+    }
+    const root: Record<string, unknown> = {
+      id: "1:1",
+      name: "Root",
+      type: "FRAME",
+      visible: true,
+      children: [child],
+    }
+    child.children = [root]
+
+    const result = serializeNodeForest([root], {
+      detail: "minimal",
+      depth: 9,
+      dedupeComponents: false,
+    })
+    const repeated = result.nodes[0]?.children[0]?.children[0]
+    expect(repeated?.summary.id).toBe("1:1")
+    expect(repeated?.childrenTruncated).toBe(true)
+    expect(repeated?.childrenTruncation).toEqual({
+      reason: "nodeLimit",
+      visitedNodes: 3,
+    })
+    expect(result.truncation).toEqual({ reason: "nodeLimit", visitedNodes: 3 })
+  })
+
+  test("a parent whose child was cut says so and carries the reason", () => {
+    const root = {
+      id: "1:1",
+      name: "Root",
+      type: "FRAME",
+      visible: true,
+      children: [leaf("1:2"), leaf("1:3")],
+    }
+
+    const result = serializeNodeForest([root], {
+      detail: "minimal",
+      depth: 5,
+      dedupeComponents: false,
+      limits: { returnedNodes: 2 },
+    })
+    expect(result.nodes[0]?.children.map((child) => child.summary.id)).toEqual([
+      "1:2",
+    ])
+    expect(result.nodes[0]?.childrenTruncated).toBe(true)
+    expect(result.nodes[0]?.childrenTruncation).toEqual({
+      reason: "nodeLimit",
+      visitedNodes: 3,
+    })
+  })
+
+  test("a cut root stops the forest, and a negative depth is floored at zero", () => {
+    const options = {
+      detail: "minimal" as const,
+      depth: -5,
+      dedupeComponents: false,
+    }
+    const root = {
+      id: "1:1",
+      name: "Root",
+      type: "FRAME",
+      visible: true,
+      children: [leaf("1:2")],
+    }
+    const floored = serializeNodeForest([root], options)
+    expect(floored.truncation).toEqual({
+      reason: "depthLimit",
+      appliedDepth: 0,
+    })
+
+    const cut = serializeNodeForest([leaf("1:1"), leaf("1:2"), leaf("1:3")], {
+      detail: "minimal",
+      depth: 0,
+      dedupeComponents: false,
+      limits: { returnedNodes: 2 },
+    })
+    expect(cut.nodes.map((node) => node.summary.id)).toEqual(["1:1", "1:2"])
+
+    // The third root would fit on its own; the forest still stops at the
+    // second, because a cut root ends the loop rather than skipping one entry.
+    const payload = (id: string, name: string) => ({
+      summary: { id, name, nodeType: "FRAME" },
+      data: {},
+      children: [],
+      childrenTruncated: false,
+    })
+    const small = leaf("1:1")
+    const large = { ...leaf("1:2"), name: "a name long enough to overflow" }
+    const byteCut = serializeNodeForest([small, large, leaf("1:3")], {
+      detail: "minimal",
+      depth: 0,
+      dedupeComponents: false,
+      limits: {
+        encodedBytes:
+          byteLength(payload("1:1", "1:1")) + byteLength(payload("1:3", "1:3")),
+      },
+    })
+    expect(byteCut.nodes.map((node) => node.summary.id)).toEqual(["1:1"])
+  })
+
+  test("a full node carries the compact fields it shares, and a summary drops an unnamed child", () => {
+    const child = {
+      id: "",
+      name: "Unnamed",
+      type: "RECTANGLE",
+      visible: true,
+      children: [],
+    }
+    const instance = {
+      id: "1:2",
+      name: "Instance",
+      type: "INSTANCE",
+      visible: true,
+      componentId: "3:1",
+      componentSetId: "2:1",
+      children: [],
+    }
+    const set = {
+      id: "2:1",
+      name: "Buttons",
+      type: "COMPONENT_SET",
+      visible: true,
+      children: [],
+    }
+    const root = base({
+      layoutMode: "HORIZONTAL",
+      constraints: { horizontal: "STRETCH", vertical: "STRETCH" },
+      children: [child, instance, set],
+    })
+
+    const result = serializeNodeForest([root], {
+      detail: "full",
+      depth: 2,
+      dedupeComponents: false,
+    })
+    const data = result.nodes[0]?.data as Record<string, unknown>
+    // The child with no id is walked but left out of childIds.
+    expect(result.nodes[0]?.summary.childIds).toEqual(["1:2", "2:1"])
+    expect(data.geometry).toBeDefined()
+    expect(data.autoLayout).toEqual({
+      mode: "horizontal",
+      primarySizing: "fixed",
+      counterSizing: "fixed",
+      gap: 0,
+      paddingTop: 0,
+      paddingRight: 0,
+      paddingBottom: 0,
+      paddingLeft: 0,
+    })
+    expect(data.constraints).toEqual({
+      horizontal: "stretch",
+      vertical: "stretch",
+    })
+    expect(
+      (result.nodes[0]?.children[1]?.data as Record<string, unknown>).instance,
+    ).toEqual({
+      componentId: "3:1",
+      componentSetId: "2:1",
+      properties: [],
+    })
+    expect(
+      (result.nodes[0]?.children[2]?.data as Record<string, unknown>).component,
+    ).toEqual({ componentId: "2:1", properties: [] })
+  })
+
+  test("a full dedupe stub carries the full shape", () => {
+    const component = {
+      id: "3:1",
+      name: "Icon",
+      type: "COMPONENT",
+      visible: true,
+      children: [],
+    }
+    const root = base({ children: [component, component] })
+
+    const result = serializeNodeForest([root], {
+      detail: "full",
+      depth: 3,
+      dedupeComponents: true,
+    })
+    expect(result.nodes[0]?.children[1]?.data).toEqual({
+      styleReferences: [],
+      variableReferences: [],
+      paints: [],
+      effects: [],
+      component: { componentId: "3:1", properties: [] },
+    })
+  })
+
+  test("a second depth cut does not replace the first", () => {
+    const deep = (level: number): Record<string, unknown> => ({
+      id: `1:${level}`,
+      name: `Level ${level}`,
+      type: "FRAME",
+      visible: true,
+      children: level >= 4 ? [] : [deep(level + 1)],
+    })
+
+    const result = serializeNodeForest([deep(0), deep(0)], {
+      detail: "minimal",
+      depth: 1,
+      dedupeComponents: false,
+    })
+    expect(result.truncation).toEqual({
+      reason: "depthLimit",
+      appliedDepth: 1,
+    })
+  })
+})
+
+describe("what the three pre-passes accept", () => {
+  const instanceNode = (
+    id: string,
+    extras: Record<string, unknown> = {},
+  ): Record<string, unknown> => ({
+    id,
+    name: id,
+    type: "INSTANCE",
+    visible: true,
+    children: [],
+    ...extras,
+  })
+
+  test("an instance identity prefers the node's own ids over the main component's", async () => {
+    const node = instanceNode("1:1", {
+      componentId: "own-component",
+      componentSetId: "own-set",
+      getMainComponentAsync: async () => ({
+        id: "main-component",
+        parent: { type: "COMPONENT_SET", id: "main-set" },
+      }),
+    })
+
+    const identities = await collectInstanceIdentities([node])
+    expect(identities.get("1:1")).toEqual({
+      componentId: "own-component",
+      componentSetId: "own-set",
+      properties: [],
+    })
+  })
+
+  test("one instance id is resolved once, however many nodes carry it", async () => {
+    let calls = 0
+    const make = () =>
+      instanceNode("1:1", {
+        getMainComponentAsync: async () => {
+          calls += 1
+          return { id: "3:1" }
+        },
+      })
+    const root = {
+      id: "0:1",
+      name: "Root",
+      type: "FRAME",
+      visible: true,
+      children: [make(), make()],
+    }
+
+    const identities = await collectInstanceIdentities([root])
+    expect(calls).toBe(1)
+    expect(identities.get("1:1")).toEqual({
+      componentId: "3:1",
+      properties: [],
+    })
+  })
+
+  test("a main-component lookup that throws costs only that identity", async () => {
+    const hostile = instanceNode("1:1", {
+      getMainComponentAsync: (): Promise<unknown> => {
+        throw new Error("dynamic page")
+      },
+    })
+    const fine = instanceNode("1:2", {
+      componentId: "3:2",
+    })
+    const root = {
+      id: "0:1",
+      name: "Root",
+      type: "FRAME",
+      visible: true,
+      children: [hostile, fine],
+    }
+
+    const identities = await collectInstanceIdentities([root])
+    expect([...identities.keys()]).toEqual(["1:2"])
+  })
+
+  test("a style or variable lookup that throws costs only that name", async () => {
+    const node = {
+      id: "1:1",
+      name: "Card",
+      type: "FRAME",
+      visible: true,
+      children: [],
+      fillStyleId: "S:bad",
+      strokeStyleId: "S:good",
+      boundVariables: {
+        fills: [{ type: "VARIABLE_ALIAS", id: "V:bad" }],
+        width: { type: "VARIABLE_ALIAS", id: "V:good" },
+      },
+    }
+
+    const styles = await collectStyleNames([node], (id) => {
+      if (id === "S:bad") throw new Error("unreachable style")
+      return Promise.resolve({ name: "Brand/Fill" })
+    })
+    expect([...styles]).toEqual([["S:good", "Brand/Fill"]])
+
+    const variables = await collectVariableNames([node], (id) => {
+      if (id === "V:bad") throw new Error("unreachable variable")
+      return Promise.resolve({ name: "brand/blue" })
+    })
+    expect([...variables]).toEqual([["V:good", "brand/blue"]])
+  })
+
+  test("a lookup that never settles is skipped rather than awaited", async () => {
+    const node = {
+      id: "1:1",
+      name: "Card",
+      type: "FRAME",
+      visible: true,
+      children: [],
+      fillStyleId: "S:hung",
+      boundVariables: { width: { type: "VARIABLE_ALIAS", id: "V:hung" } },
+      getMainComponentAsync: () => new Promise<unknown>(() => {}),
+    }
+
+    expect([
+      ...(await collectStyleNames(
+        [node],
+        () => new Promise<unknown>(() => {}),
+      )),
+    ]).toEqual([])
+    expect([
+      ...(await collectVariableNames(
+        [node],
+        () => new Promise<unknown>(() => {}),
+      )),
+    ]).toEqual([])
+    expect([
+      ...(await collectInstanceIdentities([
+        { ...node, type: "INSTANCE", componentId: "" },
+      ])),
+    ]).toEqual([])
+  })
 })

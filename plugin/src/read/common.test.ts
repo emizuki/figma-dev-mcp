@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
-import { detectCapabilities } from "./common"
+import { detectCapabilities, loadPageIfNeeded } from "./common"
 
 function installFigma(api: Record<string, unknown>) {
   ;(globalThis as typeof globalThis & { figma: unknown }).figma = api
@@ -15,5 +15,23 @@ describe("detectCapabilities", () => {
 
     installFigma({ currentPage: {}, variables: {} })
     expect(detectCapabilities().annotations).toBe(false)
+  })
+})
+
+describe("loadPageIfNeeded", () => {
+  test("calls loadAsync on the page it was given", async () => {
+    const receivers: unknown[] = []
+    const page = {
+      id: "0:1",
+      type: "PAGE",
+      async loadAsync(this: unknown) {
+        receivers.push(this)
+      },
+    }
+
+    const returned = await loadPageIfNeeded(page)
+
+    expect(returned).toBe(page)
+    expect(receivers).toEqual([page])
   })
 })
