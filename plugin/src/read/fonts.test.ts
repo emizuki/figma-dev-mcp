@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, test } from "bun:test"
 
 import { FIGMA_MIXED, installFigma } from "../../tests/figma-harness"
 import { LocalCancellationController } from "../main/cancellation"
+import { MAX_INPUT_IDS } from "../shared/limits"
 import { FONT_SEGMENT_RANGE, getFonts } from "./fonts"
+import { byteLength } from "./serialize"
 
 const MIXED = FIGMA_MIXED
 
@@ -326,5 +328,172 @@ describe("get_fonts", () => {
     await expect(
       getFonts({ selector: { pageId: requested.id } }, cancellation.signal),
     ).rejects.toThrow("Operation cancelled")
+  })
+
+  test("a font needs both halves, and one empty half is still a font", async () => {
+    const text = (id: string, fontName: unknown) => ({
+      id,
+      name: id,
+      type: "TEXT",
+      visible: true,
+      children: [],
+      characters: "Hi",
+      fontName,
+    })
+    installFigma({
+      currentPage: page("0:2", "Current", [
+        text("1:1", { family: "Inter" }),
+        text("1:2", { style: "Bold" }),
+        text("1:3", { family: "Inter", style: "" }),
+        text("1:4", { family: "", style: "Bold" }),
+        text("1:5", { family: "", style: "" }),
+      ]),
+      available: [{ family: "Inter", style: "" }],
+    })
+
+    const result = await getFonts({})
+
+    expect(result.fonts).toEqual([
+      {
+        font: { family: "Inter", style: "" },
+        availability: "available",
+        nodeIds: ["1:3"],
+      },
+      {
+        font: { family: "", style: "Bold" },
+        availability: "unavailable",
+        nodeIds: ["1:4"],
+      },
+    ])
+    expect(result.observation.completedAt).toMatch(/Z$/)
+  })
+
+  test("a segment window the host refuses costs only that window", async () => {
+    const characters = "x".repeat(FONT_SEGMENT_RANGE + 10)
+    const mixed = {
+      id: "1:1",
+      name: "1:1",
+      type: "TEXT",
+      visible: true,
+      children: [],
+      characters,
+      fontName: FIGMA_MIXED,
+      getStyledTextSegments: (_fields: string[], start: number) => {
+        if (start === 0) throw new Error("segment read failed")
+        return [{ fontName: { family: "Tail", style: "Regular" } }]
+      },
+    }
+    installFigma({
+      currentPage: page("0:2", "Current", [mixed]),
+      available: [],
+    })
+
+    const result = await getFonts({})
+
+    expect(result.fonts).toEqual([
+      {
+        font: { family: "Tail", style: "Regular" },
+        availability: "unavailable",
+        nodeIds: ["1:1"],
+      },
+    ])
+  })
+
+  test("the catalogue is read off figma itself, and a catalogue that throws leaves availability unknown", async () => {
+    const text = {
+      id: "1:1",
+      name: "1:1",
+      type: "TEXT",
+      visible: true,
+      children: [],
+      characters: "Hi",
+      fontName: { family: "Inter", style: "Regular" },
+    }
+    installFigma({ currentPage: page("0:2", "Current", [text]) })
+    const host = (
+      globalThis as typeof globalThis & { figma: Record<string, unknown> }
+    ).figma
+    host.badge = { family: "Inter", style: "Regular" }
+    host.listAvailableFontsAsync = async function (this: {
+      badge: { family: string; style: string }
+    }) {
+      return [{ fontName: this.badge }]
+    }
+
+    const observed = await getFonts({})
+    expect(observed.fonts[0]?.availability).toBe("available")
+
+    host.listAvailableFontsAsync = async () => {
+      throw new Error("catalogue unavailable")
+    }
+    const unknown = await getFonts({})
+    expect(unknown.fonts[0]?.availability).toBe("unknown")
+  })
+
+  test("the font ceiling, the walk cut and the byte ceiling each report their own total", async () => {
+    const text = (id: string, family: string) => ({
+      id,
+      name: id,
+      type: "TEXT",
+      visible: true,
+      children: [],
+      characters: "Hi",
+      fontName: { family, style: "Regular" },
+    })
+    installFigma({
+      currentPage: page("0:2", "Current", [
+        text("1:1", "Inter"),
+        text("1:2", "Roboto"),
+        text("1:3", "Georgia"),
+      ]),
+      available: [],
+    })
+
+    const capped = await getFonts({}, undefined, { returnedNodes: 1 })
+    expect(capped.fonts).toHaveLength(1)
+    expect(capped.truncated).toBe(true)
+    expect(capped.truncation).toEqual({ reason: "nodeLimit", visitedNodes: 2 })
+
+    const walked = await getFonts({}, undefined, {
+      visitedNodes: 3,
+      returnedNodes: 1,
+    })
+    expect(walked.truncation).toEqual({ reason: "nodeLimit", visitedNodes: 3 })
+
+    const usage = (family: string, id: string) => ({
+      font: { family, style: "Regular" },
+      availability: "unavailable" as const,
+      nodeIds: [id],
+    })
+    const budget =
+      byteLength(usage("Inter", "1:1")) + byteLength(usage("Roboto", "1:2")) - 1
+    const bytes = await getFonts({}, undefined, { encodedBytes: budget })
+    expect(bytes.fonts).toEqual([usage("Inter", "1:1")])
+    expect(bytes.truncation).toEqual({
+      reason: "byteLimit",
+      encodedBytes:
+        byteLength(usage("Inter", "1:1")) + byteLength(usage("Roboto", "1:2")),
+    })
+  })
+
+  test("a font's node list stops at MAX_INPUT_IDS", async () => {
+    const children = Array.from({ length: MAX_INPUT_IDS + 1 }, (_, index) => ({
+      id: `1:${index + 1}`,
+      name: `1:${index + 1}`,
+      type: "TEXT",
+      visible: true,
+      children: [],
+      characters: "Hi",
+      fontName: { family: "Inter", style: "Regular" },
+    }))
+    installFigma({
+      currentPage: page("0:2", "Current", children),
+      available: [],
+    })
+
+    const result = await getFonts({})
+
+    expect(result.fonts[0]?.nodeIds).toHaveLength(MAX_INPUT_IDS)
+    expect(result.fonts[0]?.nodeIds.at(-1)).toBe(`1:${MAX_INPUT_IDS}`)
   })
 })
