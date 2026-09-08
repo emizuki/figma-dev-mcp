@@ -4,6 +4,7 @@ import { installFigma } from "../../tests/figma-harness"
 import { LocalCancellationController } from "../main/cancellation"
 import { PluginReadError } from "./navigation"
 import { getReactions } from "./reactions"
+import { byteLength } from "./serialize"
 
 const page = (id: string, name: string, children: unknown[] = []) => ({
   id,
@@ -737,5 +738,175 @@ describe("get_reactions", () => {
       getReactions({ selector: { pageId: requested.id } }, cancellation.signal),
     ).rejects.toThrow("Operation cancelled")
     expect(PluginReadError).toBeDefined()
+  })
+
+  test("every media runtime action the protocol names is reported", async () => {
+    const hosted = [
+      ["PLAY", "play"],
+      ["PAUSE", "pause"],
+      ["TOGGLE_PLAY_PAUSE", "togglePlayPause"],
+      ["MUTE", "mute"],
+      ["UNMUTE", "unmute"],
+      ["TOGGLE_MUTE_UNMUTE", "toggleMuteUnmute"],
+      ["SKIP_FORWARD", "skipForward"],
+      ["SKIP_BACKWARD", "skipBackward"],
+      ["SKIP_TO", "skipTo"],
+    ] as const
+    const source = frame("5:1", {
+      reactions: hosted.map(([mediaAction]) => ({
+        trigger: { type: "ON_CLICK" },
+        action: {
+          type: "UPDATE_MEDIA_RUNTIME",
+          mediaAction,
+          newTimestamp: 1.25,
+        },
+      })),
+    })
+    installFigma({ currentPage: page("0:2", "Current", [source]) })
+
+    const result = await getReactions({ selector: { nodeId: "5:1" } })
+    const item = result.items[0]
+
+    expect(item?.status === "success" ? item.value.reactions : []).toEqual(
+      hosted.map(([, mediaAction]) => ({
+        trigger: "click",
+        action: {
+          type: "updateMediaRuntime",
+          mediaAction,
+          newTimestamp: 1.25,
+        },
+        destinationAccessible: false,
+      })),
+    )
+  })
+
+  test("every overlay position, background and interaction the protocol names is reported", async () => {
+    const hosted = [
+      ["CENTER", "center"],
+      ["TOP_LEFT", "topLeft"],
+      ["TOP_CENTER", "topCenter"],
+      ["TOP_RIGHT", "topRight"],
+      ["BOTTOM_LEFT", "bottomLeft"],
+      ["BOTTOM_CENTER", "bottomCenter"],
+      ["BOTTOM_RIGHT", "bottomRight"],
+      ["MANUAL", "manual"],
+    ] as const
+    const destinations = hosted.map(([overlayPositionType], index) =>
+      frame(`6:${index}`, {
+        overlayPositionType,
+        overlayBackground: { type: "NONE" },
+        overlayBackgroundInteraction: "NONE",
+      }),
+    )
+    const source = frame("5:1", {
+      reactions: hosted.map((_, index) => ({
+        trigger: { type: "ON_CLICK" },
+        action: {
+          type: "NODE",
+          destinationId: `6:${index}`,
+          navigation: "OVERLAY",
+        },
+      })),
+    })
+    installFigma({
+      currentPage: page("0:2", "Current", [source, ...destinations]),
+    })
+
+    const result = await getReactions({ selector: { nodeId: "5:1" } })
+    const item = result.items[0]
+
+    expect(
+      item?.status === "success"
+        ? item.value.reactions.map((reaction) => reaction.overlay)
+        : [],
+    ).toEqual(
+      hosted.map(([, positionType]) => ({
+        positionType,
+        background: { type: "none" },
+        backgroundInteraction: "none",
+      })),
+    )
+  })
+
+  test("a mouseLeave trigger carries its delay and a URL action its link", async () => {
+    const source = frame("5:1", {
+      reactions: [
+        {
+          trigger: { type: "MOUSE_LEAVE", delay: 0.75 },
+          action: { type: "URL", url: "https://example.test/pricing" },
+        },
+      ],
+    })
+    installFigma({ currentPage: page("0:2", "Current", [source]) })
+
+    const result = await getReactions({ selector: { nodeId: "5:1" } })
+    const item = result.items[0]
+
+    expect(item?.status === "success" ? item.value.reactions : []).toEqual([
+      {
+        trigger: "mouseLeave",
+        action: { type: "openLink", uri: "https://example.test/pricing" },
+        destinationAccessible: true,
+        delay: 0.75,
+      },
+    ])
+  })
+
+  test("two reacting nodes are both emitted under the default ceilings", async () => {
+    const nodes = [1, 2].map((index) =>
+      frame(`5:${index}`, {
+        reactions: [
+          { trigger: { type: "ON_CLICK" }, action: { type: "BACK" } },
+        ],
+      }),
+    )
+    installFigma({ currentPage: page("0:2", "Current", nodes) })
+
+    const result = await getReactions({})
+
+    expect(
+      result.items.map((item) =>
+        item.status === "success" ? item.value.nodeId : item.error.code,
+      ),
+    ).toEqual(["5:1", "5:2"])
+    expect(result.truncated).toBe(false)
+    expect(result.observation.startedAt).toMatch(/Z$/)
+    expect(result.observation.completedAt).toMatch(/Z$/)
+  })
+
+  test("a truncated walk outranks the emission cut, and the byte ceiling reports its total", async () => {
+    const nodes = [1, 2, 3, 4].map((index) =>
+      frame(`5:${index}`, {
+        reactions: [
+          { trigger: { type: "ON_CLICK" }, action: { type: "BACK" } },
+        ],
+      }),
+    )
+    installFigma({ currentPage: page("0:2", "Current", nodes) })
+
+    const walked = await getReactions({}, undefined, {
+      visitedNodes: 4,
+      returnedNodes: 1,
+    })
+    expect(walked.truncation).toEqual({ reason: "nodeLimit", visitedNodes: 4 })
+
+    // The budget is spent on the node record, not on the item envelope.
+    const value = (index: number) => ({
+      nodeId: `5:${index}`,
+      reactions: [
+        {
+          trigger: "click" as const,
+          action: { type: "back" as const },
+          destinationAccessible: true,
+        },
+      ],
+    })
+    const budget = byteLength(value(1)) + byteLength(value(2)) - 1
+    const bytes = await getReactions({}, undefined, { encodedBytes: budget })
+    expect(bytes.items).toEqual([{ status: "success", value: value(1) }])
+    expect(bytes.truncation).toEqual({
+      reason: "byteLimit",
+      encodedBytes: byteLength(value(1)) + byteLength(value(2)),
+    })
   })
 })
