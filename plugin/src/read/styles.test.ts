@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, test } from "bun:test"
 import { FIGMA_MIXED, installFigma } from "../../tests/figma-harness"
 import { LocalCancellationController } from "../main/cancellation"
 import { PluginReadError } from "./navigation"
+import { byteLength } from "./serialize"
 import { getStyles } from "./styles"
 
 const page = (id: string, name: string, children: unknown[] = []) => ({
@@ -632,5 +633,220 @@ describe("get_styles", () => {
       id: "S:paint",
       paints: [],
     })
+  })
+
+  test("maps ROWS, COLUMNS and an unrecognised grid pattern", async () => {
+    installFigma({
+      currentPage: page("0:2", "Current"),
+      local: {
+        grid: [
+          {
+            id: "S:rows",
+            name: "Rows",
+            type: "GRID",
+            layoutGrids: [{ pattern: "ROWS", sectionSize: 4 }],
+          },
+          {
+            id: "S:columns",
+            name: "Columns",
+            type: "GRID",
+            layoutGrids: [{ pattern: "COLUMNS", sectionSize: 12 }],
+          },
+          {
+            id: "S:other",
+            name: "Other",
+            type: "GRID",
+            layoutGrids: [{ pattern: "DIAGONAL", sectionSize: 2 }],
+          },
+        ],
+      },
+      forbidGetStyle: true,
+    })
+
+    const result = await getStyles({ source: "local" })
+
+    expect(result.styles).toEqual([
+      {
+        styleType: "grid",
+        id: "S:rows",
+        name: "Rows",
+        pattern: "rows",
+        size: 4,
+      },
+      {
+        styleType: "grid",
+        id: "S:columns",
+        name: "Columns",
+        pattern: "columns",
+        size: 12,
+      },
+      {
+        styleType: "grid",
+        id: "S:other",
+        name: "Other",
+        pattern: "diagonal",
+        size: 2,
+      },
+    ])
+  })
+
+  test("a segment reader that throws keeps the ids it already yielded", async () => {
+    const text = {
+      id: "1:10",
+      name: "Label",
+      type: "TEXT",
+      visible: true,
+      children: [],
+      getStyledTextSegments: () => [
+        { textStyleId: "S:early" },
+        {
+          get textStyleId(): string {
+            throw new Error("segment read failed")
+          },
+        },
+      ],
+    }
+    installFigma({
+      currentPage: page("0:2", "Current", [text]),
+      styles: new Map<string, unknown>([
+        [
+          "S:early",
+          { id: "S:early", name: "Early", type: "PAINT", paints: [] },
+        ],
+      ]),
+      forbidLocal: true,
+    })
+
+    const result = await getStyles({ source: "referenced" })
+
+    expect(result.styles).toEqual([
+      { styleType: "paint", id: "S:early", name: "Early", paints: [] },
+    ])
+  })
+
+  test("the node ceiling reports how many styles were considered", async () => {
+    installFigma({
+      currentPage: page("0:2", "Current"),
+      local: {
+        paint: [
+          paintStyle("S:one", "One"),
+          paintStyle("S:two", "Two"),
+          paintStyle("S:three", "Three"),
+        ],
+      },
+      forbidGetStyle: true,
+    })
+
+    const result = await getStyles({ source: "local" }, undefined, {
+      returnedNodes: 1,
+    })
+
+    expect(result.styles.map((style) => style.id)).toEqual(["S:one"])
+    expect(result.truncated).toBe(true)
+    expect(result.truncation).toEqual({ reason: "nodeLimit", visitedNodes: 2 })
+    expect(result.observation.completedAt).toMatch(/Z$/)
+  })
+
+  test("a style already emitted is not emitted twice", async () => {
+    installFigma({
+      currentPage: page("0:2", "Current"),
+      local: {
+        paint: [paintStyle("S:dup", "First")],
+        text: [{ ...textStyle("S:dup", "Second"), type: "PAINT", paints: [] }],
+      },
+      forbidGetStyle: true,
+    })
+
+    const result = await getStyles({ source: "local" })
+
+    expect(
+      result.styles.map((style) => [style.styleType, style.id, style.name]),
+    ).toEqual([["paint", "S:dup", "First"]])
+  })
+
+  test("the byte ceiling counts every emitted style and reports the total", async () => {
+    const first = {
+      styleType: "paint" as const,
+      id: "S:one",
+      name: "Brand/Fill",
+      description: "Brand fill",
+      remote: false,
+      key: "paint-key",
+      paints: [
+        {
+          type: "solid" as const,
+          color: { r: 1, g: 0, b: 0, a: 1 },
+          opacity: 0.8,
+        },
+      ],
+    }
+    const second = { ...first, id: "S:two" }
+    const budget = byteLength(first) + byteLength(second) - 1
+    installFigma({
+      currentPage: page("0:2", "Current"),
+      local: {
+        paint: [
+          paintStyle("S:one", "Brand/Fill"),
+          paintStyle("S:two", "Brand/Fill"),
+        ],
+      },
+      forbidGetStyle: true,
+    })
+
+    const result = await getStyles({ source: "local" }, undefined, {
+      encodedBytes: budget,
+    })
+
+    expect(result.styles).toEqual([first])
+    expect(result.truncated).toBe(true)
+    expect(result.truncation).toEqual({
+      reason: "byteLimit",
+      encodedBytes: byteLength(first) + byteLength(second),
+    })
+  })
+
+  test("a walk that runs out of budget truncates the referenced pass", async () => {
+    installFigma({
+      currentPage: page("0:2", "Current", [
+        node("1:1", "Card", { fillStyleId: "S:card" }),
+        node("1:2", "Chip", { fillStyleId: "S:chip" }),
+      ]),
+      styles: new Map<string, unknown>([
+        ["S:card", { id: "S:card", name: "Card", type: "PAINT", paints: [] }],
+        ["S:chip", { id: "S:chip", name: "Chip", type: "PAINT", paints: [] }],
+      ]),
+      forbidLocal: true,
+    })
+
+    const result = await getStyles({ source: "referenced" }, undefined, {
+      visitedNodes: 1,
+    })
+
+    expect(result.truncated).toBe(true)
+    expect(result.truncation).toEqual({ reason: "nodeLimit", visitedNodes: 1 })
+  })
+
+  test("a referenced id the host cannot resolve does not end the read", async () => {
+    installFigma({
+      currentPage: page("0:2", "Current", [
+        node("1:1", "Card", {
+          fillStyleId: "S:missing",
+          strokeStyleId: "S:found",
+        }),
+      ]),
+      styles: new Map<string, unknown>([
+        [
+          "S:found",
+          { id: "S:found", name: "Found", type: "PAINT", paints: [] },
+        ],
+      ]),
+      forbidLocal: true,
+    })
+
+    const result = await getStyles({ source: "referenced" })
+
+    expect(result.styles).toEqual([
+      { styleType: "paint", id: "S:found", name: "Found", paints: [] },
+    ])
   })
 })
