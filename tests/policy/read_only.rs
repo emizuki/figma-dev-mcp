@@ -92,6 +92,19 @@ pub(crate) fn plugin_source_root() -> PathBuf {
     workspace_root().join("plugin/src")
 }
 
+/// The generated error catalog, named once and read by both the scan that
+/// exempts it and the control that checks the scan still reaches it.
+///
+/// It is the one production file
+/// `production_plugin_source_spells_no_canonical_error_message` skips — it
+/// spells every canonical message by construction — and it is also that scan's
+/// positive control, the one file where the containment search must be able to
+/// answer yes. Sharing the constant is what makes a *broadened* exemption
+/// catchable: widening it is how that scan would quietly stop visiting files,
+/// and the control's "the walk still reaches this exact path" assertion stops
+/// matching at the same moment.
+pub(crate) const GENERATED_ERROR_CATALOG: &str = "plugin/src/shared/error-catalog.ts";
+
 fn production_typescript(directory: PathBuf) -> String {
     let mut pending = vec![directory];
     let mut source = String::new();
@@ -249,7 +262,7 @@ fn snapshots_lock_tools_annotations_prompts_and_wire_variants() {
 /// but it is a better one than a sentence nobody can check.
 #[test]
 fn production_plugin_source_spells_no_canonical_error_message() {
-    let generated = workspace_root().join("plugin/src/shared/error-catalog.ts");
+    let generated = workspace_root().join(GENERATED_ERROR_CATALOG);
     let catalog = fs::read_to_string(&generated).expect("generated catalog is readable");
     let messages: Vec<&str> = catalog
         .lines()
@@ -261,30 +274,29 @@ fn production_plugin_source_spells_no_canonical_error_message() {
         messages.len()
     );
 
-    let mut pending = vec![plugin_source_root()];
-    while let Some(path) = pending.pop() {
-        for entry in fs::read_dir(&path).expect("plugin source directory is readable") {
-            let path = entry.expect("plugin source entry is readable").path();
-            let name = path.to_string_lossy().to_string();
-            if path.is_dir() {
-                pending.push(path);
-                continue;
-            }
-            if path.extension().is_none_or(|extension| extension != "ts")
-                || name.ends_with(".test.ts")
-                || name.ends_with("environment.typecheck.ts")
-                || name.ends_with("shared/error-catalog.ts")
-            {
-                continue;
-            }
-            let source = fs::read_to_string(&path).expect("TypeScript source is readable");
-            for message in &messages {
-                assert!(
-                    !source.contains(message),
-                    "{name} spells the canonical message {message:?} instead of \
-                     importing CANONICAL_MESSAGES from shared/error-catalog"
-                );
-            }
+    // The walk is `production_typescript_paths`, shared with the control below
+    // and with every other production-source scan in this suite, rather than a
+    // fourth hand-written copy of the same root, recursion and filter. That is
+    // an extraction, not a rewrite: the skip condition it replaces was
+    // De Morgan-identical to `is_production_typescript`, and the set of files
+    // opened is unchanged — 31, verified by instrumenting both versions and
+    // diffing the lists. What it buys is that narrowing the root, the recursion
+    // or the filter is now caught by the control, which it was not while this
+    // walk was its own.
+    let root = workspace_root();
+    for relative in production_typescript_paths(&root, &plugin_source_root()) {
+        if relative == GENERATED_ERROR_CATALOG {
+            continue;
+        }
+        let path = root.join(&relative);
+        let name = path.to_string_lossy().to_string();
+        let source = fs::read_to_string(&path).expect("TypeScript source is readable");
+        for message in &messages {
+            assert!(
+                !source.contains(message),
+                "{name} spells the canonical message {message:?} instead of \
+                 importing CANONICAL_MESSAGES from shared/error-catalog"
+            );
         }
     }
 }
@@ -1390,23 +1402,36 @@ fn the_mutation_denylist_scan_reaches_real_plugin_source_and_its_list_is_not_emp
 /// exactly what the catalog yields today). The walk half had none: pointing it
 /// at an empty directory left the policy suite at 31 passed / 0 failed.
 ///
-/// The **walk root** is shared with the scan (`plugin_source_root()`), so
-/// redirecting the scan's walk at an empty directory turns this control red.
-/// It did not before the root was hoisted: the two computed separate roots and
-/// the mutation left the suite at 41 passed / 0 failed.
+/// **The scan and this control now share the whole walk**, not just its root:
+/// both call `production_typescript_paths(&root, &plugin_source_root())`, and
+/// both name the exempted file with `GENERATED_ERROR_CATALOG`. So every way of
+/// making that scan see less is caught here, each measured:
 ///
-/// **Known limit, and it is a narrow one.** The scan walks that root with its
-/// own inline filter, written out inside the test; this control walks it
-/// through `production_typescript_paths`. So a narrowing of the *inline filter
-/// alone* — everything else unchanged — is still not caught here. Unlike the
-/// denylist scan next door, there is no byte-sum to tie the two, because the
-/// inline walk builds no concatenated text to compare against; giving it one
-/// means changing what the scan does, and this sweep adds counterparts rather
-/// than editing what is there.
+/// | emptying | before sharing | now |
+/// |---|---|---|
+/// | walk root redirected at an empty tree | 41 / 0 | 37 / 4 |
+/// | shared filter narrowed to a extension nothing has | 41 / 0 | 37 / 4 |
+/// | walk stops recursing into subdirectories | — | 37 / 4 |
+/// | exemption broadened so it matches nothing real | — | 39 / 2 |
+/// | exemption redirected at a different production file | — | 40 / 1, and the red one is the scan itself, which then reads the catalog and finds all 17 messages in it |
+///
+/// The scan reached this state in two steps and the first one was wrong. It
+/// began with its own inline copy of the root, the recursion and the filter,
+/// and this comment claimed the tie was impossible because "the inline walk
+/// builds no concatenated text to compare against" — reasoning from the one
+/// tie the denylist scan next door happens to use, and generalising from it.
+/// A reviewer closed it in three commands: the inline skip condition was
+/// De Morgan-identical to `is_production_typescript`, so the walk could simply
+/// *be* the shared one. Behaviour-preserving, and verified as such rather than
+/// asserted — instrumented at both versions, both open the same 31 files.
+///
+/// The lesson is the task's own, one level up: **an impossibility claim needs
+/// a demonstration exactly as much as a coverage claim does.** This one had
+/// none, and it was wrong.
 #[test]
 fn the_canonical_message_scan_reaches_the_catalog_and_every_production_file() {
     let root = workspace_root();
-    let generated = root.join("plugin/src/shared/error-catalog.ts");
+    let generated = root.join(GENERATED_ERROR_CATALOG);
     let catalog = fs::read_to_string(&generated).expect("generated catalog is readable");
     let messages: Vec<&str> = catalog
         .lines()
@@ -1446,11 +1471,11 @@ fn the_canonical_message_scan_reaches_the_catalog_and_every_production_file() {
         );
     }
     assert!(
-        paths
-            .iter()
-            .any(|path| path == "plugin/src/shared/error-catalog.ts"),
-        "the walk must still reach the generated catalog — it is skipped by an \
-         explicit exemption, not by being invisible to the walk"
+        paths.iter().any(|path| path == GENERATED_ERROR_CATALOG),
+        "the walk must still reach {GENERATED_ERROR_CATALOG} — it is skipped by \
+         an explicit exemption, not by being invisible to the walk, and the \
+         scan and this assertion name it with the same constant so a broadened \
+         exemption stops matching here too"
     );
 }
 

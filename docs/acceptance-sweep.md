@@ -840,21 +840,18 @@ looked at nothing are the same green tick.
 So the accept path here is *"the scan reaches its inputs and its predicate
 still fires"*, the mutation is *"empty the scan"*, and the enumeration is over
 **every** test in the suite rather than over the eight refusal-named ones. The
-suite is 31 tests in six modules; they yield 43 accept paths at the granularity
+suite is 31 tests in six modules; they yield 42 accept paths at the granularity
 where one mutation answers one row, because several tests own more than one
 emptyable input — a walk *and* the constant it iterates, a corpus *and* the
-predicate applied to it, a walk root *and* the filter applied at it.
+predicate applied to it.
 
 Baseline before this task: **269 passed / 0 failed** across the workspace,
 **31 passed / 0 failed** in the policy binary. After: **279 / 0** and
 **41 / 0**.
 
-Rows: 43. Verdicts: 19 gap, 21 covered, 3 not applicable (19 + 21 + 3 = 43).
-Tests added: 10 — nine answering 18 of the 19 gaps, plus one new scan that
-answers a question Task 4 left open rather than a row in this table. The
-nineteenth gap is reported and left open; it is the row about the
-canonical-message scan's inline filter, and the section below on what this
-area did not close explains why.
+Rows: 42. Verdicts: 18 gap, 21 covered, 3 not applicable (18 + 21 + 3 = 42).
+Tests added: 10 — nine answering the 18 gaps, plus one new scan that answers a
+question Task 4 left open rather than a row in this table.
 
 | Accept path | Mutation | Suite result | Verdict | Test added |
 |---|---|---|---|---|
@@ -865,7 +862,7 @@ area did not close explains why.
 | The Dev-Mode/inspect/dynamic-page/loopback fields are read from that manifest | the same replacement in the second reader | 30 / 1 | covered — `manifest_is_dev_mode_inspect_dynamic_page_loopback` | — |
 | `read_plugin_bundles` returns both artifacts when both exist | make it always return `Err` | 30 / 1 | covered — `bundle_policy_requires_both_artifacts` already ends in an `expect` on the Ok case, which is a positive control | — |
 | The controller and transport walks read real source (`plugin_contexts_keep_network_and_figma_apis_separate`) | point the walk root at an empty tree — see the note below on why this needed a code change to be catchable | 31 / 0 | **gap** | `manifest::the_plugin_context_walks_reach_real_source_and_the_separation_predicate_fires` |
-| The `plugin/src` walk behind the dispatch-closure scan reads real source, and reads the dispatcher | point the walk root at an empty tree; separately, reduce `dispatch.ts` to `export {}` | 31 / 0; 40 / 1 with only the new control red | **gap** | the same test |
+| The `plugin/src` walk behind the dispatch-closure scan reads real source, and reads the dispatcher | point the walk root at an empty tree; separately, reduce `dispatch.ts` to `export {}` | 31 / 0; 39 / 2, the two red being this control and the dispatcher control | **gap** | the same test |
 | The `plugin/src` walk behind `plugin_source_rejects_unbounded_page_font_and_mutation_surfaces` reads real source | the same, in `plugin_source.rs` | 31 / 0 | **gap** | `plugin_source::the_plugin_source_walk_reaches_real_files_and_the_assignment_predicate_fires` |
 | `has_property_assignment` can report an assignment | `&& false` in front of its `any` predicate, so it never reports one | 40 / 1, and the one red is the new control | **gap** | the same test |
 | The prompt-body scan opens a distinct body per name | `prompt_body` ignores `name` and returns `read_design_strategy.md` | 31 / 0 | **gap** | `prompts::the_prompt_body_scan_reads_a_distinct_body_per_name_and_its_predicates_fire` |
@@ -876,7 +873,6 @@ area did not close explains why.
 | The tools catalog is enumerated for names and annotations | replace `catalog.tools` with an empty vec | 30 / 1 | covered — `snapshots_lock_tools_annotations_prompts_and_wire_variants` | — |
 | The generated error catalog yields its canonical messages | none needed: the test already floors the parse at 17, and 17 is exactly what the catalog yields | — | covered — the floor is a real positive control, and this sweep re-measured the number behind it | — |
 | The `plugin/src` walk that looks for those messages reads real source | point the walk root at an empty tree | 31 / 0 | **gap** | `read_only::the_canonical_message_scan_reaches_the_catalog_and_every_production_file` |
-| That same walk's **inline filter** still matches production `.ts` — the one input in this suite whose scan and control could not be made to share a walk | narrow the inline filter alone (`!= "ts"` → `!= "mts"`), everything else unchanged | 41 / 0, **after** the fix that closed every other walk row | **gap** — reported, not closed by this sweep; see below | none |
 | The `plugin/src` walk behind `plugin_source_denies_mutation_private_and_motion_write_apis` reads real source | the same, in `read_only.rs` | 31 / 0 | **gap** | `read_only::the_mutation_denylist_scan_reaches_real_plugin_source_and_its_list_is_not_empty` |
 | `MUTATION_DENYLIST` enumerates the 23 surfaces its two consumers scan for | replace the constant with `&[]` | 31 / 0 | **gap** | the same test |
 | The read-test walk reaches `plugin/src/read` | point it at an empty directory | 30 / 1 | covered — `read_tests_share_one_figma_harness`, the template this task copies, and the only scan in the suite that already had this control | — |
@@ -961,8 +957,14 @@ not allowlisted.
 The same shape appears one row over. Reducing `plugin/src/main/dispatch.ts` to
 `export {}` — the dispatcher gone entirely — leaves
 `the_read_dispatcher_mutates_no_process_global_host_state` green, because 23
-forbidden surfaces are all absent from an empty file. Again **40 / 1**, and
-again the one red is the new control.
+forbidden surfaces are all absent from an empty file. **39 / 2**, and both red
+are new controls: the dispatcher control, and the manifest control that reads
+`dispatch.ts` directly. That second one is a correction — it first asserted
+`get_metadata` and `get_screenshot` were somewhere in the whole `plugin/src`
+tree, under a message about the dispatch table, and those names are in the read
+handlers too, so it was green with the dispatcher deleted. A message that
+overclaims what its assertion checks is the wrong-reason class in miniature,
+and it appeared inside the section that names the class.
 
 Both are Task 4's wrong-reason class, and both are sharper here than they were
 there: in `tests/integration` the wrong reason produced a plausible-looking
@@ -1102,18 +1104,36 @@ assertion and changes no scan's behaviour, and after it the walk-root mutation
 turns all four controls red (**37 / 4**). The row-level verification for each is
 in the fix report.
 
-What that leaves is narrower and is the nineteenth gap in the table above.
-`production_typescript` is still written out three times, in `manifest.rs`,
-`plugin_source.rs` and `read_only.rs`, and the canonical-message scan has a
-fourth, inline copy of the filter. A *filter* narrowing is caught for the first
-three — the mutation-denylist control asserts the scan's own concatenated text
-is exactly as long as the sum of the files the control enumerated, so two
-disagreeing filters make the totals disagree, and the two module-local filters
-empty the text the `WebSocket` / `figma.` / `has_property_assignment`
-assertions read. The canonical-message scan's inline walk builds no concatenated
-text to compare against, so there is nothing to tie it to; narrowing that filter
-alone is still green at 41 / 0. Giving it a tie means changing what the scan
-does, and this sweep adds counterparts rather than editing what is there.
+**And the first attempt at that fix left a residual that was not real.** The
+canonical-message scan kept its own inline copy of the root, the recursion and
+the filter, and this section said the tie was impossible there — no concatenated
+text to compare against, so nothing to tie — and gave it a gap row of its own. A
+reviewer closed it in three commands. The inline skip condition was De Morgan-identical
+to the `is_production_typescript` the controls already used, so the walk could
+simply *be* the shared one; the exempted catalog is now named by one constant
+both the scan and its control read. Behaviour-preserving, and verified as such
+rather than asserted: instrumented at both versions, the scan opens the same 31
+files, lists identical. Every way of making it see less is now measured and
+caught — root redirected 37 / 4, filter narrowed 37 / 4, recursion removed
+37 / 4, exemption broadened 39 / 2, exemption redirected 40 / 1 (that last one
+red on the scan itself, which then reads the catalog and finds all 17 messages
+in it). The gap row is gone, which is why this section counts 42 rows and not 43.
+
+The lesson is this area's own, one level up. **An impossibility claim needs a
+demonstration exactly as much as a coverage claim does.** "No tie exists here"
+was reasoning from the one tie the neighbouring scan happens to use, and it was
+wrong. Where this record says something cannot be pinned, it now says what was
+tried.
+
+What actually remains is duplication without vacuity: `production_typescript` is
+still written out three times, in `manifest.rs`, `plugin_source.rs` and
+`read_only.rs`. Each copy's narrowing is caught — the mutation-denylist control
+asserts the scan's own concatenated text is exactly as long as the sum of the
+files the control enumerated, so two disagreeing filters make the totals
+disagree, and the two module-local filters empty the text the `WebSocket`,
+`figma.` and `has_property_assignment` assertions read. Deduplicating them is a
+change to three scan bodies rather than an extraction of a shared expression,
+which is past what this sweep does.
 
 **Floors, not equalities.** The production-file count (32 measured), the
 property-name total (89 measured) and the citation count (123 occurrences
