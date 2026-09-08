@@ -6,7 +6,12 @@ import {
   MAX_RASTER_DECODED_BYTES,
   MAX_SVG_BYTES,
 } from "../shared/limits"
-import { validateDataUrl, validateSvgSource } from "./svg"
+import {
+  validateDataUrl,
+  validateSvgSource,
+  type SvgDocument,
+  type SvgElement,
+} from "./svg"
 
 const parser = new DOMParser({ onError: onErrorStopParsing })
 
@@ -523,5 +528,336 @@ describe("SVG safety policy", () => {
     // read only the head, so a harmless first segment carried the rest through.
     const source = `<svg xmlns="http://www.w3.org/2000/svg"><animate attributeName="href" values="#a;javascript:alert(1)"/></svg>`
     expect(validate(source).safe).toBe(false)
+  })
+})
+
+// A hand-built tree, so the two DOM shapes `svg.ts` supports can both be
+// exercised: a parser that offers `getAttributeNames()` and `childNodes.item()`
+// (what a browser gives) and one that offers only the `attributes` map and
+// index access (what a minimal DOM gives). Only the first was ever walked.
+interface FakeElementSpec {
+  readonly name: string
+  /** `null` stands for a DOM that exposes no `localName`, so the classifier
+   * has to take the local name off `tagName` itself. */
+  readonly localName?: string | null
+  readonly attributes?: Record<string, string>
+  readonly text?: string
+  readonly children?: FakeElementSpec[]
+}
+
+function buildElement(spec: FakeElementSpec, modern: boolean): SvgElement {
+  const attributes = spec.attributes ?? {}
+  const names = Object.keys(attributes)
+  const children = (spec.children ?? []).map((child) =>
+    buildElement(child, modern),
+  )
+  const childNodes = modern
+    ? {
+        length: children.length,
+        item: (index: number) => children[index] ?? null,
+      }
+    : Object.assign({ length: children.length }, children)
+  const element: SvgElement = {
+    nodeType: 1,
+    tagName: spec.name,
+    localName: spec.localName === undefined ? spec.name : spec.localName,
+    textContent: spec.text ?? "",
+    childNodes: childNodes as SvgElement["childNodes"],
+    attributes: {
+      length: names.length,
+      item: (index: number) => {
+        const name = names[index]
+        return name === undefined ? null : { name }
+      },
+    },
+    getAttribute: (name: string) => attributes[name] ?? null,
+  }
+  if (!modern) return element
+  return Object.assign({}, element, { getAttributeNames: () => names })
+}
+
+function fakeParserFor(spec: FakeElementSpec, modern: boolean) {
+  const root = buildElement(spec, modern)
+  const document: SvgDocument = {
+    nodeType: 9,
+    documentElement: root,
+    childNodes: modern
+      ? { length: 1, item: () => root }
+      : (Object.assign({ length: 1 }, [root]) as SvgDocument["childNodes"]),
+  }
+  return { parseFromString: () => document }
+}
+
+const encoder = new TextEncoder()
+const utf8Bytes = (value: string): number => encoder.encode(value).length
+
+describe("SVG acceptance", () => {
+  test("a document exactly at the byte ceiling is accepted, counted in UTF-8", () => {
+    const head = '<svg xmlns="http://www.w3.org/2000/svg"><desc>'
+    const tail = "</desc></svg>"
+    // Two- and four-byte characters, so a byte count is not a character count.
+    const filler = "é😀"
+    const fillerBytes = utf8Bytes(filler)
+    const budget = MAX_SVG_BYTES - utf8Bytes(head) - utf8Bytes(tail)
+    const whole = Math.floor(budget / fillerBytes)
+    const source =
+      head +
+      filler.repeat(whole) +
+      "a".repeat(budget - whole * fillerBytes) +
+      tail
+
+    expect(utf8Bytes(source)).toBe(MAX_SVG_BYTES)
+    expect(source.length).toBeLessThan(MAX_SVG_BYTES)
+    expect(validate(source)).toEqual({ ok: true, source, safe: true })
+    expect(validate(source + "a")).toEqual({
+      ok: false,
+      code: "LIMIT_EXCEEDED",
+    })
+  })
+
+  test("an offender name exactly at the identifier ceiling is still reported", () => {
+    const name = `on${"a".repeat(MAX_IDENTIFIER_BYTES - 2)}`
+    expect(utf8Bytes(name)).toBe(MAX_IDENTIFIER_BYTES)
+    const result = validate(svgWithAttr(name, "go()"))
+
+    expect(result).toMatchObject({
+      ok: true,
+      safe: false,
+      rejection: { kind: "unsafeAttribute", name },
+    })
+  })
+
+  test("every media type the data: allow-list names is accepted", () => {
+    const png = "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAECA=="
+    const jpeg = "/9j/wAALCAAGAAoBAREA/9k="
+    const webp = "UklGRgAAAABXRUJQ"
+    const font = "AAEAAAAKAIAAAwAgT1MvMg=="
+    const cases: Array<[string, string]> = [
+      ["image/png", png],
+      ["image/jpeg", jpeg],
+      ["image/jpg", jpeg],
+      ["image/webp", webp],
+      ["font/woff", font],
+      ["font/woff2", font],
+      ["font/ttf", font],
+      ["font/otf", font],
+      ["application/font-woff", font],
+      ["application/x-font-ttf", font],
+      ["application/x-font-opentype", font],
+    ]
+    let accepted = 0
+    for (const [mime, payload] of cases) {
+      expect({
+        mime,
+        ok: validateDataUrl(`data:${mime};base64,${payload}`),
+      }).toEqual({
+        mime,
+        ok: true,
+      })
+      accepted += 1
+    }
+    expect(accepted).toBe(cases.length)
+    expect(accepted).toBe(11)
+    // The list is an allow-list, not a prefix match.
+    expect(validateDataUrl(`data:font/collection;base64,${font}`)).toBe(false)
+    expect(validateDataUrl(`data:image/svg+xml;base64,${png}`)).toBe(false)
+  })
+
+  test("an at-rule other than @import passes the CSS check", () => {
+    for (const rule of [
+      "@media screen { rect { fill: red } }",
+      "@font-face { font-family: Inter }",
+      "@supports (fill: red) { rect { fill: red } }",
+      "@keyframes spin { from { fill: red } }",
+    ]) {
+      expect({ rule, result: validate(svgWithCss(rule)) }).toMatchObject({
+        rule,
+        result: { ok: true, safe: true },
+      })
+    }
+    expect(validate(svgWithCss('@import "x"'))).toMatchObject({
+      ok: true,
+      safe: false,
+      rejection: { kind: "unsafeCss" },
+    })
+  })
+
+  test("a percent-encoded data: URL is read as the same bytes as its base64 twin", () => {
+    // PNG magic followed by an IHDR header, written both ways.
+    const percent =
+      "%89PNG%0D%0A%1A%0A%00%00%00%0DIHDR%00%00%00%08%00%00%00%04%08"
+    expect(validateDataUrl(`data:image/png,${percent}`)).toBe(true)
+    expect(
+      validateDataUrl(
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAECA==",
+      ),
+    ).toBe(true)
+    // The media type is read from the first parameter, before the comma that
+    // starts the payload, and a comma inside the payload does not end it.
+    expect(validateDataUrl(`data:image/png,${percent}%2C`)).toBe(true)
+  })
+
+  test("a UTF-8 byte transfer decodes to the same verdict as the string", () => {
+    const source =
+      '<svg xmlns="http://www.w3.org/2000/svg"><desc>é😀</desc></svg>'
+    const bytes = encoder.encode(source)
+
+    expect(validate(bytes)).toEqual({ ok: true, source, safe: true })
+    // A paired surrogate is not a lone one, so the string form is accepted too.
+    expect(validate(source)).toEqual({ ok: true, source, safe: true })
+  })
+
+  test("a value padded with ASCII whitespace is trimmed before the rule runs", () => {
+    for (const padded of [" #a", "#a ", "\t#a\n", "  #a  "]) {
+      expect({
+        padded,
+        result: validate(svgWithAttr("href", padded)),
+      }).toMatchObject({ padded, result: { ok: true, safe: true } })
+    }
+    // The media type of a data: URL is trimmed on both sides too, which is
+    // where a trailing space actually changes the answer: an untrimmed
+    // "image/png " matches no entry in the allow-list.
+    const png = "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAECA=="
+    expect(validateDataUrl(`data: image/png ;base64,${png}`)).toBe(true)
+  })
+
+  test("a scheme is a scheme only when it starts with a letter", () => {
+    // A leading digit is not a scheme, so `to` keeps its ordinary meaning.
+    expect(validate(svgWithAttr("to", "1:2"))).toMatchObject({
+      ok: true,
+      safe: true,
+    })
+    expect(validate(svgWithAttr("to", "https://evil.example"))).toMatchObject({
+      ok: true,
+      safe: false,
+      rejection: { kind: "unsafeAttribute", name: "to" },
+    })
+    // Protocol-relative is active even without a scheme at all.
+    expect(validate(svgWithAttr("to", "//evil.example/x"))).toMatchObject({
+      ok: true,
+      safe: false,
+      rejection: { kind: "unsafeAttribute", name: "to" },
+    })
+  })
+
+  test("both DOM shapes are walked: modern accessors and a bare attribute map", () => {
+    const safe: FakeElementSpec = {
+      name: "svg",
+      children: [
+        {
+          name: "g",
+          children: [{ name: "rect", attributes: { fill: "red" } }],
+        },
+      ],
+    }
+    const unsafe: FakeElementSpec = {
+      name: "svg",
+      children: [
+        {
+          name: "g",
+          children: [{ name: "rect", attributes: { onclick: "go()" } }],
+        },
+      ],
+    }
+    let shapes = 0
+    for (const modern of [true, false]) {
+      expect({
+        modern,
+        result: validateSvgSource("<svg/>", fakeParserFor(safe, modern)),
+      }).toMatchObject({ modern, result: { ok: true, safe: true } })
+      expect({
+        modern,
+        result: validateSvgSource("<svg/>", fakeParserFor(unsafe, modern)),
+      }).toMatchObject({
+        modern,
+        result: {
+          ok: true,
+          safe: false,
+          rejection: { kind: "unsafeAttribute", name: "onclick" },
+        },
+      })
+      shapes += 1
+    }
+    expect(shapes).toBe(2)
+  })
+
+  test("element and attribute names are matched without their prefix or casing", () => {
+    const spec: FakeElementSpec = {
+      name: "svg",
+      children: [{ name: "svg:ForeignObject", localName: null }],
+    }
+    expect(
+      validateSvgSource("<svg/>", fakeParserFor(spec, true)),
+    ).toMatchObject({
+      ok: true,
+      safe: false,
+      rejection: { kind: "unsafeElement", name: "foreignobject" },
+    })
+    expect(
+      validateSvgSource(
+        "<svg/>",
+        fakeParserFor(
+          {
+            name: "svg",
+            children: [
+              { name: "rect", attributes: { "XLINK:HREF": "javascript:go()" } },
+            ],
+          },
+          true,
+        ),
+      ),
+    ).toMatchObject({
+      ok: true,
+      safe: false,
+      rejection: { kind: "unsafeAttribute", name: "href" },
+    })
+  })
+
+  test("a parser error is caught however the parser reports it", () => {
+    const root: SvgElement = {
+      nodeType: 1,
+      tagName: "parsererror",
+      localName: "parsererror",
+      textContent: "",
+      childNodes: { length: 0, item: () => null },
+      attributes: { length: 0, item: () => null },
+      getAttribute: () => null,
+      getAttributeNames: () => [],
+    }
+    // Signalled by a `parsererror` element the document can look up. The root
+    // is an ordinary `<svg>`, so the lookup is the only thing that can find it.
+    const ordinaryRoot: SvgElement = {
+      ...root,
+      tagName: "svg",
+      localName: "svg",
+    }
+    expect(
+      validateSvgSource("<svg", {
+        parseFromString: () => ({
+          nodeType: 9,
+          documentElement: ordinaryRoot,
+          childNodes: { length: 0, item: () => null },
+          getElementsByTagName: () => ({ length: 1 }),
+        }),
+      }),
+    ).toMatchObject({
+      ok: true,
+      safe: false,
+      rejection: { kind: "parserError" },
+    })
+    // Signalled only by the root element's own name.
+    expect(
+      validateSvgSource("<svg", {
+        parseFromString: () => ({
+          nodeType: 9,
+          documentElement: root,
+          childNodes: { length: 0, item: () => null },
+        }),
+      }),
+    ).toMatchObject({
+      ok: true,
+      safe: false,
+      rejection: { kind: "parserError" },
+    })
   })
 })

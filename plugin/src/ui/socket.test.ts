@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 
 import { buildHello } from "./hello"
 import { startSocketTransport } from "./socket"
+import { BROKER_URL } from "../shared/limits"
 import type { ControllerReady } from "../shared/protocol"
 
 const ready: ControllerReady = {
@@ -528,5 +529,287 @@ describe("connection is reported on acceptance, not on send", () => {
     } finally {
       harness.restore()
     }
+  })
+})
+
+// The socket carries traffic in both directions, and only the broker→controller
+// direction and the error arm of the controller→broker direction were pinned.
+// A gap here means the plugin silently stops answering the broker's liveness
+// check, or stops relaying the results it just produced.
+describe("frames the plugin sends back to the broker", () => {
+  const handshake = (
+    socket: FakeWebSocket,
+    harness: ReturnType<typeof installSocketHarness>,
+  ) => {
+    socket.open()
+    const metadata = metadataRequestId(harness.controllerMessages.at(-1))
+    harness.emitController(readyFor(metadata))
+  }
+
+  const startRequest = (
+    socket: FakeWebSocket,
+    harness: ReturnType<typeof installSocketHarness>,
+    brokerRequestId: string,
+  ): string => {
+    socket.message(
+      JSON.stringify({
+        type: "request",
+        requestId: brokerRequestId,
+        deadlineMs: 1_000,
+        target: {},
+        operation: { operation: "get_metadata", input: {} },
+      }),
+    )
+    return controllerRequestId(harness.controllerMessages.at(-1))
+  }
+
+  test("a broker ping is answered with a pong carrying the same nonce", () => {
+    const harness = installSocketHarness()
+    try {
+      const stop = startSocketTransport()
+      const socket = FakeWebSocket.instances[0]
+      if (socket === undefined) throw new Error("no socket was opened")
+      expect(socket.url).toBe(BROKER_URL)
+      handshake(socket, harness)
+      const afterHello = socket.sent.length
+
+      socket.message(JSON.stringify({ type: "ping", nonce: 7 }))
+      socket.message(JSON.stringify({ type: "ping", nonce: 8 }))
+
+      expect(
+        socket.sent.slice(afterHello).map((frame) => JSON.parse(frame)),
+      ).toEqual([
+        { type: "pong", nonce: 7 },
+        { type: "pong", nonce: 8 },
+      ])
+      stop()
+    } finally {
+      harness.restore()
+    }
+  })
+
+  test("controller progress and the response reach the broker under the broker's request ID", () => {
+    const harness = installSocketHarness()
+    try {
+      const stop = startSocketTransport()
+      const socket = FakeWebSocket.instances[0]
+      if (socket === undefined) throw new Error("no socket was opened")
+      handshake(socket, harness)
+      const correlationId = startRequest(socket, harness, "request-forward")
+      const afterHello = socket.sent.length
+
+      harness.emitController({
+        type: "progress",
+        controllerRequestId: correlationId,
+        requestId: "ignored-plugin-id",
+        completed: 4,
+        total: 9,
+        message: "serializing",
+      })
+      // A second progress frame proves the owner survives the first one.
+      harness.emitController({
+        type: "progress",
+        controllerRequestId: correlationId,
+        requestId: "ignored-plugin-id",
+        completed: 6,
+      })
+      harness.emitController({
+        type: "response",
+        controllerRequestId: correlationId,
+        requestId: "ignored-plugin-id",
+        result: {
+          operation: "get_metadata",
+          result: {
+            file: { name: "Checkout", editorType: "dev" },
+            pages: [{ id: "0:1", name: "Checkout flow" }],
+            currentPageId: "0:1",
+            pluginVersion: "0.1.0",
+            capabilities: {
+              annotations: true,
+              devResources: true,
+              motion: false,
+              svgStringExport: true,
+              variableCodeSyntax: true,
+            },
+            truncated: false,
+            observation: {
+              startedAt: "2026-09-08T00:00:00.000Z",
+              completedAt: "2026-09-08T00:00:01.000Z",
+            },
+          },
+        },
+      })
+
+      expect(
+        socket.sent.slice(afterHello).map((frame) => JSON.parse(frame)),
+      ).toEqual([
+        {
+          type: "progress",
+          requestId: "request-forward",
+          completed: 4,
+          total: 9,
+          message: "serializing",
+        },
+        { type: "progress", requestId: "request-forward", completed: 6 },
+        {
+          type: "response",
+          requestId: "request-forward",
+          result: {
+            operation: "get_metadata",
+            result: {
+              file: { name: "Checkout", editorType: "dev" },
+              pages: [{ id: "0:1", name: "Checkout flow" }],
+              currentPageId: "0:1",
+              pluginVersion: "0.1.0",
+              capabilities: {
+                annotations: true,
+                devResources: true,
+                motion: false,
+                svgStringExport: true,
+                variableCodeSyntax: true,
+              },
+              truncated: false,
+              observation: {
+                startedAt: "2026-09-08T00:00:00.000Z",
+                completedAt: "2026-09-08T00:00:01.000Z",
+              },
+            },
+          },
+        },
+      ])
+      stop()
+    } finally {
+      harness.restore()
+    }
+  })
+
+  test("a response ends the request, so nothing more is forwarded for it", () => {
+    const harness = installSocketHarness()
+    try {
+      const stop = startSocketTransport()
+      const socket = FakeWebSocket.instances[0]
+      if (socket === undefined) throw new Error("no socket was opened")
+      handshake(socket, harness)
+      const correlationId = startRequest(socket, harness, "request-once")
+      const afterHello = socket.sent.length
+
+      const response = {
+        type: "response" as const,
+        controllerRequestId: correlationId,
+        requestId: "ignored-plugin-id",
+        result: {
+          operation: "get_metadata" as const,
+          result: {
+            file: { name: "Checkout", editorType: "dev" as const },
+            pages: [{ id: "0:1", name: "Checkout flow" }],
+            currentPageId: "0:1",
+            pluginVersion: "0.1.0",
+            capabilities: {
+              annotations: true,
+              devResources: true,
+              motion: false,
+              svgStringExport: true,
+              variableCodeSyntax: true,
+            },
+            truncated: false,
+            observation: {
+              startedAt: "2026-09-08T00:00:00.000Z",
+              completedAt: "2026-09-08T00:00:01.000Z",
+            },
+          },
+        },
+      }
+      harness.emitController(response)
+      harness.emitController(response)
+
+      expect(socket.sent).toHaveLength(afterHello + 1)
+      stop()
+    } finally {
+      harness.restore()
+    }
+  })
+
+  test("the connected latch fires once, so a later frame does not re-announce it", () => {
+    const harness = installSocketHarness()
+    try {
+      const stop = startSocketTransport()
+      const socket = FakeWebSocket.instances[0]
+      if (socket === undefined) throw new Error("no socket was opened")
+      handshake(socket, harness)
+
+      socket.message(JSON.stringify({ type: "ping", nonce: 1 }))
+      socket.message(JSON.stringify({ type: "ping", nonce: 2 }))
+
+      expect(
+        harness.statuses.filter(
+          (status) => status === "Connected to local broker",
+        ),
+      ).toHaveLength(1)
+      stop()
+    } finally {
+      harness.restore()
+    }
+  })
+
+  test("stopping the transport closes the socket and cancels what it was carrying", () => {
+    const harness = installSocketHarness()
+    try {
+      const stop = startSocketTransport()
+      const socket = FakeWebSocket.instances[0]
+      if (socket === undefined) throw new Error("no socket was opened")
+      handshake(socket, harness)
+      const correlationId = startRequest(socket, harness, "request-teardown")
+
+      stop()
+
+      expect(socket.readyState).toBe(3)
+      expect(harness.controllerMessages).toContainEqual({
+        type: "cancel",
+        controllerRequestId: correlationId,
+        requestId: "request-teardown",
+      })
+
+      // The relay listener is gone too: a controller message arriving after the
+      // stop reaches nothing, so no further frame is sent.
+      const afterStop = socket.sent.length
+      harness.emitController({
+        type: "progress",
+        controllerRequestId: correlationId,
+        requestId: "ignored-plugin-id",
+        completed: 1,
+      })
+      expect(socket.sent).toHaveLength(afterStop)
+    } finally {
+      harness.restore()
+    }
+  })
+})
+
+describe("the hello the plugin introduces itself with", () => {
+  test("carries the whole readiness announcement, at the protocol version the broker expects", () => {
+    const connectionId = "123e4567-e89b-42d3-a456-426614174321"
+    const hello = buildHello(ready, () => connectionId)
+
+    expect(hello).toEqual({
+      type: "hello",
+      protocolVersion: "4",
+      connectionId,
+      displayName: "Checkout",
+      fileName: "Checkout",
+      currentPage: { id: "0:1", name: "Checkout flow" },
+      editorType: "dev",
+      pluginVersion: "0.1.0",
+      capabilities: {
+        annotations: true,
+        devResources: true,
+        motion: false,
+        svgStringExport: true,
+        variableCodeSyntax: true,
+      },
+    })
+    // The capability set is copied, not aliased: mutating the hello's copy
+    // must not reach back into the readiness message it came from.
+    hello.capabilities.motion = true
+    expect(ready.capabilities.motion).toBe(false)
   })
 })

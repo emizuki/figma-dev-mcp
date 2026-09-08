@@ -1152,8 +1152,705 @@ have.
 
 ## plugin ui and main
 
+A gap here means the relay or the controller refuses, drops or garbles a
+well-formed message. This is the last hop before Figma on one side and the
+broker on the other, so a refusal here is a session that stops working with no
+error anyone can read.
+
+The area is `plugin/src/ui` (`relay.ts`, `socket.ts`, `hello.ts`, `uuid.ts`,
+`raster.ts`, `css-syntax.ts`, `svg.ts`, `index.ts`) and `plugin/src/main`
+(`dispatch.ts`, `cancellation.ts`, `progress.ts`, `code.ts`) — 2,312 lines of
+production code against 58 tests. It groups into **309 accept paths**: `main`
+94 and `ui` 215, one row per mutation that answers exactly one row. Every
+mutation below was applied to production code, built, measured and reverted;
+the committed diff adds tests only. Baseline before this task: **413 pass / 0
+fail / 1854 expect() calls / 26 files**. After: **476 pass / 0 fail / 2087
+expect() calls / 28 files**.
+
+**136 covered, 162 gaps, 11 not applicable.** 136 + 162 + 11 = 309. By half:
+`main` 94 rows — 35 covered, 52 gaps, 7 not applicable; `ui` 215 rows — 101
+covered, 110 gaps, 4 not applicable; 52 + 110 = 162. The new tests close **151**
+of the 162 gaps and 11 stay open; 151 + 11 = 162.
+
+The Scope table's `plugin/src/ui` 24 and `plugin/src/main` 5 are right as the
+plan defines them, and the brief's own Step-1 command disagrees with them for a
+reason worth writing down: the plan's command subtracts an acceptance-word
+filter (`accept|round-trip|preserv|surviv|still |keeps|returns`) and the
+brief's does not. Re-run against the tree at `57f1474`, the brief's command
+finds **27** refusal-named tests in `ui` and **5** in `main`; the plan's finds
+**24** and **5**. Both are counts of the same 58 tests, and neither is the row
+count: the rows come from the production code, not from the test names.
+
+### The largest finding: `main/code.ts` was never imported by anything
+
+`plugin/src/main/code.ts` is the controller entry point. It is what Figma
+loads; it installs the `figma.ui.onmessage` every message from the iframe
+arrives at, it unwraps the three transport shapes that message can take, it
+answers the readiness handshake, and it posts whatever the dispatcher returns.
+**Not one of its sixteen mutations moved the suite** — including deleting the
+`figma.showUI` call, never dispatching a request at all, and answering
+readiness with an empty file name. Fourteen are gaps; the other two are
+mutations nothing outside the module can observe, and are argued below.
+
+Nothing imported it, and the reason is mechanical rather than accidental:
+`plugin/tests/figma-harness.ts` says so in its own header — "`detectCapabilities()`
+… is reached from `navigation.ts` and `main/code.ts`, neither of which any of
+the nine migrated files exercises". The module also runs `figma.showUI(__html__, …)`
+at import time, so a test has to install the host *before* importing it, which
+is why the new `code.test.ts` builds its fake host at module scope rather than
+in a `beforeEach`. It also needs the `figma` global's real typings, which the
+tests project deliberately does not load, so it gets its own tsconfig project
+(`tsconfig.controller-tests.json`) rather than loosening the one that keeps
+`main`'s environment assertions honest.
+
+### The relay's screenshot path had no acceptance coverage at all
+
+`ui/relay.ts` has 23 rows: **20 gaps**, 2 covered, 1 not applicable. The two
+that are covered — `sendToController` posting inside a `pluginMessage`
+envelope, and `onControllerMessage` handing a parsed message to `receive` — are
+covered only incidentally, by `socket.test.ts` driving the socket through the
+relay.
+
+Everything the relay does for a screenshot — recognising a `validateScreenshot`
+request, encoding the raster, attaching the SVG verdict, and replying
+`screenshotValidated` — was unpinned end to end. The whole branch could be
+deleted and the suite stayed at 413 / 0. That is the plugin half of the
+screenshot pipeline: the controller sends the export across, and this is what
+sends the validated asset back.
+
+Two details of that block are where a silent break would land. `asBytes`
+accepts four transfer shapes (`Uint8Array`, `ArrayBuffer`, any typed-array
+view, a plain number array) and none was pinned; Figma's `exportAsync` returns
+a `Uint8Array`, but the value crosses a `postMessage` boundary, where the shape
+depends on the host. And the relay's listener registers for `"message"`:
+renaming that event to `"messageX"` left the suite green, because
+`socket.test.ts`'s fake `window.addEventListener` takes `(_type, listener)` and
+ignores the type.
+
+### Eleven of thirteen read operations are not routed anywhere in particular
+
+`dispatchRead`'s `switch` has thirteen `case` arms, one per operation in
+`OPERATION_NAMES`. Deleting an arm drops the request through to `assertNever`,
+which throws, which the request boundary turns into `INTERNAL_ERROR` — a
+request the plugin can serve, answered as if the plugin were broken. **Eleven
+of the thirteen deletions left the suite green.** Only `get_metadata` (held by
+`get_metadata returns bounded file and page metadata`) and `get_screenshot`
+(held by `cancelling a read that never resolves settles the dispatch as
+CANCELLED promptly`) were pinned, and the second only because that test happens
+to route a screenshot.
+
+The `plugin/src/read` tests do not close this: they call the readers directly.
+Nothing between `dispatchControllerMessage` and the reader was checked.
+
+And the one test in this repository that walks `OPERATION_NAMES` — `every named
+milestone operation returns a typed unavailable error` — **skips all thirteen
+of them.** Its loop body opens with an `if` chain that `continue`s on
+`get_metadata`, `get_selection`, `get_nodes`, `search_nodes`,
+`get_design_context`, `get_styles`, `get_variables`, `get_components`,
+`get_fonts`, `get_dev_mode_data`, `get_reactions`, `get_motion` and
+`get_screenshot`, which is every name the list holds, so the body never runs
+and the test asserts nothing. This is the vacuous-scan shape Task 4 named,
+found here in a suite rather than in a scan. It is left in place — the sweep
+does not rewrite existing tests — and its acceptance counterpart, `every read
+operation reaches the reader named in the request`, carries the positive
+control the old one lacks: it counts its iterations and asserts the count is
+thirteen.
+
+### The cancellation question, answered
+
+The brief asked it directly: is there an accept-side test that
+`dispatchControllerMessage` **honours** an abort, rather than only refusing a
+malformed one? **Yes — this one is covered**, by `cancelling a read that never
+resolves settles the dispatch as CANCELLED promptly` in `dispatch.test.ts`. It
+installs a host `exportAsync` that never settles, cancels mid-export, and
+asserts the dispatch settles as `CANCELLED` inside 200 ms.
+
+It took two mutations to establish that, and the second is the point. The
+surgical one — `await work` in place of `await Promise.race([work, aborted])`
+inside `awaitWithSignal` — turned the test red in 2.5 ms, which is *not* the
+test working: with the race gone, the `aborted` promise still rejects and
+nothing consumes it, so bun reports an unhandled `LocalCancellationError`
+against whichever test is running, and the test never reaches its assertion.
+The mutation that reproduces the historical regression — replacing
+`awaitWithSignal`'s whole body with `return await work`, which is what deleting
+`traversal-gate.ts` did — turns the same test red at 202 ms with
+`expect(settled).toEqual(…)` receiving `{ settled: false }`. That is the
+dispatch failing to settle, which is exactly the property. The row is `covered`
+on the strength of the second, not the first.
+
+What was *not* covered is the cancel arriving as a message. `registry.cancel`
+in `dispatchControllerMessage`'s `cancel` case could be deleted, and the arm
+could answer with an error envelope instead of `null`, with the suite green
+both times: the covering test reaches into the registry directly. The new
+`a cancel message aborts the request it names and answers nothing` sends the
+cancel the way the socket does.
+
+### `throwIfAbortedAtBatch` can be deleted outright
+
+`throwIfAbortedAtBatch(signal, index, batchSize)` is called from **fifteen
+sites** across `plugin/src/read` — `dev-mode.ts` ×1, `components.ts` ×2,
+`fonts.ts` ×1, `styles.ts` ×2, `motion.ts` ×1, `reactions.ts` ×1,
+`variables.ts` ×2, `serialize.ts` ×5. Emptying its body, so it never throws at
+any index, leaves the suite at **413 / 0**. Neither half is pinned, nor is the
+complementary property that it does *not* throw between boundaries.
+
+The ten tests whose names begin `checks cancellation` — seven of them named
+`checks cancellation between child batches of 100` — all stay green under that
+mutation, and all go red when `throwIfAborted()` itself is emptied. What they
+pin is a direct `signal.throwIfAborted()` elsewhere in the read path, not the
+batch gate their names describe. Reported, not fixed: those tests are in Task
+7's area and the sweep does not rewrite existing tests. The acceptance
+counterpart added here, `the batch cancellation gate throws on a batch boundary
+and only there`, tests the gate directly, including its default batch size of
+100.
+
+### The inclusive-ceiling class, again — and one duplicated guard
+
+Task 1's dominant shape recurs. Nine `>` comparisons in this area guard a
+ceiling; the refusal above each was pinned, and four of the nine acceptances
+*at* the ceiling were not:
+
+| Ceiling | Site | Verdict |
+|---|---|---|
+| `MAX_RASTER_DECODED_BYTES` | `encodeValidatedRaster` | covered |
+| `MAX_RASTER_SIDE` (width) | `encodeValidatedRaster` | covered |
+| `MAX_RASTER_SIDE` (height) | `encodeValidatedRaster` | **gap** |
+| `MAX_RASTER_PIXELS` | `encodeValidatedRaster` | covered |
+| `MAX_RASTER_BASE64_BYTES` | `encodeValidatedRaster` | covered |
+| `MAX_RASTER_DECODED_BYTES` | `validateEmbeddedImageData` | **gap** |
+| `MAX_RASTER_DECODED_BYTES` | `validateDataUrl` | covered |
+| `MAX_SVG_BYTES` | `validateSvgSource` | **gap** |
+| `MAX_IDENTIFIER_BYTES` | `rejected` | **gap** |
+
+Nine rows, four gaps. The `MAX_RASTER_SIDE` pair is the sharper one, and it is
+Task 1's duplicated-guard class compressed onto a single line:
+`if (width > MAX_RASTER_SIDE || height > MAX_RASTER_SIDE)`. Moving the width
+comparison turns `rejects sides above 4096 and more than 16 megapixels` red —
+it asserts `encodeValidatedRaster(jpegWithSize(MAX_RASTER_SIDE, 1)).ok` — and
+moving the height comparison leaves the suite green, because nothing ever
+offers a 4096-tall image. One line, two operands, one pinned.
+
+The `MAX_SVG_BYTES` gap has the largest blast radius: a one-character change to
+`validateSvgSource`'s size gate would refuse a 4 MiB SVG outright, and the test
+covering the refusal above that ceiling (`fails a transfer that never decoded,
+and an oversized source`) cannot see it.
+
+### Allow-lists with one member pinned and the rest not
+
+Three media-type allow-lists in this area are each held by a single member:
+
+- `allowedDataMime` names `image/png`, `image/jpeg`, `image/jpg`,
+  `image/webp`. Removing `image/png` turns two tests red; removing any of the
+  other three leaves the suite green. 1 covered, 3 gaps.
+- `isFontDataMime` names seven types. Removing `font/woff2` turns five tests
+  red; removing any of the other six leaves the suite green. 1 covered, 6 gaps.
+- `validateEmbeddedImageData` maps four spellings onto three magic checks.
+  `image/png`, `image/jpeg` and `image/webp` are covered; `image/jpg` — the
+  second spelling on a shared line — is a gap.
+
+Ten of those fifteen entries were gaps (3 + 6 + 1), and the shape is Task 2's
+`truncation` finding at smaller scale: a list where every entry is a separate
+accept path, and one fixture happens to name one of them.
+
+### The socket's outbound direction
+
+`ui/socket.ts` is 45 rows with 17 gaps, and the gaps are not scattered. The
+broker→controller direction is well covered — the handshake, the backoff table,
+the generation ownership, the duplicate suppression, the status ladder are all
+red under mutation — while **the controller→broker direction is almost entirely
+unpinned**. Forwarding a progress frame, its `total`, its phase message,
+keeping the request open across progress frames, forwarding a response, the
+response's result, and the broker request ID both frames travel under: seven
+consecutive rows, all green. Only the `error` arm is covered, by `drops stale
+controller output when a replacement socket reuses a broker request ID`, which
+uses error frames to make its point about ownership.
+
+`ping`/`pong` is the other one worth naming. `status announces each handshake
+stage truthfully, never claiming connection before acceptance` *sends* a ping —
+it is how that test proves acceptance — but asserts only the status text, so
+deleting the pong send entirely leaves the suite green. The broker's liveness
+check would go unanswered and nothing would notice.
+
+### Eleven mutations no input can distinguish
+
+Eleven rows are `not applicable`, and none is the "does not compile" case the
+vocabulary was written for: `bun run build` strips types, so a type-invalid
+mutation still bundles. They are mutations that no input can tell apart. Where
+the claim is that a branch is unreachable, it was checked by measurement rather
+than by reading — the branch was replaced with a `throw`, and the suite,
+including the new tests, stayed at 476 / 0, so nothing in it reaches the
+branch.
+
+- `createProgressReporter` has **three defensive lines no caller can reach**,
+  each confirmed by a planted `throw`. `due()`'s
+  `!Number.isFinite(lastEmitAt)` clause never decides anything, because on the
+  only tick where `lastEmitAt` is `NaN` the `lastPhase !== phase` clause is
+  already true. The scheduled heartbeat's
+  `if (lastPhase === undefined) lastPhase = phase` and `emitLatest`'s
+  `lastPhase ?? "reading"` are unreachable for the same reason:
+  `startHeartbeat` ticks before it schedules, and that tick always assigns
+  `lastPhase`. Worth reporting as dead code, not as coverage gaps.
+- `due()`'s `if (intervalMs <= 0) return true` is reached but decides nothing:
+  the comparison after it, `now() - lastEmitAt >= intervalMs`, is true whenever
+  `intervalMs <= 0` and the clock does not run backwards. Deleting the clause
+  leaves the suite at 476 / 0 with the new `a non-positive interval emits every
+  tick of the same phase` test in place.
+- `LocalCancellationSignal.abort()`'s `if (this.#aborted) return` is
+  unobservable: the first abort clears the listener set, and `addEventListener`
+  refuses to add to an aborted signal, so a second pass finds nothing to call.
+- `code.ts`'s `inbound` returning the original string when `JSON.parse` throws,
+  and the `return` after `completeScreenshotValidation`, are unobservable from
+  outside: whatever those paths hand on, both `parseControllerMetadataRequest`
+  and `parseControllerBoundMessage` refuse it and the handler falls out
+  silently either way.
+- `asBytes`'s `value instanceof Uint8Array` arm is subsumed by the
+  `ArrayBuffer.isView(value)` arm two lines below, which handles a `Uint8Array`
+  identically. Deleting the first arm alone leaves the suite green; deleting
+  both turns three of the new relay tests red, which is what establishes that
+  the view arm is doing the work.
+- `readUint32`'s big-endian assembly cannot be distinguished within the range
+  its caller admits. Shifting the first byte by 16 instead of 24 changes the
+  value only when that byte is non-zero, and any such width or height is at
+  least 65,536 — refused by `MAX_RASTER_SIDE` (4,096) with or without the
+  mutation.
+- `matches`'s `bytes.length < offset + expected.length` bound is only ever
+  called with `offset` 0 and the 8-byte PNG magic, and `isPng` requires 24
+  bytes before the value is used, so `<` and `<=` agree on every input that
+  reaches it.
+- `parseDataUrl`'s comma search starting at index 5 rather than 6 matters only
+  for `data:,payload`, whose media type defaults to `text/plain` and is refused
+  either way.
+
+### Three mutations that had to be re-measured, and one red that was a flake
+
+Four rows are not the straightforward "mutate, run, record" case, and each is
+worth naming because each is a way this method can lie.
+
+- **A mutation that changed nothing.** `SV24`'s first mutation loosened the
+  length test in `validateCssText`'s `@import` check (`name.length === 6` →
+  `name.length >= 0`) and left the six character comparisons standing, so it
+  refused exactly what it refused before. It was recorded green and would have
+  read as a gap. Re-measured with a mutation that refuses *every* at-keyword,
+  it turns four tests red, three of them pre-existing (`an embedded font data
+  URL is accepted`, `… with mixed-case scheme and mime`, `benign values stay
+  clean`), so the row is **covered**. Its suite result in the table is from the
+  476-test suite, because that is when it was measured.
+- **A mutation that did not terminate.** `CS24`'s deletion of the fractional
+  part of `consumeNumber` makes the tokenizer return an empty number token
+  without advancing `index`, so `tokenizeCss(".5")` loops forever — which only
+  showed up once the new number test fed it `.5`. Re-measured with a mutation
+  that consumes the decimal point but not its digits: one red, the new test.
+  The same shape cost one earlier run too: `CS28`'s first mutation looped on a
+  bare backslash and had to be replaced with one that consumes the escape and
+  drops the character.
+- **A red that did not reproduce.** `P19` — deleting the heartbeat callback's
+  phase default — turned `get_motion > keeps applied styles distinct from the
+  catalog and copies seconds unchanged` red on its first run, in a different
+  file from anything the mutation touches. Re-running it against
+  `motion.test.ts` alone passed, and two further full-suite runs passed. The
+  red was a real timer firing across a file boundary, not the property. It is
+  the only red in this task that did not reproduce, and the rule that caught it
+  is the wrong-reason rule: a `covered` verdict has to say *why* the test
+  fired.
+
+### What is left open
+
+Eleven gaps stay open, marked `— (open)` in the table. They are open for three
+kinds of reason, and the reason is the point rather than the count:
+
+- **Doubly covered in the harness, so the mutation is invisible to it.** The
+  socket's teardown calls `cancelGenerationRequests` and then `close()`, and
+  the close handler cancels again, so deleting the first call changes nothing a
+  fake socket can show — though on a real socket, whose `close` event is
+  asynchronous, the cancel would be late. Deleting `stopListening()` is
+  invisible for the same reason: by the time a later controller message
+  arrives, the owner map the close already emptied has nothing to forward.
+  (`S40`, `S42`.)
+- **Guards whose accept side no fixture reaches.** `isActiveOpen`'s
+  `active === generation` clause and the owner check on the controller path
+  (`S44`, `S45`); the reconnect after a `new WebSocket` that throws (`S39`);
+  `awaitWithSignal` unhooking its listener, whose only observable is an
+  unhandled rejection that `Promise.race` has already claimed (`C18`);
+  `ignoreSettlement` being called from the dispatcher rather than in isolation
+  (`D06`); the dispatcher stopping its heartbeat once a request settles
+  (`D12`). And two in `svg.ts` — preferring a DOM's own `localName` over
+  `tagName`, and reading attribute names through `getAttributeNames()` rather
+  than the `attributes` map (`SV28`, `SV29`) — where the two paths agree for
+  every DOM a real parser produces, so separating them would mean asserting
+  against a document no parser emits.
+- **A default only a slow test could distinguish.** `createProgressReporter`
+  falling back to `Date.now`: the mutation replaces it with `() => 0`, and the
+  only observable difference is a comparison against a 3,000 ms interval, so
+  separating them needs a real three-second wait. Attempted and abandoned
+  rather than declared impossible — the shape of the test is obvious and the
+  cost is a three-second suite. (`P24`.)
+
+### The table
+
+**`plugin/src/main/dispatch.ts`**
+
 | Accept path | Mutation | Suite result | Verdict | Test added |
 |---|---|---|---|---|
+| a `cancel` message aborts the request it names | drop the `registry.cancel(...)` call from the `cancel` arm of `dispatchControllerMessage` | 413 / 0 | **gap** | `a cancel message aborts the request it names and answers nothing` |
+| a `cancel` message is answered with `null`, so nothing is posted back | return an `error` envelope from the `cancel` arm instead of `null` | 413 / 0 | **gap** | `a cancel message aborts the request it names and answers nothing`, `a cancel is dispatched and answered with no message at all` |
+| a request reserves its correlation ID under `controllerRequestId` | `registry.begin(message.controllerRequestId)` keyed on `message.requestId` instead | 411 / 2 | covered | — |
+| the request's reporter is bound to its signal, so read code can find it | delete `bindProgress(controller.signal, progress)` | 413 / 0 | **gap** | `read code finds the reporter bound to its signal, and its totals reach the controller` |
+| a request emits its first `reading` frame at once | delete `progress.startHeartbeat("reading")` | 412 / 1 | covered | — |
+| the abandoned read's later settlement is swallowed | delete `ignoreSettlement(work)` | 413 / 0 | **gap** | — *(open)* |
+| a response echoes the controller correlation ID | `controllerRequestId: message.requestId` in the response envelope | 413 / 0 | **gap** | `a settled request frees its correlation ID for the next one`, `dispatches a well-formed request and posts the response back` |
+| a response echoes the broker request ID | `requestId: message.controllerRequestId` in the response envelope | 411 / 2 | covered | — |
+| a response carries the read result | `result: undefined` in the response envelope | 412 / 1 | covered | — |
+| an error envelope carries the mapped boundary failure | hard-code `{ code: "INTERNAL_ERROR", retryable: false }` in the error envelope | 412 / 1 | covered | — |
+| a settled request stops its heartbeat | delete `progress?.stopHeartbeat()` from the `finally` | 413 / 0 | **gap** | — *(open)* |
+| a settled request frees its correlation ID | delete `registry.finish(...)` from the `finally` | 413 / 0 | **gap** | `a settled request frees its correlation ID for the next one` |
+| a request whose signal is live proceeds to the reader | invert `dispatchRead`'s pre-flight to `if (!signal.aborted) throw` | 411 / 2 | covered | — |
+| `requestBoundaryFailure` keeps a `PluginReadError`'s own code | return `INTERNAL_ERROR` instead of `error.code` | 413 / 0 | **gap** | `a read failure keeps its own code and retryable flag at the boundary` |
+| `requestBoundaryFailure` keeps a `PluginReadError`'s retryable flag | return `!error.retryable` | 413 / 0 | **gap** | `a read failure keeps its own code and retryable flag at the boundary` |
+| `requestBoundaryFailure` maps a local cancellation to `CANCELLED` | return `INTERNAL_ERROR` from the `LocalCancellationError` arm | 411 / 2 | covered | — |
+| `requestBoundaryFailure` maps an unrecognised error to `INTERNAL_ERROR` | return `CANCELLED` from the fall-through arm | 411 / 2 | covered | — |
+| a progress frame's `total` reaches the controller when it has one | delete `if (frame.total !== undefined) message.total = frame.total` | 413 / 0 | **gap** | `read code finds the reporter bound to its signal, and its totals reach the controller` |
+| a progress frame is posted through `figma.ui.postMessage` | replace `ui.postMessage(message)` with `void message` | 412 / 1 | covered | — |
+| a `get_metadata` request reaches `readMetadata` | delete the `case "get_metadata"` arm of `dispatchRead` | 411 / 2 | covered | — |
+| a `get_selection` request reaches `readSelection` | delete the `case "get_selection"` arm of `dispatchRead` | 413 / 0 | **gap** | `every read operation reaches the reader named in the request` |
+| a `get_nodes` request reaches `readNodes` | delete the `case "get_nodes"` arm of `dispatchRead` | 413 / 0 | **gap** | `every read operation reaches the reader named in the request` |
+| a `search_nodes` request reaches `searchNodes` | delete the `case "search_nodes"` arm of `dispatchRead` | 413 / 0 | **gap** | `every read operation reaches the reader named in the request` |
+| a `get_design_context` request reaches `readDesignContext` | delete the `case "get_design_context"` arm of `dispatchRead` | 413 / 0 | **gap** | `every read operation reaches the reader named in the request` |
+| a `get_styles` request reaches `getStyles` | delete the `case "get_styles"` arm of `dispatchRead` | 413 / 0 | **gap** | `every read operation reaches the reader named in the request` |
+| a `get_variables` request reaches `getVariables` | delete the `case "get_variables"` arm of `dispatchRead` | 413 / 0 | **gap** | `every read operation reaches the reader named in the request` |
+| a `get_components` request reaches `getComponents` | delete the `case "get_components"` arm of `dispatchRead` | 413 / 0 | **gap** | `every read operation reaches the reader named in the request` |
+| a `get_fonts` request reaches `getFonts` | delete the `case "get_fonts"` arm of `dispatchRead` | 413 / 0 | **gap** | `every read operation reaches the reader named in the request` |
+| a `get_dev_mode_data` request reaches `getDevModeData` | delete the `case "get_dev_mode_data"` arm of `dispatchRead` | 413 / 0 | **gap** | `every read operation reaches the reader named in the request` |
+| a `get_reactions` request reaches `getReactions` | delete the `case "get_reactions"` arm of `dispatchRead` | 413 / 0 | **gap** | `every read operation reaches the reader named in the request` |
+| a `get_motion` request reaches `getMotion` | delete the `case "get_motion"` arm of `dispatchRead` | 413 / 0 | **gap** | `every read operation reaches the reader named in the request` |
+| a `get_screenshot` request reaches `getScreenshot` | delete the `case "get_screenshot"` arm of `dispatchRead` | 412 / 1 | covered | — |
+
+**`plugin/src/main/cancellation.ts`**
+
+| Accept path | Mutation | Suite result | Verdict | Test added |
+|---|---|---|---|---|
+| a cancellation fired mid-read settles the dispatch at once | `await work` in place of `await Promise.race([work, aborted])` in `awaitWithSignal` | 412 / 1 | covered | — |
+| an abort listener registered on a live signal is kept | make `addEventListener` never add to the listener set | 410 / 3 | covered | — |
+| a removed abort listener is not called | make `removeEventListener` never delete from the listener set | 413 / 0 | **gap** | `a removed abort listener is not called` |
+| `abort()` marks the signal aborted | delete `this.#aborted = true` | 397 / 16 | covered | — |
+| `abort()` calls every registered listener | replace `listener()` with `void listener` | 410 / 3 | covered | — |
+| a second `abort()` does not notify again | delete the `if (this.#aborted) return` guard | 413 / 0 | not applicable | — |
+| a listener that throws does not stop the ones after it | call `listener()` outside the `try` | 412 / 1 | covered | — |
+| `throwIfAborted()` throws once the signal is aborted | empty the `throwIfAborted` body | 399 / 14 | covered | — |
+| `throwIfAborted()` is silent while the signal is live | invert to `if (!this.#aborted) throw` | 409 / 4 | covered | — |
+| `begin()` registers the controller under its request ID | delete `this.#active.set(requestId, controller)` | 411 / 2 | covered | — |
+| `cancel()` aborts the controller it found | delete `controller.abort()` | 411 / 2 | covered | — |
+| `cancel()` reports that it cancelled something | return `false` from the successful arm | 412 / 1 | covered | — |
+| `finish()` removes the request from the registry | make `finish` a no-op | 412 / 1 | covered | — |
+| `cancelAll()` cancels every active request | count without calling `this.cancel(requestId)` | 413 / 0 | **gap** | `cancelAll aborts every active request and reports how many it stopped` |
+| `cancelAll()` reports how many it stopped | return `0` | 413 / 0 | **gap** | `cancelAll aborts every active request and reports how many it stopped` |
+| `throwIfAbortedAtBatch` throws on a batch boundary | empty the body of `throwIfAbortedAtBatch` | 413 / 0 | **gap** | `the batch cancellation gate throws on a batch boundary and only there` |
+| `throwIfAbortedAtBatch` does not throw between boundaries | drop the `index % batchSize === 0` condition, so it always throws | 413 / 0 | **gap** | `the batch cancellation gate throws on a batch boundary and only there` |
+| `awaitWithSignal` with no signal returns the work unchanged | throw `LocalCancellationError` on the no-signal arm | 413 / 0 | **gap** | `awaitWithSignal passes work through, refuses an aborted signal, and unhooks itself` |
+| `awaitWithSignal` refuses an already-aborted signal without awaiting | delete the `if (signal.aborted) throw` pre-check | 413 / 0 | **gap** | `awaitWithSignal passes work through, refuses an aborted signal, and unhooks itself` |
+| `awaitWithSignal` unhooks its listener once the work settles | replace the `finally` `removeEventListener` with `void listener` | 413 / 0 | **gap** | — *(open)* |
+| `ignoreSettlement` swallows the abandoned promise's rejection | replace the body with `void work` | 413 / 0 | **gap** | `an abandoned promise's rejection is swallowed rather than left unhandled` |
+| `size` reports how many requests are active | return `0` | 413 / 0 | **gap** | `cancelAll aborts every active request and reports how many it stopped` |
+
+**`plugin/src/main/progress.ts`**
+
+| Accept path | Mutation | Suite result | Verdict | Test added |
+|---|---|---|---|---|
+| `bindProgress` stores the reporter against the signal | make `bindProgress` a no-op | 411 / 2 | covered | — |
+| `progressFor` returns the reporter bound to a signal | return `undefined` always | 411 / 2 | covered | — |
+| a fractional count is floored | return `value` instead of `Math.floor(value)` | 413 / 0 | **gap** | `a fractional count is floored rather than sent as a fraction` |
+| a count at or above `U32_MAX` is clamped to it | delete the `value >= U32_MAX` clamp | 412 / 1 | covered | — |
+| a non-finite or non-positive count becomes `0` | delete the `!Number.isFinite(value) || value <= 0` guard | 412 / 1 | covered | — |
+| a change of phase emits immediately | drop `lastPhase !== phase` from `due()` | 412 / 1 | covered | — |
+| the very first tick emits even inside the interval | drop `!Number.isFinite(lastEmitAt)` from `due()` | 413 / 0 | not applicable | — |
+| a tick after the interval has elapsed emits | return `false` from the elapsed-interval comparison | 412 / 1 | covered | — |
+| with a non-positive interval every tick emits | delete the `intervalMs <= 0` short-circuit | 413 / 0 | not applicable | — |
+| a repeat tick inside the interval updates counts without emitting | delete `if (!due(phase)) return` | 411 / 2 | covered | — |
+| a frame carries `total` when the tick supplied one | delete `if (total !== undefined) frame.total = toU32(total)` | 410 / 3 | covered | — |
+| a tick without a total drops the previous one | keep the previous total when `nextTotal` is undefined | 413 / 0 | **gap** | `a tick without a total drops the total the previous tick carried` |
+| an emit records when it happened, so the interval can run | delete `lastEmitAt = now()` | 411 / 2 | covered | — |
+| an `emit` that throws does not fail the read | call `options.emit(frame)` outside the `try` | 413 / 0 | **gap** | `an emit that throws does not fail the read it is reporting on` |
+| `startHeartbeat` emits a frame at once | delete the immediate `tick(phase, completed, total)` | 412 / 1 | covered | — |
+| `startHeartbeat` stops the timer a previous one left | delete `if (stopTimer !== undefined) stopTimer()` | 413 / 0 | **gap** | `restarting the heartbeat stops the timer the previous one left running` |
+| `startHeartbeat` schedules the repeat | never call `schedule(...)` | 412 / 1 | covered | — |
+| each heartbeat tick emits the latest frame | delete `emitLatest()` from the scheduled callback | 412 / 1 | covered | — |
+| a heartbeat with no phase yet adopts the one it was started with | delete `if (lastPhase === undefined) lastPhase = phase` | 413 / 0 | not applicable | — |
+| `stopHeartbeat` cancels the timer | delete `stopTimer?.()` | 412 / 1 | covered | — |
+| a reporter with no interval uses `PROGRESS_INTERVAL_MS` | default `intervalMs` to `1` | 413 / 0 | **gap** | `the default interval is the inactivity-safe one, not something shorter` |
+| the default heartbeat repeats rather than firing once | `setTimeout`/`clearTimeout` in place of `setInterval`/`clearInterval` | 413 / 0 | **gap** | `the default heartbeat repeats instead of firing once` |
+| a frame with no phase yet is labelled `reading` | default the frame message to `encoding` | 413 / 0 | not applicable | — |
+| a reporter with no clock uses `Date.now` | default `now` to `() => 0` | 413 / 0 | **gap** | — *(open)* |
+
+**`plugin/src/main/code.ts`**
+
+| Accept path | Mutation | Suite result | Verdict | Test added |
+|---|---|---|---|---|
+| a message delivered as a JSON string is parsed | return the string unparsed from `inbound` | 413 / 0 | **gap** | `accepts a readiness request in each transport shape the host uses` |
+| a string that is not JSON is passed on unchanged | return `null` from `inbound`'s catch | 413 / 0 | not applicable | — |
+| a `{ pluginMessage }` envelope is unwrapped | return the envelope itself | 413 / 0 | **gap** | `accepts a readiness request in each transport shape the host uses` |
+| a plain object is passed through untouched | return `null` from `inbound`'s fall-through | 413 / 0 | **gap** | `answers a readiness request with the file's own identity`, `accepts a readiness request in each transport shape the host uses`, `dispatches a well-formed request and posts the response back` |
+| a settled screenshot validation ends the handler | drop the `return` after `completeScreenshotValidation` | 413 / 0 | not applicable | — |
+| a readiness request is answered with `controllerReady` | drop the `postReady(request.metadataRequestId)` call | 413 / 0 | **gap** | `answers a readiness request with the file's own identity`, `accepts a readiness request in each transport shape the host uses` |
+| a controller-bound message is dispatched | never call `dispatchControllerMessage` | 413 / 0 | **gap** | `dispatches a well-formed request and posts the response back` |
+| the dispatcher's answer is posted to the iframe | replace `figma.ui.postMessage(output)` with `void output` | 413 / 0 | **gap** | `dispatches a well-formed request and posts the response back` |
+| a `null` answer posts nothing | post unconditionally, dropping the `output !== null` guard | 413 / 0 | **gap** | `a cancel is dispatched and answered with no message at all` |
+| `controllerReady` carries the file name | send an empty `fileName` | 413 / 0 | **gap** | `answers a readiness request with the file's own identity` |
+| `controllerReady` carries the current page's id and name | send an empty `currentPage` | 413 / 0 | **gap** | `answers a readiness request with the file's own identity` |
+| `controllerReady` carries the editor type | hard-code `editorType: "figma"` | 413 / 0 | **gap** | `answers a readiness request with the file's own identity` |
+| `controllerReady` carries `PLUGIN_VERSION` | hard-code `pluginVersion: "9.9.9"` | 413 / 0 | **gap** | `answers a readiness request with the file's own identity` |
+| `controllerReady` carries the detected capabilities | send an empty capability set | 413 / 0 | **gap** | `answers a readiness request with the file's own identity` |
+| `controllerReady` echoes the readiness request's ID | send an empty `metadataRequestId` | 413 / 0 | **gap** | `answers a readiness request with the file's own identity`, `accepts a readiness request in each transport shape the host uses` |
+| the controller shows the bundled UI at the declared panel size | replace `figma.showUI(__html__, …)` with `void __html__` | 413 / 0 | **gap** | `shows the bundled UI at the declared panel size` |
+
+**`plugin/src/ui/relay.ts`**
+
+| Accept path | Mutation | Suite result | Verdict | Test added |
+|---|---|---|---|---|
+| a controller-bound message is posted inside a `pluginMessage` envelope | post the message itself, without the envelope | 407 / 6 | covered | — |
+| the relay subscribes to `message` events | subscribe to `messageX` instead | 413 / 0 | **gap** | `validates a PNG screenshot and answers with the encoded asset`, `validates a JPEG screenshot, which the PNG path cannot stand in for`, `accepts the export bytes in every shape the host can hand over`, `returns an SVG screenshot with its own source and safety verdict`, `subscribes to message events and unsubscribes from the same channel` |
+| a `validateScreenshot` request is recognised | match `validateScreenshotX` instead | 413 / 0 | **gap** | `validates a PNG screenshot and answers with the encoded asset`, `validates a JPEG screenshot, which the PNG path cannot stand in for`, `accepts the export bytes in every shape the host can hand over`, `returns an SVG screenshot with its own source and safety verdict`, `subscribes to message events and unsubscribes from the same channel` |
+| the reply is typed `screenshotValidated` | type the reply `screenshotValidatedX` | 413 / 0 | **gap** | `validates a PNG screenshot and answers with the encoded asset`, `validates a JPEG screenshot, which the PNG path cannot stand in for`, `returns an SVG screenshot with its own source and safety verdict` |
+| the reply echoes the validation ID | send an empty `validationId` | 413 / 0 | **gap** | `validates a PNG screenshot and answers with the encoded asset`, `validates a JPEG screenshot, which the PNG path cannot stand in for`, `returns an SVG screenshot with its own source and safety verdict`, `subscribes to message events and unsubscribes from the same channel` |
+| the reply carries the finalized asset | send `asset: null` | 413 / 0 | **gap** | `validates a PNG screenshot and answers with the encoded asset`, `validates a JPEG screenshot, which the PNG path cannot stand in for`, `accepts the export bytes in every shape the host can hand over`, `returns an SVG screenshot with its own source and safety verdict` |
+| an item declared `svg` takes the SVG path | match `svgX` instead | 413 / 0 | **gap** | `returns an SVG screenshot with its own source and safety verdict` |
+| an SVG asset carries its source | send an empty `source` | 413 / 0 | **gap** | `returns an SVG screenshot with its own source and safety verdict` |
+| an SVG asset carries the safety verdict | hard-code `safe: true` | 413 / 0 | **gap** | `returns an SVG screenshot with its own source and safety verdict` |
+| an unsafe SVG asset carries the rule that fired | delete the `value.rejection = result.rejection` assignment | 413 / 0 | **gap** | `returns an SVG screenshot with its own source and safety verdict` |
+| an item declared `png` is encoded | narrow the format guard to `!== "jpeg"` | 413 / 0 | **gap** | `validates a PNG screenshot and answers with the encoded asset`, `accepts the export bytes in every shape the host can hand over` |
+| an item declared `jpeg` is encoded | narrow the format guard to `!== "png"` | 413 / 0 | **gap** | `validates a JPEG screenshot, which the PNG path cannot stand in for` |
+| export bytes arriving as a `Uint8Array` are taken | delete the `Uint8Array` arm of `asBytes` | 413 / 0 | not applicable | — |
+| export bytes arriving as an `ArrayBuffer` are taken | delete the `ArrayBuffer` arm of `asBytes` | 413 / 0 | **gap** | `accepts the export bytes in every shape the host can hand over` |
+| export bytes arriving as a typed-array view are taken | delete the `ArrayBuffer.isView` arm of `asBytes` | 413 / 0 | **gap** | `accepts the export bytes in every shape the host can hand over` |
+| export bytes arriving as a plain number array are taken | return `null` before the array arm of `asBytes` | 413 / 0 | **gap** | `accepts the export bytes in every shape the host can hand over` |
+| a raster asset carries the encoded format | hard-code `format: "png"` | 413 / 0 | **gap** | `validates a JPEG screenshot, which the PNG path cannot stand in for` |
+| a raster asset carries the base64 payload | send an empty `dataBase64` | 413 / 0 | **gap** | `validates a PNG screenshot and answers with the encoded asset`, `validates a JPEG screenshot, which the PNG path cannot stand in for`, `accepts the export bytes in every shape the host can hand over` |
+| a raster asset carries its width | send `width: 0` | 413 / 0 | **gap** | `validates a PNG screenshot and answers with the encoded asset`, `validates a JPEG screenshot, which the PNG path cannot stand in for`, `accepts the export bytes in every shape the host can hand over` |
+| a raster asset carries its height | send `height: 0` | 413 / 0 | **gap** | `validates a PNG screenshot and answers with the encoded asset`, `validates a JPEG screenshot, which the PNG path cannot stand in for`, `accepts the export bytes in every shape the host can hand over` |
+| an asset carries the node it was captured from | always send an empty `nodeId` | 413 / 0 | **gap** | `validates a PNG screenshot and answers with the encoded asset`, `validates a JPEG screenshot, which the PNG path cannot stand in for`, `returns an SVG screenshot with its own source and safety verdict` |
+| a well-formed controller message reaches the receiver | parse without calling `receive(...)` | 409 / 4 | covered | — |
+| the returned unsubscribe removes the listener | return a no-op unsubscribe | 413 / 0 | **gap** | `subscribes to message events and unsubscribes from the same channel` |
+
+**`plugin/src/ui/socket.ts`**
+
+| Accept path | Mutation | Suite result | Verdict | Test added |
+|---|---|---|---|---|
+| an opened socket asks the controller for readiness | delete the `requestControllerReady` send | 407 / 6 | covered | — |
+| the readiness request carries this generation's ID | send a fresh `randomUuid()` instead | 409 / 4 | covered | — |
+| the open stage is announced as `Socket open, waiting for Figma…` | shorten the status text | 412 / 1 | covered | — |
+| a matching `controllerReady` sends the hello | delete the `sendJson(... buildHello ...)` call | 411 / 2 | covered | — |
+| the hello is marked sent, so it is sent once | delete `generation.helloSent = true` | 409 / 4 | covered | — |
+| the hello stage is announced as `Hello sent, waiting for broker…` | shorten the status text | 412 / 1 | covered | — |
+| broker frames are read once the hello has gone out | invert the `!generation.helloSent` guard | 409 / 4 | covered | — |
+| a string frame is read | invert the `typeof event.data !== "string"` guard | 409 / 4 | covered | — |
+| acceptance is latched, so it is announced once per socket | delete `generation.acceptedSinceOpen = true` | 413 / 0 | **gap** | `the connected latch fires once, so a later frame does not re-announce it` |
+| an accepted frame resets the reconnect backoff | delete `reconnectAttempt = 0` | 412 / 1 | covered | — |
+| acceptance is announced as `Connected to local broker` | shorten the status text | 412 / 1 | covered | — |
+| a broker request with an unseen ID is not treated as a duplicate | return unconditionally at the duplicate check | 411 / 2 | covered | — |
+| each broker request gets a fresh controller correlation ID | hard-code one UUID | 412 / 1 | covered | — |
+| the request's owner is recorded against that ID | delete the `requestOwners.set(...)` call | 411 / 2 | covered | — |
+| the decoded request is forwarded to the controller | delete the `sendToController(controllerMessage)` call | 411 / 2 | covered | — |
+| a broker cancel drops the owner entry | delete the `requestOwners.delete(...)` call | 412 / 1 | covered | — |
+| a broker cancel is forwarded to the controller | delete the `sendToController(... type: "cancel" ...)` call | 412 / 1 | covered | — |
+| a broker ping is answered with a pong | delete the pong send | 413 / 0 | **gap** | `a broker ping is answered with a pong carrying the same nonce` |
+| the pong echoes the ping's nonce | send `nonce: "0"` | 413 / 0 | **gap** | `a broker ping is answered with a pong carrying the same nonce` |
+| a forwarded progress frame uses the broker's request ID | use the controller correlation ID instead | 413 / 0 | **gap** | `controller progress and the response reach the broker under the broker's request ID` |
+| a forwarded progress frame keeps its `total` | delete the `total` copy | 413 / 0 | **gap** | `controller progress and the response reach the broker under the broker's request ID` |
+| a forwarded progress frame keeps its phase message | delete the `message` copy | 413 / 0 | **gap** | `controller progress and the response reach the broker under the broker's request ID` |
+| a progress frame leaves the request open for the next one | delete the owner on every controller message | 413 / 0 | **gap** | `controller progress and the response reach the broker under the broker's request ID` |
+| a controller response is forwarded to the broker | delete the response send | 413 / 0 | **gap** | `controller progress and the response reach the broker under the broker's request ID`, `a response ends the request, so nothing more is forwarded for it` |
+| a forwarded response carries the read result | send `result: undefined` | 413 / 0 | **gap** | `controller progress and the response reach the broker under the broker's request ID` |
+| a forwarded response uses the broker's request ID | use the controller correlation ID instead | 413 / 0 | **gap** | `controller progress and the response reach the broker under the broker's request ID` |
+| a controller error is forwarded to the broker | delete the error send | 412 / 1 | covered | — |
+| a forwarded error carries the failure it was given | hard-code an `INTERNAL_ERROR` failure | 412 / 1 | covered | — |
+| a closed socket cancels the requests it was carrying | delete `cancelGenerationRequests(generation)` from the close handler | 411 / 2 | covered | — |
+| a closed socket schedules a reconnect | delete `scheduleReconnect()` from the close handler | 408 / 5 | covered | — |
+| successive reconnects walk the delay table | pin the table index at `0` | 410 / 3 | covered | — |
+| the reconnect delay clamps at the table's last entry | clamp one entry earlier | 412 / 1 | covered | — |
+| each scheduled reconnect counts as an attempt | delete `reconnectAttempt += 1` | 410 / 3 | covered | — |
+| the reconnect timer is cleared before reconnecting | delete `reconnectTimer = undefined` from the callback | 409 / 4 | covered | — |
+| a generation cancel names the broker's request ID | send the controller correlation ID instead | 411 / 2 | covered | — |
+| an outbound frame is serialised as its own JSON | send `"{}"` instead | 411 / 2 | covered | — |
+| a status update reaches the status node | make `setStatus` a no-op | 412 / 1 | covered | — |
+| the socket opens against `BROKER_URL` | open against a different URL | 413 / 0 | **gap** | `a broker ping is answered with a pong carrying the same nonce` |
+| a socket that could not be constructed schedules a reconnect | delete `scheduleReconnect()` from the constructor catch | 413 / 0 | **gap** | — *(open)* |
+| stopping the transport unsubscribes from controller messages | delete `stopListening()` | 413 / 0 | **gap** | — *(open)* |
+| stopping the transport closes the socket | delete `generation.socket.close()` | 413 / 0 | **gap** | `stopping the transport closes the socket and cancels what it was carrying` |
+| stopping the transport cancels the requests it was carrying | delete `cancelGenerationRequests(generation)` from the teardown | 413 / 0 | **gap** | — *(open)* |
+| an open socket passes the liveness check | invert the `readyState === WebSocket.OPEN` comparison | 407 / 6 | covered | — |
+| the current generation passes the liveness check | invert `active === generation` (first run: drop the clause) | 413 / 0 | **gap** | — *(open)* |
+| a controller message with a known owner is forwarded | return early when the owner *is* known (first run: drop the openness clause) | 413 / 0 | **gap** | — *(open)* |
+
+**`plugin/src/ui/hello.ts`**
+
+| Accept path | Mutation | Suite result | Verdict | Test added |
+|---|---|---|---|---|
+| the hello declares protocol version `4` | declare `5` | 413 / 0 | **gap** | `carries the whole readiness announcement, at the protocol version the broker expects` |
+| the hello's connection ID comes from the UUID factory | hard-code one UUID | 411 / 2 | covered | — |
+| the hello carries a display name | send an empty `displayName` | 412 / 1 | covered | — |
+| the hello carries the file name | send an empty `fileName` | 413 / 0 | **gap** | `carries the whole readiness announcement, at the protocol version the broker expects` |
+| the hello carries the current page's id and name | send an empty `currentPage` | 412 / 1 | covered | — |
+| the hello carries the editor type | hard-code `editorType: "figma"` | 413 / 0 | **gap** | `carries the whole readiness announcement, at the protocol version the broker expects` |
+| the hello carries the plugin version | hard-code `"9.9.9"` | 412 / 1 | covered | — |
+| the hello carries a copy of the capability set | send an empty capability set | 413 / 0 | **gap** | `carries the whole readiness announcement, at the protocol version the broker expects` |
+
+**`plugin/src/ui/uuid.ts`**
+
+| Accept path | Mutation | Suite result | Verdict | Test added |
+|---|---|---|---|---|
+| the host's `crypto.randomUUID` is used when it can be called | skip the `randomUUID` branch | 413 / 0 | **gap** | `uses the host's randomUUID whenever it can be called` |
+| `crypto.getRandomValues` is used when `randomUUID` is missing | delete the `getRandomValues` branch | 413 / 0 | **gap** | `falls back to getRandomValues, stamping the version and variant itself`, `a randomUUID that throws when called is not fatal` |
+| `Math.random` fills the bytes when there is no web crypto | fill every byte with `255` instead | 413 / 0 | **gap** | `with no web crypto at all, Math.random still produces a valid v4 UUID` |
+| a hand-built UUID carries version 4 | stamp `0x90` instead of `0x40` | 412 / 1 | covered | — |
+| a hand-built UUID carries the RFC variant | stamp `0xc0` instead of `0x80` | 412 / 1 | covered | — |
+| a hand-built UUID is grouped 8-4-4-4-12 | move the first hyphen one character left | 412 / 1 | covered | — |
+| a `randomUUID` that throws when called falls through to the next source | remove the `try`/`catch` around it | 413 / 0 | **gap** | `a randomUUID that throws when called is not fatal` |
+
+**`plugin/src/ui/raster.ts`**
+
+| Accept path | Mutation | Suite result | Verdict | Test added |
+|---|---|---|---|---|
+| a PNG's magic is recognised | change the last byte of `PNG_MAGIC` | 407 / 6 | covered | — |
+| a PNG's IHDR chunk name is recognised | change the `I` of the IHDR check | 407 / 6 | covered | — |
+| a 24-byte PNG header is long enough to measure | require 25 bytes | 413 / 0 | **gap** | `a PNG carrying nothing but its header is still measured` |
+| a JPEG's SOI marker is recognised | expect `0xd9` instead of `0xd8` | 410 / 3 | covered | — |
+| a four-byte JPEG is long enough to recognise | require 5 bytes | 413 / 0 | **gap** | `a four-byte JPEG is enough to recognise, though not to measure` |
+| a WebP's `WEBP` tag is recognised | change the `W` of the tag check | 412 / 1 | covered | — |
+| a raster exactly at `MAX_RASTER_DECODED_BYTES` is accepted | `>` becomes `>=` | 412 / 1 | covered | — |
+| a width exactly at `MAX_RASTER_SIDE` is accepted | `width >` becomes `width >=` | 412 / 1 | covered | — |
+| a height exactly at `MAX_RASTER_SIDE` is accepted | `height >` becomes `height >=` | 413 / 0 | **gap** | `a side exactly at the ceiling is accepted, in both dimensions` |
+| an area exactly at `MAX_RASTER_PIXELS` is accepted | `>` becomes `>=` | 412 / 1 | covered | — |
+| a payload exactly at `MAX_RASTER_BASE64_BYTES` is accepted | `>` becomes `>=` | 412 / 1 | covered | — |
+| an embedded image exactly at `MAX_RASTER_DECODED_BYTES` is accepted | `>` becomes `>=` | 413 / 0 | **gap** | `an embedded image exactly at the decoded-byte ceiling is still accepted` |
+| a PNG's width is read from IHDR offset 16 | read from offset 17 | 411 / 2 | covered | — |
+| a PNG's height is read from IHDR offset 20 | read from offset 21 | 411 / 2 | covered | — |
+| a PNG dimension is assembled big-endian | shift the first byte by 16 instead of 24 | 413 / 0 | not applicable | — |
+| TEM and restart markers are stepped over | delete the standalone-marker `continue` | 413 / 0 | **gap** | `JPEG dimensions are read past skippable segments, from every SOF marker` |
+| start-of-frame markers 0xC0–0xC3 are measured | drop that range | 411 / 2 | covered | — |
+| start-of-frame markers 0xC5–0xC7 are measured | drop that range | 413 / 0 | **gap** | `JPEG dimensions are read past skippable segments, from every SOF marker` |
+| start-of-frame markers 0xC9–0xCB are measured | drop that range | 413 / 0 | **gap** | `JPEG dimensions are read past skippable segments, from every SOF marker` |
+| start-of-frame markers 0xCD–0xCF are measured | drop that range | 413 / 0 | **gap** | `JPEG dimensions are read past skippable segments, from every SOF marker` |
+| a JPEG's height precedes its width in the SOF segment | swap the two reads | 412 / 1 | covered | — |
+| a length-carrying segment is stepped over by exactly its length | step one byte too far | 413 / 0 | **gap** | `JPEG dimensions are read past skippable segments, from every SOF marker` |
+| the declared format picks the matching dimension reader | swap the two readers | 410 / 3 | covered | — |
+| the declared format picks the matching magic check | swap the two checks | 410 / 3 | covered | — |
+| base64 index 63 encodes as `/` | encode it as `_` | 413 / 0 | **gap** | `base64 encoding uses the whole alphabet and both padding lengths`, `validates a JPEG screenshot, which the PNG path cannot stand in for` |
+| a one-byte tail pads with `=` | pad with `*` | 413 / 0 | **gap** | `base64 encoding uses the whole alphabet and both padding lengths`, `base64 decoding reverses that, skipping whitespace and honouring padding`, `validates a PNG screenshot and answers with the encoded asset`, `validates a JPEG screenshot, which the PNG path cannot stand in for`, `accepts the export bytes in every shape the host can hand over` |
+| a two-byte tail pads with `=` | pad with `*` | 413 / 0 | **gap** | `base64 encoding uses the whole alphabet and both padding lengths`, `base64 decoding reverses that, skipping whitespace and honouring padding`, `validates a PNG screenshot and answers with the encoded asset`, `accepts the export bytes in every shape the host can hand over` |
+| whitespace in a base64 payload is skipped | count whitespace as payload | 413 / 0 | **gap** | `base64 decoding reverses that, skipping whitespace and honouring padding` |
+| two `=` characters mean two dropped bytes | count at most one | 413 / 0 | **gap** | `base64 decoding reverses that, skipping whitespace and honouring padding` |
+| `A`–`Z` decode to 0–25 | shift the range by one | 408 / 5 | covered | — |
+| `a`–`z` decode to 26–51 | shift the range by one | 411 / 2 | covered | — |
+| `0`–`9` decode to 52–61 | shift the range by one | 411 / 2 | covered | — |
+| `+` decodes to 62 and `/` to 63 | swap the two | 413 / 0 | **gap** | `every media type the data: allow-list names is accepted`, `base64 decoding reverses that, skipping whitespace and honouring padding` |
+| `image/png` is checked against PNG magic | always refuse it | 410 / 3 | covered | — |
+| `image/jpeg` is checked against JPEG magic | drop that spelling | 412 / 1 | covered | — |
+| `image/jpg` is checked against JPEG magic | drop that spelling | 413 / 0 | **gap** | `image/jpg is accepted as its own spelling of the JPEG media type` |
+| `image/webp` is checked against WebP magic | always refuse it | 412 / 1 | covered | — |
+| the encoded result carries the measured dimensions | report `0` for both | 412 / 1 | covered | — |
+| the encoded result carries both byte counts | report `0` for both | 411 / 2 | covered | — |
+| the encoded result carries the base64 payload | report an empty payload | 412 / 1 | covered | — |
+| a buffer exactly as long as the magic is long enough | `<` becomes `<=` | 413 / 0 | not applicable | — |
+
+**`plugin/src/ui/css-syntax.ts`**
+
+| Accept path | Mutation | Suite result | Verdict | Test added |
+|---|---|---|---|---|
+| a comment becomes a `comment` token | emit a `delim` instead | 412 / 1 | covered | — |
+| a whitespace run becomes a `whitespace` token | emit a `delim` instead | 413 / 0 | **gap** | `produces every token kind it declares`, `a bare # or @ is a delimiter carrying its own character`, `identifiers start with a hyphen, a double hyphen or a non-ASCII letter`, `escapes resolve to the character they name` |
+| a quoted run becomes a `string` token | emit a `delim` instead | 411 / 2 | covered | — |
+| an apostrophe opens a string | only accept a double quote | 413 / 0 | **gap** | `produces every token kind it declares` |
+| `#name` becomes a `hash` token | emit a `delim` instead | 413 / 0 | **gap** | `produces every token kind it declares`, `URL tokens come from url( in any casing, quoted or bare` |
+| `@name` becomes an `at-keyword` token | emit a `delim` instead | 412 / 1 | covered | — |
+| `url(` opens a `url` token | emit a `function` token instead | 407 / 6 | covered | — |
+| `URL(` is recognised in any casing | compare the first letter without folding | 413 / 0 | **gap** | `URL tokens come from url( in any casing, quoted or bare` |
+| `name(` becomes a `function` token | emit an `ident` instead | 412 / 1 | covered | — |
+| a bare name becomes an `ident` token | emit a `delim` instead | 413 / 0 | **gap** | `produces every token kind it declares`, `identifiers start with a hyphen, a double hyphen or a non-ASCII letter`, `escapes resolve to the character they name` |
+| a numeric run becomes a `number` token | emit a `delim` instead | 413 / 0 | **gap** | `produces every token kind it declares`, `numbers are recognised with a sign, a leading dot, a fraction and an exponent` |
+| a hexadecimal escape resolves to its code point | return the replacement character | 413 / 0 | **gap** | `escapes resolve to the character they name` |
+| a hexadecimal escape takes up to six digits | take at most five | 413 / 0 | **gap** | `escapes resolve to the character they name` |
+| one space after a hexadecimal escape is its terminator | leave the space in place | 413 / 0 | **gap** | `escapes resolve to the character they name` |
+| a non-hexadecimal escape is the literal character | return the replacement character | 412 / 1 | covered | — |
+| an escaped newline inside a string contributes nothing | contribute a replacement character | 413 / 0 | **gap** | `escapes resolve to the character they name` |
+| the closing quote is not part of the string | append it to the value | 411 / 2 | covered | — |
+| an apostrophe-quoted URL value is read as a string | only accept a double quote | 413 / 0 | **gap** | `URL tokens come from url( in any casing, quoted or bare` |
+| a bare URL value ends at whitespace without keeping it | append the whitespace | 413 / 0 | **gap** | `URL tokens come from url( in any casing, quoted or bare` |
+| an identifier may start with `-` or `--` | refuse a leading hyphen | 413 / 0 | **gap** | `identifiers start with a hyphen, a double hyphen or a non-ASCII letter` |
+| an identifier may start with a non-ASCII letter | drop the `code >= 0x80` clause | 413 / 0 | **gap** | `identifiers start with a hyphen, a double hyphen or a non-ASCII letter` |
+| a number may start with a decimal point | refuse a leading dot | 413 / 0 | **gap** | `numbers are recognised with a sign, a leading dot, a fraction and an exponent` |
+| a number may start with `+` or `-` | refuse a leading sign | 413 / 0 | **gap** | `numbers are recognised with a sign, a leading dot, a fraction and an exponent` |
+| a number's fractional part is consumed | consume the decimal point without its digits | 413 / 0 | **gap** | `numbers are recognised with a sign, a leading dot, a fraction and an exponent` |
+| a number's exponent is consumed | stop before the exponent | 413 / 0 | **gap** | `numbers are recognised with a sign, a leading dot, a fraction and an exponent` |
+| a comment ends at `*/` | look for `+/` instead | 412 / 1 | covered | — |
+| a backslash before a newline is not a valid escape | treat every backslash as one | 413 / 0 | **gap** | `escapes resolve to the character they name` |
+| an identifier keeps the characters its escapes name | consume the escape and drop the character | 412 / 1 | covered | — |
+| a delimiter token carries its own character | emit an empty value | 413 / 0 | **gap** | `produces every token kind it declares`, `identifiers start with a hyphen, a double hyphen or a non-ASCII letter`, `escapes resolve to the character they name` |
+| a `#` that names nothing is a delimiter | emit a `hash` token | 413 / 0 | **gap** | `a bare # or @ is a delimiter carrying its own character` |
+| an `@` that names nothing is a delimiter | emit an `at-keyword` token | 413 / 0 | **gap** | `a bare # or @ is a delimiter carrying its own character` |
+
+**`plugin/src/ui/svg.ts`**
+
+| Accept path | Mutation | Suite result | Verdict | Test added |
+|---|---|---|---|---|
+| a safe document comes back `ok` and `safe` | return a `parserError` verdict instead | 400 / 13 | covered | — |
+| a document exactly at `MAX_SVG_BYTES` is accepted | `>` becomes `>=` | 413 / 0 | **gap** | `a document exactly at the byte ceiling is accepted, counted in UTF-8` |
+| an offender name exactly at `MAX_IDENTIFIER_BYTES` is still reported | `>` becomes `>=` | 413 / 0 | **gap** | `an offender name exactly at the identifier ceiling is still reported` |
+| a data: payload exactly at `MAX_RASTER_DECODED_BYTES` is accepted | `>` becomes `>=` | 412 / 1 | covered | — |
+| `image/png` is an allowed data: media type | drop it from `allowedDataMime` | 411 / 2 | covered | — |
+| `image/jpeg` is an allowed data: media type | drop that spelling from `allowedDataMime` | 413 / 0 | **gap** | `every media type the data: allow-list names is accepted` |
+| `image/jpg` is an allowed data: media type | drop that spelling from `allowedDataMime` | 413 / 0 | **gap** | `every media type the data: allow-list names is accepted` |
+| `image/webp` is an allowed data: media type | drop it from `allowedDataMime` | 413 / 0 | **gap** | `every media type the data: allow-list names is accepted` |
+| `font/woff` is an allowed font media type | drop it from `isFontDataMime` | 413 / 0 | **gap** | `every media type the data: allow-list names is accepted` |
+| `font/woff2` is an allowed font media type | drop it from `isFontDataMime` | 408 / 5 | covered | — |
+| `font/ttf` is an allowed font media type | drop it from `isFontDataMime` | 413 / 0 | **gap** | `every media type the data: allow-list names is accepted` |
+| `font/otf` is an allowed font media type | drop it from `isFontDataMime` | 413 / 0 | **gap** | `every media type the data: allow-list names is accepted` |
+| `application/font-woff` is an allowed font media type | drop it from `isFontDataMime` | 413 / 0 | **gap** | `every media type the data: allow-list names is accepted` |
+| `application/x-font-ttf` is an allowed font media type | drop it from `isFontDataMime` | 413 / 0 | **gap** | `every media type the data: allow-list names is accepted` |
+| `application/x-font-opentype` is an allowed font media type | drop it from `isFontDataMime` | 413 / 0 | **gap** | `every media type the data: allow-list names is accepted` |
+| a same-document fragment reference is accepted | refuse it in `validateReference` | 406 / 7 | covered | — |
+| an allowed data: URL is accepted as a reference | refuse every data: reference | 408 / 5 | covered | — |
+| a namespace declaration is exempt from the attribute rules | drop the `isXmlnsName` exemption | 412 / 1 | covered | — |
+| `xmlns:prefix` is exempt too, not only bare `xmlns` | accept only the bare five-character form | 412 / 1 | covered | — |
+| an attribute starting with `o` but not `on` is not an event handler | match on the first letter alone | 411 / 2 | covered | — |
+| `href` is held to the reference rule | drop it from `isReferenceAttribute` | 406 / 7 | covered | — |
+| an ordinary value in a resource attribute is left alone | drop the `looksLikeActiveUrl` precondition | 409 / 4 | covered | — |
+| a semicolon is a separator only in `values` | split every resource attribute on `;` | 412 / 1 | covered | — |
+| an at-rule other than `@import` passes the CSS check | refuse every at-keyword, not just the six-character `import` | 472 / 4 | covered | — |
+| a `url()` that resolves is accepted | refuse every `url()` token | 408 / 5 | covered | — |
+| a local name is compared case-insensitively | drop the `toLowerCase()` | 413 / 0 | **gap** | `element and attribute names are matched without their prefix or casing` |
+| a namespace prefix is stripped before comparison | never find the separator | 408 / 5 | covered | — |
+| a DOM's own `localName` is preferred when it has one | always fall back to `tagName` | 413 / 0 | **gap** | — *(open)* |
+| a DOM offering `getAttributeNames()` is read through it | ignore `getAttributeNames` | 413 / 0 | **gap** | — *(open)* |
+| a DOM offering only `attributes` is read through the map | collect no names from the map | 401 / 12 | covered | — |
+| a child list offering `item()` is read through it | ignore `childNodes.item` | 413 / 0 | **gap** | `both DOM shapes are walked: modern accessors and a bare attribute map`, `element and attribute names are matched without their prefix or casing` |
+| a child list offering only index access is read through it | return `null` from the index arm | 413 / 0 | **gap** | `both DOM shapes are walked: modern accessors and a bare attribute map` |
+| the walk descends into child nodes | never recurse | 399 / 14 | covered | — |
+| a `<style>` element's text is put through the CSS check | match `styleX` instead | 409 / 4 | covered | — |
+| a valid UTF-8 byte transfer decodes | make the decoder throw | 413 / 0 | **gap** | `a UTF-8 byte transfer decodes to the same verdict as the string` |
+| a string transfer with no lone surrogate is taken as-is | return `null` instead | 388 / 25 | covered | — |
+| a paired surrogate is not treated as a lone one | treat every high surrogate as lone | 413 / 0 | **gap** | `a document exactly at the byte ceiling is accepted, counted in UTF-8`, `a UTF-8 byte transfer decodes to the same verdict as the string` |
+| a two-byte character counts as two bytes | count it as three | 413 / 0 | **gap** | `a document exactly at the byte ceiling is accepted, counted in UTF-8` |
+| a surrogate pair counts as four bytes | count it as six | 413 / 0 | **gap** | `a document exactly at the byte ceiling is accepted, counted in UTF-8` |
+| leading ASCII whitespace is trimmed before a rule runs | stop trimming the front | 413 / 0 | **gap** | `a value padded with ASCII whitespace is trimmed before the rule runs` |
+| trailing ASCII whitespace is trimmed before a rule runs | stop trimming the back | 413 / 0 | **gap** | `a value padded with ASCII whitespace is trimmed before the rule runs` |
+| a prefix test folds case | compare the left side unfolded | 412 / 1 | covered | — |
+| a space is not stripped when normalising a URL | strip spaces too | 412 / 1 | covered | — |
+| a `//host` value counts as an active URL | drop the protocol-relative check | 413 / 0 | **gap** | `a scheme is a scheme only when it starts with a letter` |
+| a scheme must start with a letter, so `1:2` is not one | drop the leading-letter requirement | 413 / 0 | **gap** | `a scheme is a scheme only when it starts with a letter` |
+| the data: payload starts at the first comma after `data:` | start the search one character later | 413 / 0 | not applicable | — |
+| the `;base64` parameter is detected | never set the base64 flag | 410 / 3 | covered | — |
+| the media type is compared in lower case | keep the original casing | 412 / 1 | covered | — |
+| a `%XX` sequence decodes to its byte | keep the literal `%` | 413 / 0 | **gap** | `a percent-encoded data: URL is read as the same bytes as its base64 twin` |
+| the data: metadata splits on `;` | treat the whole metadata as one part | 407 / 6 | covered | — |
+| a `<?…?>` processing instruction is found in the source | never match the opening `<?` | 411 / 2 | covered | — |
+| a processing instruction's pseudo-attributes are classified | skip the classification | 411 / 2 | covered | — |
+| an unsafe document still comes back with its source | return an empty source | 410 / 3 | covered | — |
+| a rejection names the offender when the name fits | drop the name | 408 / 5 | covered | — |
+| a `<script>` element is refused | drop it from the element check | 408 / 5 | covered | — |
+| a `<foreignObject>` element is refused | drop it from the element check | 411 / 2 | covered | — |
+| a parser error found by `getElementsByTagName` is reported | ignore that signal | 413 / 0 | **gap** | `a parser error is caught however the parser reports it` |
+| a parser error named by the root element is reported | ignore that signal | 413 / 0 | **gap** | `a parser error is caught however the parser reports it` |
+| a parser that throws yields a `parserError` verdict | return an `INTERNAL_ERROR` failure instead | 411 / 2 | covered | — |
+| the verdict carries the rule the walk found | substitute a `parserError` rejection | 406 / 7 | covered | — |
+
 
 ## plugin read
 
