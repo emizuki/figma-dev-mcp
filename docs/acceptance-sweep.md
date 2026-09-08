@@ -17,6 +17,13 @@ Verdicts:
 - **not applicable** — the mutation does not compile (the type system already
   forbids it), or the refusal has no meaningful opposite.
 
+Citing code: name the test and quote its assertion message, or name the
+production function — a `file.rs:NNN` is the one claim in this record no
+mutation checks, and a line number into a test file is worse still, because
+nothing says whether it means the `assert!` or the message five lines inside
+it. Keep a number only where it points into production code and adds something
+the name does not; every one that survives has been checked against the tree.
+
 ## Scope
 
 Enumerated by the commands in `docs/superpowers/plans/2026-09-07-acceptance-sweep.md`.
@@ -777,10 +784,12 @@ settles it: holding those two ports from an unrelated process and running those
 two tests **at HEAD, with no mutation applied at all** fails both, and
 releasing the ports makes both pass again. Which production-port assertion
 fires depends on how far each test gets before the squatted port stops it, so
-expect either — `SIGTERM/EOF cleanup must release production listeners`
-(`stdio_eras.rs:262`, the cleanup assertion) or `production binary must bind
-the plugin and frontend listeners` (`stdio_eras.rs:109`, the earlier bind
-assertion). Their outcome under any mutation therefore says more about what
+expect either — `"SIGTERM/EOF cleanup must release production listeners"`, the
+cleanup assertion, or `"production binary must bind the plugin and frontend
+listeners"` in `assert_ports_bound`, the earlier one a squatted port stops the
+spawn at. Both live in helpers in `crates/figma-dev-mcp/tests/stdio_eras.rs`;
+grep the message rather than a line number, which is why this note names no
+line. Their outcome under any mutation therefore says more about what
 else is on the machine than about the mutation. The recorded cell is the
 mutation-attributable set — the 21 that reproduce — and the difference is named
 here rather than split between two numbers with no explanation.
