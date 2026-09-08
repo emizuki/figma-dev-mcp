@@ -4,6 +4,7 @@ import { installFigma } from "../../tests/figma-harness"
 import { LocalCancellationController } from "../main/cancellation"
 import { PluginReadError } from "./navigation"
 import { getComponents } from "./components"
+import { byteLength } from "./serialize"
 
 const page = (id: string, name: string, children: unknown[] = []) => ({
   id,
@@ -552,5 +553,324 @@ describe("get_components", () => {
         cancellation.signal,
       ),
     ).rejects.toThrow("Operation cancelled")
+  })
+
+  test("components and instances share one returned-node ceiling", async () => {
+    const icon = standaloneComponent("3:1", "Icon")
+    const first = instance({ id: "5:1", name: "One", main: { id: "3:1" } })
+    const second = instance({ id: "5:2", name: "Two", main: { id: "3:1" } })
+    installFigma({
+      currentPage: page("0:2", "Current", [icon, first, second]),
+    })
+
+    const result = await getComponents({}, undefined, { returnedNodes: 2 })
+
+    expect(result.components.map((item) => item.id)).toEqual(["3:1"])
+    expect(result.instances).toEqual([
+      { instanceId: "5:1", componentId: "3:1" },
+    ])
+    expect(result.truncated).toBe(true)
+    expect(result.truncation).toEqual({ reason: "nodeLimit", visitedNodes: 3 })
+    expect(result.observation.completedAt).toMatch(/Z$/)
+  })
+
+  test("a truncated walk outranks the emission cut", async () => {
+    const icons = [1, 2, 3, 4].map((index) =>
+      standaloneComponent(`3:${index}`, `Icon ${index}`),
+    )
+    installFigma({ currentPage: page("0:2", "Current", icons) })
+
+    const result = await getComponents({}, undefined, {
+      visitedNodes: 4,
+      returnedNodes: 1,
+    })
+
+    expect(result.truncated).toBe(true)
+    expect(result.truncation).toEqual({ reason: "nodeLimit", visitedNodes: 4 })
+  })
+
+  test("the byte ceiling counts every emitted payload and reports the total", async () => {
+    const icons = [1, 2].map((index) =>
+      standaloneComponent(`3:${index}`, `Icon ${index}`),
+    )
+    installFigma({ currentPage: page("0:2", "Current", icons) })
+    const serialized = (index: number) => ({
+      id: `3:${index}`,
+      name: `Icon ${index}`,
+      documentation: [],
+      variantProperties: [],
+      propertyDefinitions: [
+        {
+          name: "Label#1:0",
+          defaultValue: { kind: "text" as const, value: "icon" },
+        },
+      ],
+      description: "Icon",
+    })
+    const budget = byteLength(serialized(1)) + byteLength(serialized(2)) - 1
+
+    const result = await getComponents({}, undefined, { encodedBytes: budget })
+
+    expect(result.components).toEqual([serialized(1)])
+    expect(result.truncation).toEqual({
+      reason: "byteLimit",
+      encodedBytes: byteLength(serialized(1)) + byteLength(serialized(2)),
+    })
+  })
+
+  test("a component reached twice in one walk is emitted once", async () => {
+    const icon = standaloneComponent("3:1", "Icon")
+    installFigma({ currentPage: page("0:2", "Current", [icon, icon]) })
+
+    const result = await getComponents({})
+
+    expect(result.components.map((item) => item.id)).toEqual(["3:1"])
+  })
+
+  test("main components are looked up sixteen at a time, and the pass stops at the ceiling", async () => {
+    const lookups: string[] = []
+    const instances = Array.from({ length: 20 }, (_, index) => ({
+      id: `5:${index + 1}`,
+      name: `Instance ${index + 1}`,
+      type: "INSTANCE",
+      visible: true,
+      children: [],
+      getMainComponentAsync: async () => {
+        lookups.push(`5:${index + 1}`)
+        return { id: "3:1" }
+      },
+    }))
+    installFigma({ currentPage: page("0:2", "Current", instances) })
+
+    const result = await getComponents({}, undefined, { returnedNodes: 1 })
+
+    expect(lookups).toHaveLength(16)
+    expect(result.instances).toHaveLength(1)
+    expect(result.truncated).toBe(true)
+  })
+
+  test("an exhausted main-component budget stops before the first batch", async () => {
+    const lookups: string[] = []
+    const instances = [1, 2, 3].map((index) => ({
+      id: `5:${index}`,
+      name: `Instance ${index}`,
+      type: "INSTANCE",
+      visible: true,
+      children: [],
+      getMainComponentAsync: async () => {
+        lookups.push(`5:${index}`)
+        return { id: "3:1" }
+      },
+    }))
+    installFigma({ currentPage: page("0:2", "Current", instances) })
+
+    const result = await getComponents({}, undefined, {
+      mainComponentBudgetMs: 0,
+    })
+
+    expect(lookups).toEqual([])
+    expect(result.instances).toEqual([])
+    expect(result.truncated).toBe(true)
+    expect(result.truncation).toEqual({ reason: "nodeLimit", visitedNodes: 0 })
+
+    // With a walk that also ran out, the walk's count is the one kept: the
+    // budget marks second and must not overwrite it.
+    const walked = await getComponents({}, undefined, {
+      mainComponentBudgetMs: 0,
+      visitedNodes: 2,
+    })
+    expect(walked.truncation).toEqual({ reason: "nodeLimit", visitedNodes: 2 })
+  })
+
+  test("a budget that runs out during a batch truncates after it", async () => {
+    const one = {
+      id: "5:1",
+      name: "One",
+      type: "INSTANCE",
+      visible: true,
+      children: [],
+      getMainComponentAsync: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 30))
+        return { id: "3:1" }
+      },
+    }
+    installFigma({ currentPage: page("0:2", "Current", [one]) })
+
+    const result = await getComponents({}, undefined, {
+      mainComponentBudgetMs: 10,
+    })
+
+    expect(result.instances).toEqual([
+      { instanceId: "5:1", componentId: "3:1" },
+    ])
+    expect(result.truncated).toBe(true)
+  })
+
+  test("an off-page main component that never resolves is skipped, not awaited", async () => {
+    const one = instance({ id: "5:1", name: "One", main: { id: "9:9" } })
+    installFigma({
+      currentPage: page("0:2", "Current", [one]),
+      getNodeByIdAsync: async (id: string) =>
+        id === "9:9" ? new Promise(() => {}) : one,
+    })
+
+    const result = await getComponents({ selector: { nodeId: "5:1" } })
+
+    expect(result.instances).toEqual([
+      { instanceId: "5:1", componentId: "9:9" },
+    ])
+    expect(result.components).toEqual([])
+  })
+
+  test("an off-page lookup that throws costs only that component", async () => {
+    const one = instance({ id: "5:1", name: "One", main: { id: "9:9" } })
+    installFigma({
+      currentPage: page("0:2", "Current", [one]),
+      // Synchronous, not a rejected promise: settleOrSkip swallows the latter,
+      // so only this shape reaches the catch under test.
+      getNodeByIdAsync: ((id: string) => {
+        if (id === "9:9") throw new Error("library unreachable")
+        return Promise.resolve(null)
+      }) as (id: string) => Promise<unknown>,
+    })
+
+    const result = await getComponents({})
+
+    expect(result.components).toEqual([])
+    expect(result.instances).toEqual([
+      { instanceId: "5:1", componentId: "9:9" },
+    ])
+  })
+
+  // A rejected promise is swallowed by settleOrSkip, so only a *synchronous*
+  // throw from the host method reaches the guard that rethrows read errors.
+  test("the off-page pass stops before its batch when the budget is already out", async () => {
+    const one = {
+      id: "5:1",
+      name: "One",
+      type: "INSTANCE",
+      visible: true,
+      children: [],
+      getMainComponentAsync: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 30))
+        return { id: "9:9" }
+      },
+    }
+    const offPage = standaloneComponent("9:9", "Off page")
+    const harness = installFigma({
+      currentPage: page("0:2", "Current", [one]),
+      nodes: new Map<string, unknown>([["9:9", offPage]]),
+    })
+
+    const result = await getComponents({}, undefined, {
+      mainComponentBudgetMs: 10,
+    })
+
+    expect(result.instances).toEqual([
+      { instanceId: "5:1", componentId: "9:9" },
+    ])
+    expect(harness.lookedUp).toEqual([])
+    expect(result.components).toEqual([])
+  })
+
+  test("the off-page pass stops after a batch that ran the budget out", async () => {
+    const one = instance({ id: "5:1", name: "One", main: { id: "9:9" } })
+    const offPage = standaloneComponent("9:9", "Off page")
+    installFigma({
+      currentPage: page("0:2", "Current", [one]),
+      getNodeByIdAsync: async (id: string) => {
+        if (id !== "9:9") return null
+        await new Promise((resolve) => setTimeout(resolve, 30))
+        return offPage
+      },
+    })
+
+    const result = await getComponents({}, undefined, {
+      mainComponentBudgetMs: 20,
+    })
+
+    expect(result.components.map((item) => item.id)).toEqual(["9:9"])
+    expect(result.truncated).toBe(true)
+  })
+
+  test("the off-page pass stops once the emission ceiling is hit", async () => {
+    const first = instance({ id: "5:1", name: "One", main: { id: "9:9" } })
+    const second = instance({ id: "5:2", name: "Two", main: { id: "9:9" } })
+    const offPage = standaloneComponent("9:9", "Off page")
+    const harness = installFigma({
+      currentPage: page("0:2", "Current", [first, second]),
+      nodes: new Map<string, unknown>([["9:9", offPage]]),
+    })
+
+    const result = await getComponents({}, undefined, { returnedNodes: 1 })
+
+    expect(result.instances).toHaveLength(1)
+    expect(harness.lookedUp).toEqual([])
+    expect(result.components).toEqual([])
+  })
+
+  test("a read error thrown synchronously by a main-component lookup ends the whole call", async () => {
+    const one = {
+      id: "5:1",
+      name: "One",
+      type: "INSTANCE",
+      visible: true,
+      children: [],
+      getMainComponentAsync: (): Promise<unknown> => {
+        throw new PluginReadError("CAPABILITY_UNAVAILABLE", false)
+      },
+    }
+    installFigma({ currentPage: page("0:2", "Current", [one]) })
+
+    await expect(getComponents({})).rejects.toBeInstanceOf(PluginReadError)
+  })
+
+  test("a read error raised while serializing a component ends the whole call", async () => {
+    const hostile = {
+      id: "3:1",
+      type: "COMPONENT",
+      visible: true,
+      children: [],
+      get name(): string {
+        throw new PluginReadError("CAPABILITY_UNAVAILABLE", false)
+      },
+    }
+    installFigma({ currentPage: page("0:2", "Current", [hostile]) })
+
+    await expect(getComponents({})).rejects.toBeInstanceOf(PluginReadError)
+  })
+
+  test("a component set whose variantProperties cannot be enumerated is still emitted", async () => {
+    const hostile = {
+      id: "2:1",
+      name: "Button",
+      type: "COMPONENT_SET",
+      visible: true,
+      children: [],
+      description: "",
+      documentationLinks: [],
+      componentPropertyDefinitions: {},
+      variantProperties: new Proxy(
+        {},
+        {
+          ownKeys() {
+            throw new Error("variantProperties is not enumerable")
+          },
+        },
+      ),
+    }
+    installFigma({ currentPage: page("0:2", "Current", [hostile]) })
+
+    const result = await getComponents({})
+
+    expect(result.components).toEqual([
+      {
+        id: "2:1",
+        name: "Button",
+        documentation: [],
+        variantProperties: [],
+        propertyDefinitions: [],
+      },
+    ])
   })
 })
