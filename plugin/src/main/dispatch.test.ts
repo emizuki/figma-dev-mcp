@@ -313,13 +313,131 @@ describe("closed read dispatcher", () => {
     })
   })
 
+  // One page child, carrying a reaction, so that the three readers whose
+  // results share a key set — dev-mode, reactions and motion — produce
+  // visibly different payloads on the same host.
+  const ROUTING_NODE = {
+    id: "1:2",
+    name: "Card",
+    type: "FRAME",
+    visible: true,
+    children: [],
+    reactions: [
+      {
+        trigger: { type: "ON_CLICK" },
+        actions: [
+          { type: "NODE", destinationId: "1:3", navigation: "NAVIGATE" },
+        ],
+      },
+    ],
+  }
+
+  const ROUTING_INPUTS: Record<
+    (typeof OPERATION_NAMES)[number],
+    Record<string, unknown>
+  > = { ...EMPTY_INPUTS, get_nodes: { nodeIds: ["1:2"] } }
+
+  // What each reader's own result looks like. `keys` is the exact set of
+  // top-level fields — different for ten of the thirteen — and `mark` is a
+  // value only that reader produces, which is what separates the three whose
+  // key sets coincide. Asserting the response's *label* is not enough: a
+  // `case` arm that keeps its label and calls the wrong reader, or none, is
+  // caught by nothing else in this suite (the type checker rejects it, but
+  // the type checker is not this suite).
+  interface RoutingExpectation {
+    keys: string[]
+    read: (result: Record<string, unknown>) => unknown
+    mark: unknown
+  }
+
+  const NO_MARK = { read: () => null, mark: null }
+
+  const ROUTING: Record<(typeof OPERATION_NAMES)[number], RoutingExpectation> =
+    {
+      get_metadata: {
+        keys: [
+          "capabilities",
+          "currentPageId",
+          "file",
+          "observation",
+          "pages",
+          "pluginVersion",
+          "truncated",
+        ],
+        read: (result) => (result.file as { name: string }).name,
+        mark: "Checkout flow",
+      },
+      get_selection: {
+        keys: ["detail", "nodes", "observation", "truncated"],
+        ...NO_MARK,
+      },
+      get_nodes: {
+        keys: ["detail", "items", "observation", "truncated"],
+        ...NO_MARK,
+      },
+      search_nodes: {
+        keys: ["matches", "observation", "truncated"],
+        ...NO_MARK,
+      },
+      get_design_context: {
+        keys: ["detail", "observation", "roots", "truncated"],
+        ...NO_MARK,
+      },
+      get_styles: {
+        keys: ["observation", "styles", "truncated"],
+        ...NO_MARK,
+      },
+      get_variables: {
+        keys: ["collections", "observation", "truncated"],
+        ...NO_MARK,
+      },
+      get_components: {
+        keys: ["components", "instances", "observation", "truncated"],
+        ...NO_MARK,
+      },
+      get_fonts: {
+        keys: ["fonts", "observation", "truncated"],
+        ...NO_MARK,
+      },
+      get_dev_mode_data: {
+        keys: ["items", "observation", "truncated", "visitedNodes"],
+        // The node carries no annotation and no dev resource, so dev-mode finds
+        // nothing on it — where reactions finds one and motion finds two.
+        read: (result) => `items:${(result.items as unknown[]).length}`,
+        mark: "items:0",
+      },
+      get_reactions: {
+        keys: ["items", "observation", "truncated", "visitedNodes"],
+        read: (result) =>
+          (
+            result.items as {
+              value?: { reactions?: { trigger?: string }[] }
+            }[]
+          ).map((item) => item.value?.reactions?.[0]?.trigger),
+        mark: ["click"],
+      },
+      get_motion: {
+        keys: ["items", "observation", "truncated", "visitedNodes"],
+        read: (result) =>
+          (result.items as { status: string }[]).map((item) => item.status),
+        mark: ["error", "error"],
+      },
+      get_screenshot: {
+        keys: ["assets", "observation", "truncated"],
+        ...NO_MARK,
+      },
+    }
+
   // Every operation below is a separate `case` in `dispatchRead`. Deleting any
   // one of them drops the request through to `assertNever`, which throws and
   // comes back as INTERNAL_ERROR — a request the plugin can serve answered as
   // if the plugin were broken. Eleven of the thirteen cases had nothing
   // holding them.
   test("every read operation reaches the reader named in the request", async () => {
-    installFigma({})
+    installFigma({
+      pageChildren: [ROUTING_NODE],
+      nodes: new Map([["1:2", ROUTING_NODE]]),
+    })
     let routed = 0
     for (const [index, operation] of OPERATION_NAMES.entries()) {
       const request = parseControllerBoundMessage({
@@ -328,7 +446,7 @@ describe("closed read dispatcher", () => {
         requestId: `plugin-route-${operation}`,
         deadlineMs: 1,
         target: {},
-        operation: { operation, input: EMPTY_INPUTS[operation] },
+        operation: { operation, input: ROUTING_INPUTS[operation] },
       })
       if (request.type !== "request")
         throw new Error("test request did not decode")
@@ -341,6 +459,20 @@ describe("closed read dispatcher", () => {
           requestId: `plugin-route-${operation}`,
           result: { operation },
         },
+      })
+
+      const expected = ROUTING[operation]
+      const payload = (
+        answer as { result: { result: Record<string, unknown> } }
+      ).result.result
+      expect({
+        operation,
+        keys: Object.keys(payload).sort(),
+        mark: expected.read(payload),
+      }).toEqual({
+        operation,
+        keys: expected.keys,
+        mark: expected.mark,
       })
       routed += 1
     }

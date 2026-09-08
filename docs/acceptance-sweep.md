@@ -1160,17 +1160,17 @@ error anyone can read.
 The area is `plugin/src/ui` (`relay.ts`, `socket.ts`, `hello.ts`, `uuid.ts`,
 `raster.ts`, `css-syntax.ts`, `svg.ts`, `index.ts`) and `plugin/src/main`
 (`dispatch.ts`, `cancellation.ts`, `progress.ts`, `code.ts`) — 2,312 lines of
-production code against 58 tests. It groups into **309 accept paths**: `main`
-94 and `ui` 215, one row per mutation that answers exactly one row. Every
+production code against 58 tests. It groups into **310 accept paths**: `main`
+94 and `ui` 216, one row per mutation that answers exactly one row. Every
 mutation below was applied to production code, built, measured and reverted;
 the committed diff adds tests only. Baseline before this task: **413 pass / 0
-fail / 1854 expect() calls / 26 files**. After: **476 pass / 0 fail / 2087
+fail / 1854 expect() calls / 26 files**. After: **476 pass / 0 fail / 2100
 expect() calls / 28 files**.
 
-**136 covered, 162 gaps, 11 not applicable.** 136 + 162 + 11 = 309. By half:
-`main` 94 rows — 35 covered, 52 gaps, 7 not applicable; `ui` 215 rows — 101
-covered, 110 gaps, 4 not applicable; 52 + 110 = 162. The new tests close **151**
-of the 162 gaps and 11 stay open; 151 + 11 = 162.
+**136 covered, 163 gaps, 11 not applicable.** 136 + 163 + 11 = 310. By half:
+`main` 94 rows — 35 covered, 52 gaps, 7 not applicable; `ui` 216 rows — 101
+covered, 111 gaps, 4 not applicable; 52 + 111 = 163. The new tests close **152**
+of the 163 gaps and 11 stay open; 152 + 11 = 163.
 
 The Scope table's `plugin/src/ui` 24 and `plugin/src/main` 5 are right as the
 plan defines them, and the brief's own Step-1 command disagrees with them for a
@@ -1255,6 +1255,18 @@ does not rewrite existing tests — and its acceptance counterpart, `every read
 operation reaches the reader named in the request`, carries the positive
 control the old one lacks: it counts its iterations and asserts the count is
 thirteen.
+
+That test asserts more than the response's label. Each reader returns a
+differently shaped result, so the shape is what says which reader ran: the test
+checks the exact set of top-level fields for all thirteen, and for the three
+whose field sets coincide — dev-mode, reactions and motion — a value only that
+reader produces, on a host whose one page child carries a reaction. Without
+that, an arm that keeps its label and calls the wrong reader, or none at all,
+would pass. **The other half of that property is held by `tsc`, not by this
+suite:** a `case` arm wired to the wrong reader fails `bun run typecheck` with
+`TS2322`, because each `ReadResult` variant fixes its own result type. Both
+gates run in the same command chain, and a reader deleting the shape assertions
+above should know that the type checker is what remains behind them.
 
 ### The cancellation question, answered
 
@@ -1421,10 +1433,11 @@ branch.
   for `data:,payload`, whose media type defaults to `text/plain` and is refused
   either way.
 
-### Three mutations that had to be re-measured, and one red that was a flake
+### Three re-measured mutations, and one red that was a flake
 
-Four rows are not the straightforward "mutate, run, record" case, and each is
-worth naming because each is a way this method can lie.
+Five rows — `SV24`, `CS24`, the two the `+`/`/` row split into, and `P19` — are
+not the straightforward "mutate, run, record" case, and each is worth naming
+because each is a way this method can lie.
 
 - **A mutation that changed nothing.** `SV24`'s first mutation loosened the
   length test in `validateCssText`'s `@import` check (`name.length === 6` →
@@ -1443,6 +1456,14 @@ worth naming because each is a way this method can lie.
   The same shape cost one earlier run too: `CS28`'s first mutation looped on a
   bare backslash and had to be replaced with one that consumes the escape and
   drops the character.
+- **A row that was one row for two constants.** `` `+` decodes to 62 and `/`
+  decodes to 63 `` was recorded as a single row whose mutation swapped the two,
+  which changes both at once and so cannot say which member is unpinned. It is
+  now two rows with two mutations — return 61 for `+`, return 61 for `/` — and
+  they answer differently: the first turns one new test red, the second turns
+  two. Both were measured on the 476-test suite, and both read **gap** because
+  every red is a test this task added; their `Suite result` cells therefore
+  carry the post-test numbers, as `SV24`'s does.
 - **A red that did not reproduce.** `P19` — deleting the heartbeat callback's
   phase default — turned `get_motion > keeps applied styles distinct from the
   catalog and copies seconds unchanged` red on its first run, in a different
@@ -1452,6 +1473,34 @@ worth naming because each is a way this method can lie.
   the only red in this task that did not reproduce, and the rule that caught it
   is the wrong-reason rule: a `covered` verdict has to say *why* the test
   fired.
+
+### Three maintenance edges this section leaves behind
+
+Recorded because a later reader will meet them and nothing else names them.
+
+- **`plugin/src/main/code.test.ts` exercises `detectCapabilities()` and asserts
+  a capability-*present* path.** `plugin/tests/figma-harness.ts`'s header names
+  exactly that as the condition under which its "inert" argument stops holding
+  — its point being that `detectCapabilities()` is reached from `navigation.ts`
+  and `main/code.ts`, neither of which the nine migrated files exercise. The
+  argument still holds literally: `code.test.ts` builds its own host rather
+  than calling `installFigma`, so the harness's over-complete default is not
+  what that assertion runs against. But whoever owns that header should know a
+  second caller now exists.
+- **A new `plugin/src/main/*.test.ts` lands in two tsconfig projects at once.**
+  `tsconfig.controller-tests.json` includes `src/main/**/*.ts` by glob and
+  `tsconfig.tests.json` includes `src/**/*.test.ts` by glob, and the two load
+  different `types`, which is why `dispatch.test.ts` and `progress.test.ts`
+  carry explicit `exclude` entries. A new main test file will most likely fail
+  typecheck until someone excludes it — loudly, which is the right direction,
+  and the opposite of `tsconfig.ui-tests.json`, whose file-by-file `include`
+  leaves a new UI test file silently unchecked.
+- **The Mutation column is not self-identifying.** Seventeen mutation texts
+  repeat across rows (`` `>` becomes `>=` `` five times, `drop that range`
+  three times, and so on). The Accept path disambiguates every one, and no
+  Accept path is duplicated within a section, so no row is answered twice — but
+  a reader scanning the Mutation column alone cannot reconstruct which site was
+  cut.
 
 ### What is left open
 
@@ -1559,7 +1608,7 @@ kinds of reason, and the reason is the point rather than the count:
 | `progressFor` returns the reporter bound to a signal | return `undefined` always | 411 / 2 | covered | — |
 | a fractional count is floored | return `value` instead of `Math.floor(value)` | 413 / 0 | **gap** | `a fractional count is floored rather than sent as a fraction` |
 | a count at or above `U32_MAX` is clamped to it | delete the `value >= U32_MAX` clamp | 412 / 1 | covered | — |
-| a non-finite or non-positive count becomes `0` | delete the `!Number.isFinite(value) || value <= 0` guard | 412 / 1 | covered | — |
+| a non-finite or non-positive count becomes `0` | delete the `!Number.isFinite(value) \|\| value <= 0` guard | 412 / 1 | covered | — |
 | a change of phase emits immediately | drop `lastPhase !== phase` from `due()` | 412 / 1 | covered | — |
 | the very first tick emits even inside the interval | drop `!Number.isFinite(lastEmitAt)` from `due()` | 413 / 0 | not applicable | — |
 | a tick after the interval has elapsed emits | return `false` from the elapsed-interval comparison | 412 / 1 | covered | — |
@@ -1740,7 +1789,8 @@ kinds of reason, and the reason is the point rather than the count:
 | `A`–`Z` decode to 0–25 | shift the range by one | 408 / 5 | covered | — |
 | `a`–`z` decode to 26–51 | shift the range by one | 411 / 2 | covered | — |
 | `0`–`9` decode to 52–61 | shift the range by one | 411 / 2 | covered | — |
-| `+` decodes to 62 and `/` to 63 | swap the two | 413 / 0 | **gap** | `every media type the data: allow-list names is accepted`, `base64 decoding reverses that, skipping whitespace and honouring padding` |
+| `+` decodes to 62 | return 61 for `+` | 475 / 1 | **gap** | `base64 decoding reverses that, skipping whitespace and honouring padding` |
+| `/` decodes to 63 | return 61 for `/` | 474 / 2 | **gap** | `base64 decoding reverses that, skipping whitespace and honouring padding`, `every media type the data: allow-list names is accepted` |
 | `image/png` is checked against PNG magic | always refuse it | 410 / 3 | covered | — |
 | `image/jpeg` is checked against JPEG magic | drop that spelling | 412 / 1 | covered | — |
 | `image/jpg` is checked against JPEG magic | drop that spelling | 413 / 0 | **gap** | `image/jpg is accepted as its own spelling of the JPEG media type` |
@@ -1850,7 +1900,6 @@ kinds of reason, and the reason is the point rather than the count:
 | a parser error named by the root element is reported | ignore that signal | 413 / 0 | **gap** | `a parser error is caught however the parser reports it` |
 | a parser that throws yields a `parserError` verdict | return an `INTERNAL_ERROR` failure instead | 411 / 2 | covered | — |
 | the verdict carries the rule the walk found | substitute a `parserError` rejection | 406 / 7 | covered | — |
-
 
 ## plugin read
 

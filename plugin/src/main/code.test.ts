@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { afterAll, describe, expect, test } from "bun:test"
 
 // `code.ts` is the controller entry point: it is what Figma loads, and every
 // message the iframe sends arrives at the `figma.ui.onmessage` it installs.
@@ -26,7 +26,26 @@ const ui: FigmaUi = {
 // Written through an untyped view of `globalThis`: the real declarations are
 // `PluginAPI` and a `const` string, and this file's whole point is to stand a
 // fake in their place before `code.ts` reads them at import time.
+//
+// Bun shares one runtime across test files, so a host installed here would
+// otherwise outlive the file and become an ordering coupling for whatever runs
+// next. The previous values are captured here and put back in `afterAll`;
+// `HAD_*` records whether the key existed at all, so a key this file invented
+// is deleted rather than set to `undefined`.
 const hostGlobals = globalThis as unknown as Record<string, unknown>
+const PREVIOUS = { html: hostGlobals.__html__, figma: hostGlobals.figma }
+const HAD = {
+  html: Object.hasOwn(hostGlobals, "__html__"),
+  figma: Object.hasOwn(hostGlobals, "figma"),
+}
+
+afterAll(() => {
+  if (HAD.html) hostGlobals.__html__ = PREVIOUS.html
+  else delete hostGlobals.__html__
+  if (HAD.figma) hostGlobals.figma = PREVIOUS.figma
+  else delete hostGlobals.figma
+})
+
 hostGlobals.__html__ = PANEL_HTML
 hostGlobals.figma = {
   root: { name: "Checkout flow", children: [{ id: "0:1", name: "Page 1" }] },
