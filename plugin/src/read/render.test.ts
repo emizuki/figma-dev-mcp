@@ -12,6 +12,8 @@ import {
 } from "../main/progress"
 import { parseReadResult } from "../shared/result-validation"
 import { parseBrokerToPlugin } from "../shared/validation"
+import { CANONICAL_MESSAGES } from "../shared/error-catalog"
+import { PluginReadError } from "./navigation"
 import {
   completeScreenshotValidation,
   getScreenshot,
@@ -976,5 +978,571 @@ describe("screenshot result validation", () => {
         },
       }),
     ).toThrow()
+  })
+})
+
+describe("get_screenshot validation through the plugin UI", () => {
+  const posted: Record<string, unknown>[] = []
+
+  const withUi = (
+    nodes: Map<string, unknown>,
+    postMessage?: (message: unknown) => void,
+  ) => {
+    posted.length = 0
+    return installFigma({
+      currentPage: page("0:1", "Page 1"),
+      nodes,
+      ui: {
+        postMessage:
+          postMessage ??
+          ((message: unknown) => {
+            posted.push(message as Record<string, unknown>)
+          }),
+      },
+    })
+  }
+
+  const settle = async (): Promise<void> => {
+    for (let step = 0; step < 20; step += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    }
+  }
+
+  test("a raster export is validated by the UI and carries the validated fields", async () => {
+    withUi(
+      new Map<string, unknown>([
+        ["1:2", exportNode("1:2", async () => new Uint8Array([1, 2, 3]))],
+      ]),
+    )
+
+    const pending = getScreenshot({
+      format: "png",
+      selector: { nodeId: "1:2" },
+    })
+    await settle()
+
+    expect(posted).toHaveLength(1)
+    const request = posted[0] as Record<string, unknown>
+    expect(request.type).toBe("validateScreenshot")
+    expect(request.item).toEqual({
+      format: "png",
+      nodeId: "",
+      bytes: new Uint8Array([1, 2, 3]),
+    })
+    expect(
+      completeScreenshotValidation({
+        type: "screenshotValidated",
+        validationId: request.validationId,
+        asset: {
+          status: "success",
+          value: {
+            format: "png",
+            nodeId: "",
+            dataBase64: "AQID",
+            width: 4,
+            height: 5,
+          },
+        },
+      }),
+    ).toBe(true)
+
+    const result = await pending
+    expect(result.assets).toEqual([
+      {
+        status: "success",
+        value: {
+          format: "png",
+          nodeId: "1:2",
+          dataBase64: "AQID",
+          width: 4,
+          height: 5,
+        },
+      },
+    ])
+    expect(result.observation.startedAt).toMatch(/Z$/)
+    expect(result.observation.completedAt).toMatch(/Z$/)
+  })
+
+  test("an svg export is validated by the UI and keeps its unsafe verdict", async () => {
+    withUi(
+      new Map<string, unknown>([
+        ["1:2", exportNode("1:2", async () => "<svg><script/></svg>")],
+      ]),
+    )
+
+    const pending = getScreenshot({
+      format: "svg",
+      selector: { nodeId: "1:2" },
+      svgOutlineText: false,
+      svgIdAttribute: false,
+      svgSimplifyStroke: false,
+    })
+    await settle()
+
+    const request = posted[0] as Record<string, unknown>
+    expect(request.item).toEqual({
+      format: "svg",
+      nodeId: "",
+      source: "<svg><script/></svg>",
+    })
+    completeScreenshotValidation({
+      type: "screenshotValidated",
+      validationId: request.validationId,
+      asset: {
+        status: "success",
+        value: {
+          format: "svg",
+          nodeId: "",
+          source: "<svg></svg>",
+          safe: false,
+          rejection: { kind: "unsafeElement", name: "script" },
+        },
+      },
+    })
+
+    const result = await pending
+    expect(result.assets).toEqual([
+      {
+        status: "success",
+        value: {
+          format: "svg",
+          nodeId: "1:2",
+          source: "<svg></svg>",
+          safe: false,
+          rejection: { kind: "unsafeElement", name: "script" },
+        },
+      },
+    ])
+  })
+
+  test("a raster answer to an svg request, and an svg answer to a raster one, are refused", async () => {
+    withUi(
+      new Map<string, unknown>([
+        ["1:2", exportNode("1:2", async () => "<svg/>")],
+      ]),
+    )
+    const svgPending = getScreenshot({
+      format: "svg",
+      selector: { nodeId: "1:2" },
+      svgOutlineText: false,
+      svgIdAttribute: false,
+      svgSimplifyStroke: false,
+    })
+    await settle()
+    completeScreenshotValidation({
+      type: "screenshotValidated",
+      validationId: (posted[0] as Record<string, unknown>).validationId,
+      asset: {
+        status: "success",
+        value: {
+          format: "png",
+          nodeId: "",
+          dataBase64: "AQID",
+          width: 1,
+          height: 1,
+        },
+      },
+    })
+    const svgResult = await svgPending
+    expect(svgResult.assets).toEqual([
+      {
+        status: "error",
+        error: {
+          code: "INTERNAL_ERROR",
+          message: CANONICAL_MESSAGES.INTERNAL_ERROR,
+          retryable: false,
+        },
+      },
+    ])
+
+    withUi(
+      new Map<string, unknown>([
+        ["1:2", exportNode("1:2", async () => new Uint8Array([9]))],
+      ]),
+    )
+    const rasterPending = getScreenshot({
+      format: "png",
+      selector: { nodeId: "1:2" },
+    })
+    await settle()
+    completeScreenshotValidation({
+      type: "screenshotValidated",
+      validationId: (posted[0] as Record<string, unknown>).validationId,
+      asset: {
+        status: "success",
+        value: {
+          format: "svg",
+          nodeId: "",
+          source: "<svg/>",
+          safe: true,
+          // Raster fields too, so that dropping the format check would yield a
+          // plausible success rather than a crash on a missing field.
+          dataBase64: "AQ",
+          width: 1,
+          height: 1,
+        },
+      },
+    })
+    const rasterResult = await rasterPending
+    expect(rasterResult.assets).toEqual([
+      {
+        status: "error",
+        error: {
+          code: "INTERNAL_ERROR",
+          message: CANONICAL_MESSAGES.INTERNAL_ERROR,
+          retryable: false,
+        },
+      },
+    ])
+  })
+
+  test("an error asset from the UI keeps its own code", async () => {
+    withUi(
+      new Map<string, unknown>([
+        ["1:2", exportNode("1:2", async () => "<svg/>")],
+      ]),
+    )
+    const pending = getScreenshot({
+      format: "svg",
+      selector: { nodeId: "1:2" },
+      svgOutlineText: false,
+      svgIdAttribute: false,
+      svgSimplifyStroke: false,
+    })
+    await settle()
+    completeScreenshotValidation({
+      type: "screenshotValidated",
+      validationId: (posted[0] as Record<string, unknown>).validationId,
+      asset: {
+        status: "error",
+        error: {
+          code: "LIMIT_EXCEEDED",
+          message: CANONICAL_MESSAGES.LIMIT_EXCEEDED,
+          retryable: true,
+        },
+      },
+    })
+
+    const result = await pending
+    expect(result.assets).toEqual([
+      {
+        status: "error",
+        error: {
+          code: "LIMIT_EXCEEDED",
+          message: CANONICAL_MESSAGES.LIMIT_EXCEEDED,
+          retryable: false,
+        },
+      },
+    ])
+  })
+
+  test("a validation the UI never answers fails that item as TIMEOUT", async () => {
+    withUi(
+      new Map<string, unknown>([
+        ["1:2", exportNode("1:2", async () => new Uint8Array([1]))],
+      ]),
+    )
+
+    const result = await getScreenshot(
+      { format: "png", selector: { nodeId: "1:2" } },
+      undefined,
+      undefined,
+      5,
+    )
+
+    expect(result.assets).toEqual([
+      {
+        status: "error",
+        error: {
+          code: "TIMEOUT",
+          message: CANONICAL_MESSAGES.TIMEOUT,
+          retryable: false,
+        },
+      },
+    ])
+  })
+
+  test("a validation answered well inside the default window still succeeds", async () => {
+    withUi(
+      new Map<string, unknown>([
+        ["1:2", exportNode("1:2", async () => new Uint8Array([1]))],
+      ]),
+    )
+
+    const pending = getScreenshot({
+      format: "png",
+      selector: { nodeId: "1:2" },
+    })
+    await settle()
+    await new Promise((resolve) => setTimeout(resolve, 40))
+    expect(
+      completeScreenshotValidation({
+        type: "screenshotValidated",
+        validationId: (posted[0] as Record<string, unknown>).validationId,
+        asset: {
+          status: "success",
+          value: {
+            format: "png",
+            nodeId: "",
+            dataBase64: "AQ",
+            width: 1,
+            height: 1,
+          },
+        },
+      }),
+    ).toBe(true)
+    const result = await pending
+    expect(result.assets[0]?.status).toBe("success")
+  })
+
+  test("a cancelled validation fails that item as CANCELLED", async () => {
+    withUi(
+      new Map<string, unknown>([
+        ["1:2", exportNode("1:2", async () => new Uint8Array([1]))],
+      ]),
+    )
+    const cancellation = new LocalCancellationController()
+
+    const pending = getScreenshot(
+      { format: "png", selector: { nodeId: "1:2" } },
+      cancellation.signal,
+    )
+    await settle()
+    cancellation.abort()
+
+    await expect(pending).rejects.toBeInstanceOf(LocalCancellationError)
+  })
+
+  test("a UI that refuses the message fails that item as INTERNAL_ERROR", async () => {
+    withUi(
+      new Map<string, unknown>([
+        ["1:2", exportNode("1:2", async () => new Uint8Array([1]))],
+      ]),
+      () => {
+        throw new Error("iframe gone")
+      },
+    )
+
+    const result = await getScreenshot({
+      format: "png",
+      selector: { nodeId: "1:2" },
+    })
+
+    expect(result.assets).toEqual([
+      {
+        status: "error",
+        error: {
+          code: "INTERNAL_ERROR",
+          message: CANONICAL_MESSAGES.INTERNAL_ERROR,
+          retryable: false,
+        },
+      },
+    ])
+  })
+
+  test("a jpeg export asks the UI to validate a jpeg and is tagged jpeg", async () => {
+    withUi(
+      new Map<string, unknown>([
+        ["1:2", exportNode("1:2", async () => new Uint8Array([4]))],
+      ]),
+    )
+
+    const pending = getScreenshot({
+      format: "jpeg",
+      selector: { nodeId: "1:2" },
+    })
+    await settle()
+
+    const request = posted[0] as Record<string, unknown>
+    expect((request.item as { format: string }).format).toBe("jpeg")
+    completeScreenshotValidation({
+      type: "screenshotValidated",
+      validationId: request.validationId,
+      asset: {
+        status: "success",
+        value: {
+          format: "jpeg",
+          nodeId: "",
+          dataBase64: "BA",
+          width: 2,
+          height: 2,
+        },
+      },
+    })
+
+    const result = await pending
+    expect(result.assets).toEqual([
+      {
+        status: "success",
+        value: {
+          format: "jpeg",
+          nodeId: "1:2",
+          dataBase64: "BA",
+          width: 2,
+          height: 2,
+        },
+      },
+    ])
+  })
+
+  test("progress is reported once before the loop and around every export", async () => {
+    const frames: ProgressFrame[] = []
+    const controller = new LocalCancellationController()
+    bindProgress(
+      controller.signal,
+      createProgressReporter({
+        emit: (frame) => frames.push(frame),
+        intervalMs: 0,
+      }),
+    )
+    installFigma({
+      currentPage: page("0:1", "Page 1"),
+      nodes: new Map<string, unknown>([
+        ["1:2", exportNode("1:2", async () => new Uint8Array([1]))],
+        ["1:3", exportNode("1:3", async () => new Uint8Array([2]))],
+      ]),
+    })
+
+    await getScreenshot(
+      { format: "png", selector: { nodeIds: ["1:2", "1:3"] } },
+      controller.signal,
+      passthrough,
+    )
+
+    expect(frames.map((frame) => [frame.completed, frame.total])).toEqual([
+      [0, 2],
+      [0, 2],
+      [1, 2],
+      [1, 2],
+      [2, 2],
+    ])
+  })
+
+  test("each item takes a validation id of its own", async () => {
+    withUi(
+      new Map<string, unknown>([
+        ["1:2", exportNode("1:2", async () => new Uint8Array([1]))],
+        ["1:3", exportNode("1:3", async () => new Uint8Array([2]))],
+      ]),
+    )
+
+    const pending = getScreenshot({
+      format: "png",
+      selector: { nodeIds: ["1:2", "1:3"] },
+    })
+    await settle()
+    expect(posted).toHaveLength(1)
+    const first = (posted[0] as Record<string, unknown>).validationId
+    completeScreenshotValidation({
+      type: "screenshotValidated",
+      validationId: first,
+      asset: {
+        status: "success",
+        value: {
+          format: "png",
+          nodeId: "",
+          dataBase64: "AQ",
+          width: 1,
+          height: 1,
+        },
+      },
+    })
+    await settle()
+    expect(posted).toHaveLength(2)
+    const second = (posted[1] as Record<string, unknown>).validationId
+    expect(second).not.toBe(first)
+    completeScreenshotValidation({
+      type: "screenshotValidated",
+      validationId: second,
+      asset: {
+        status: "success",
+        value: {
+          format: "png",
+          nodeId: "",
+          dataBase64: "Ag",
+          width: 1,
+          height: 1,
+        },
+      },
+    })
+
+    const result = await pending
+    expect(result.assets.map((asset) => asset.status)).toEqual([
+      "success",
+      "success",
+    ])
+  })
+})
+
+describe("get_screenshot export mechanics", () => {
+  test("the host exporter is called on the node it belongs to", async () => {
+    const node = {
+      id: "1:2",
+      type: "FRAME",
+      payload: new Uint8Array([7, 7]),
+      async exportAsync(this: { payload: Uint8Array }) {
+        return this.payload
+      },
+    }
+    installFigma({
+      currentPage: page("0:1", "Page 1"),
+      nodes: new Map<string, unknown>([["1:2", node]]),
+    })
+
+    const result = await getScreenshot(
+      { format: "png", selector: { nodeId: "1:2" } },
+      undefined,
+      passthrough,
+    )
+
+    expect(result.assets).toEqual([
+      {
+        status: "success",
+        value: {
+          format: "png",
+          nodeId: "1:2",
+          dataBase64: Buffer.from([7, 7]).toString("base64"),
+          width: 1,
+          height: 1,
+        },
+      },
+    ])
+  })
+
+  test("a read error raised by the node lookup ends the whole call", async () => {
+    installFigma({
+      currentPage: page("0:1", "Page 1"),
+      getNodeByIdAsync: async () => {
+        throw new PluginReadError("CAPABILITY_UNAVAILABLE", false)
+      },
+    })
+
+    await expect(
+      getScreenshot(
+        { format: "png", selector: { nodeId: "1:2" } },
+        undefined,
+        passthrough,
+      ),
+    ).rejects.toBeInstanceOf(PluginReadError)
+  })
+
+  test("a signal already aborted stops before the first lookup", async () => {
+    const harness = installFigma({
+      currentPage: page("0:1", "Page 1"),
+      nodes: new Map<string, unknown>([
+        ["1:2", exportNode("1:2", async () => new Uint8Array([1]))],
+      ]),
+    })
+    const cancellation = new LocalCancellationController()
+    cancellation.abort()
+
+    await expect(
+      getScreenshot(
+        { format: "png", selector: { nodeId: "1:2" } },
+        cancellation.signal,
+        passthrough,
+      ),
+    ).rejects.toBeInstanceOf(LocalCancellationError)
+    expect(harness.lookedUp).toEqual([])
   })
 })
