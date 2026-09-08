@@ -636,6 +636,14 @@ async fn wrong_socket_response_cannot_complete_a_real_pending_request() {
     task.abort();
 }
 
+// Note for a future reader: the two `is_err()` assertions at the end of this
+// test do not discriminate what resolved the calls. Cancelling the shutdown
+// token breaks the socket loop, `cleanup_socket` fails both pendings with
+// `CONNECTION_LOST`, and `PendingMap::shutdown` fails them with the same code —
+// so this test stays green with `Broker::shutdown`'s call to
+// `PendingMap::shutdown` deleted outright. The property that statement carries
+// is pinned by `broker_shutdown_resolves_pending_calls_itself_not_by_socket_teardown`
+// below; delete that test and the coverage goes with it, silently.
 #[tokio::test]
 async fn broker_shutdown_and_deadlines_resolve_pending_requests() {
     let (address, broker, task) = running_broker().await;

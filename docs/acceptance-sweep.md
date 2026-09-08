@@ -501,8 +501,11 @@ than one place:
   Only the text arm is on the path the suite drives, and each arm turned out
   to hold **three** separable properties, not one: is the frame accepted, does
   it refresh the socket-local clock that decides reaping, and does it refresh
-  the registry's `last_seen_at` that MCP clients read. Eight of the fourteen
-  gaps are cells in that one three-by-three table.
+  the registry's `last_seen_at` that MCP clients read. That is nine cells and
+  eight rows; **seven of the fourteen gaps** are in it. (Eight rows, not nine,
+  because the text arm's acceptance has no mutation that does not break the
+  whole suite; seven gaps, not eight, because the text arm's socket-local
+  refresh is the one row in the table that was already pinned.)
 - `handle_incoming`'s text arm dispatches four accepted plugin frame kinds —
   progress, response, error, pong. Three are pinned. The **error** frame is
   not, and the test that looks like it pins it passes for the wrong reason.
@@ -516,8 +519,9 @@ plugin session on the next ping or pong a real client sends, and all 260 tests
 stayed green. Keeping the frame accepted and deleting only its liveness refresh
 is quieter still and equally fatal; deleting only the `touch_socket` half of
 that refresh is quieter again and freezes what clients are told rather than
-killing the session. Three properties, three mutations, three rows per arm, for
-exactly that reason.
+killing the session. Three properties and one mutation each, for exactly that
+reason — three rows for each control arm and two for the text arm, eight in
+all.
 
 ### What the covered rows prove
 
@@ -723,6 +727,18 @@ literally *resolve pending requests* — passing in 10ms. Cancelling the token
 breaks `ws::serve`'s socket loop, `cleanup_socket` calls
 `PendingMap::remove_socket`, and the pendings resolve anyway.
 
+**The old test keeps its assertion, deliberately.** Rewriting an existing test
+is out of scope for this sweep — it adds counterparts rather than editing what
+is there — and the property is now pinned by the new test beside it. So
+`broker_shutdown_and_deadlines_resolve_pending_requests` still asserts nothing
+but `is_err()` twice, and that assertion is **undiscriminating**: it is
+satisfied by socket teardown as readily as by the shutdown path, and it stays
+green under the deletion above. What actually pins
+`Broker::shutdown`'s pending-resolution is
+`ws_origin::broker_shutdown_resolves_pending_calls_itself_not_by_socket_teardown`.
+A reader who deletes that test loses the property with the old test still
+green; a pointer comment on the old test says so in place.
+
 Asserting the error code does not help here, and that is what makes this row
 worth reading: `PendingMap::shutdown` and `remove_socket` both fail with
 `CONNECTION_LOST`, so the fix that worked one row up would produce a third
@@ -756,16 +772,18 @@ the discrepancy is stable on each side rather than noise.
 
 The two tests that differ are `stdio_eras::legacy_2025_11_25_initialize_and_lists_over_real_stdio`
 and `stdio_eras::modern_2026_07_28_discover_and_stateless_lists_over_real_stdio`.
-They bind the **fixed** production ports 3056 and 3057, and one of their
-assertions is `SIGTERM/EOF cleanup must release production listeners`. A
-controlled check settles it: holding those two ports from an unrelated process
-and running those two tests **at HEAD, with no mutation applied at all**
-reproduces exactly those two failures with exactly that message; releasing the
-ports makes them pass again. Their outcome under any mutation therefore says
-more about what else is on the machine than about the mutation. The recorded
-cell is the mutation-attributable set — the 21 that reproduce — and the
-difference is named here rather than split between two numbers with no
-explanation.
+Both bind the **fixed** production ports 3056 and 3057. A controlled check
+settles it: holding those two ports from an unrelated process and running those
+two tests **at HEAD, with no mutation applied at all** fails both, and
+releasing the ports makes both pass again. Which production-port assertion
+fires depends on how far each test gets before the squatted port stops it, so
+expect either — `SIGTERM/EOF cleanup must release production listeners`
+(`stdio_eras.rs:262`, the cleanup assertion) or `production binary must bind
+the plugin and frontend listeners` (`stdio_eras.rs:109`, the earlier bind
+assertion). Their outcome under any mutation therefore says more about what
+else is on the machine than about the mutation. The recorded cell is the
+mutation-attributable set — the 21 that reproduce — and the difference is named
+here rather than split between two numbers with no explanation.
 
 ### `SessionRegistry::try_send` and `try_send_to` are unreachable from production
 
