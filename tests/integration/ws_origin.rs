@@ -277,6 +277,37 @@ async fn established_plugin_socket(
     panic!("the plugin session must register before the test proceeds");
 }
 
+/// The last-seen the registry reports for the single live session, as an MCP
+/// client would read it out of `list_files`.
+async fn reported_last_seen(broker: &Broker) -> String {
+    let files = broker.list_files().await;
+    assert_eq!(files.len(), 1, "exactly one session must be live");
+    files[0].last_seen_at.as_str().to_owned()
+}
+
+/// Sends `frame` until the registry's reported last-seen moves, or gives up.
+/// Repeating rather than sending once is what makes this independent of clock
+/// granularity: the reported value is whole milliseconds, so a single frame can
+/// legitimately land inside the millisecond the session registered in. Under a
+/// dropped `touch_socket` no number of frames moves it, so the bound is reached
+/// only when the property is actually broken.
+async fn expect_reported_last_seen_to_advance(
+    broker: &Broker,
+    socket: &mut PluginSocket,
+    frame: Message,
+    label: &str,
+) {
+    let before = reported_last_seen(broker).await;
+    for _ in 0..200 {
+        socket.send(frame.clone()).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(2)).await;
+        if reported_last_seen(broker).await != before {
+            return;
+        }
+    }
+    panic!("a {label} frame must advance the last-seen the registry reports, stuck at {before}");
+}
+
 /// Reads frames until the broker asks the plugin for `request_id`, skipping the
 /// heartbeat pings that share the socket. Reaching the frame is the proof the
 /// session is still routable, which `live_file_count` alone would not give.
@@ -389,8 +420,13 @@ async fn a_control_ping_is_answered_and_leaves_the_session_routable() {
 /// loaded machine and report a liveness regression that is not there: the clock
 /// moves only where this test moves it, and each round opens a 500ms gap inside
 /// a 2s staleness window. Six rounds carry the session 3s past its registration
-/// — one and a half full windows — so a dropped refresh is reaped during round
-/// five while a working one is never within 1.5s of the deadline.
+/// — one and a half full windows. A dropped refresh is therefore reaped at the
+/// window boundary and the assertion fires at round 3, the first round to reach
+/// virtual t = 2000ms; a working one is never within 1.5s of the deadline.
+///
+/// Note what that exactness buys: the failing path is discriminated with zero
+/// slack, so the margin is not what makes the test pass. If the frames were not
+/// reaching the broker at all, the passing runs would fail too.
 #[tokio::test(start_paused = true)]
 async fn control_pongs_alone_hold_a_session_across_staleness_windows() {
     const CONNECTION: &str = "123e4567-e89b-42d3-a456-426614174032";
@@ -448,6 +484,38 @@ async fn settle() {
     for _ in 0..100 {
         tokio::task::yield_now().await;
     }
+}
+
+/// The refresh each arm performs is itself two statements, and they are
+/// separable: delete only `touch_socket` from any one of the three arms, keep
+/// `*last_seen = Instant::now()`, and the workspace stays green. The staleness
+/// tests above cannot see it, because the value that decides reaping is the
+/// socket-local one they do pin.
+///
+/// What `touch_socket` maintains is `Session::last_seen_at`, which reaches MCP
+/// clients as `LiveFile.lastSeenAt`. So the failure mode is not a reaped
+/// session but the opposite: a plugin that is demonstrably alive and reports a
+/// last-seen frozen at the moment it connected. One test for all three arms,
+/// because a JSON `pong` is a text frame and so the three sends below land in
+/// the text, pong and ping arms in turn — the three call sites of
+/// `touch_socket`, each of which was measured unpinned on its own.
+#[tokio::test]
+async fn every_frame_kind_advances_the_last_seen_the_registry_reports() {
+    const CONNECTION: &str = "123e4567-e89b-42d3-a456-426614174036";
+    let (address, broker, task) = broker_with_production_heartbeat().await;
+    let mut socket = established_plugin_socket(address, &broker, CONNECTION, "Last seen").await;
+
+    for (label, frame) in [
+        (
+            "text",
+            Message::Text(json!({"type": "pong", "nonce": 1}).to_string().into()),
+        ),
+        ("control pong", Message::Pong(b"seen".to_vec().into())),
+        ("control ping", Message::Ping(b"seen".to_vec().into())),
+    ] {
+        expect_reported_last_seen_to_advance(&broker, &mut socket, frame, label).await;
+    }
+    task.abort();
 }
 
 /// The text arm dispatches four accepted plugin frames — progress, response,
@@ -595,6 +663,60 @@ async fn broker_shutdown_and_deadlines_resolve_pending_requests() {
     assert!((&mut timeout.result).await.unwrap().is_err());
     assert!((&mut shutdown.result).await.unwrap().is_err());
     task.abort();
+}
+
+/// `Broker::shutdown` does two things — cancel the shutdown token, and call
+/// `PendingMap::shutdown()` to fail every outstanding call — and only the first
+/// was pinned. Deleting the second statement outright leaves the workspace at
+/// 267/0 and the test above green in 10ms: cancelling the token breaks
+/// `ws::serve`'s socket loop, `cleanup_socket` calls `PendingMap::remove_socket`,
+/// and the pendings resolve anyway. A whole production statement can be removed
+/// with the suite green, which is this sweep's definition of a gap.
+///
+/// Asserting the error code would not discriminate: `PendingMap::shutdown` and
+/// `remove_socket` both fail with `CONNECTION_LOST`. What discriminates is
+/// taking socket teardown out of the picture. Aborting the task that owns
+/// `ws::serve` drops its `JoinSet`, so every socket future is dropped at its
+/// await point and the `cleanup_socket` call that follows the loop never runs:
+/// the session stays in the registry and the pending stays in the map. The
+/// first assertion is what proves that happened — without it this test could
+/// silently become another one that passes for the wrong reason.
+#[tokio::test]
+async fn broker_shutdown_resolves_pending_calls_itself_not_by_socket_teardown() {
+    const CONNECTION: &str = "123e4567-e89b-42d3-a456-426614174035";
+    let (address, broker, task) = broker_with_production_heartbeat().await;
+    let mut socket = established_plugin_socket(address, &broker, CONNECTION, "Shutdown").await;
+
+    let connection = ConnectionId::try_from(CONNECTION).unwrap();
+    let mut call = broker
+        .invoke(&connection, metadata_request("shutdown-request"))
+        .await
+        .expect("a live session must accept an invocation");
+    expect_broker_request(&mut socket, "shutdown-request").await;
+
+    task.abort();
+    for _ in 0..200 {
+        tokio::task::yield_now().await;
+    }
+    assert!(
+        matches!(
+            call.result.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        ),
+        "socket teardown must not have resolved the call, or this test cannot tell \
+         Broker::shutdown from cleanup_socket"
+    );
+
+    broker.shutdown().await;
+    let error = tokio::time::timeout(Duration::from_secs(2), &mut call.result)
+        .await
+        .expect("Broker::shutdown must fail every outstanding call itself")
+        .expect("the pending sender must not be dropped")
+        .expect_err("a shutdown resolves outstanding calls as errors");
+    assert_eq!(
+        error.code(),
+        figma_dev_mcp_protocol::error::ErrorCode::ConnectionLost
+    );
 }
 
 #[tokio::test]

@@ -459,25 +459,36 @@ on a real WebSocket.
 The Scope row above is confirmed rather than corrected: re-running Task 1's
 command against this tree gives 20 refusal-named tests in `tests/integration`,
 of which 4 also name an accept (`still_`, `accepts`, `round_trips`), leaving 16
-refusal-only. Those 20 tests, with every indirection expanded, are **54 accept
-paths**: `TOOL_NAMES` is fourteen names and `PROMPT_NAMES` three, the screenshot
-format rule pairs four fields with two format families, `search must include
-query or types` is a disjunction with two satisfying halves, and
-`handle_incoming` both refreshes session liveness from three separate match arms
-and dispatches four separate accepted plugin frame kinds. Grouping any of those
-by their shared constant would have hidden the findings: every one of the ten
-gaps is one member of a group whose siblings are pinned.
+refusal-only. Those 20 tests, with every indirection expanded, are **57 accept
+paths** — 58 rows including one found outside the enumeration, see below:
+`TOOL_NAMES` is fourteen names and `PROMPT_NAMES` three, the screenshot format
+rule pairs four fields with two format families, `search must include query or
+types` is a disjunction with two satisfying halves, and `handle_incoming` both
+refreshes session liveness from three separate match arms — in two separable
+statements each — and dispatches four separate accepted plugin frame kinds.
+Grouping any of those by their shared constant would have hidden the findings:
+every one of the fourteen gaps is one member of a group whose siblings are
+pinned.
 
 Every mutation below was applied to production code, measured, and reverted;
 the committed diff adds tests only. Baseline before this task: **260 passed /
-0 failed**. After: **267 passed / 0 failed**.
+0 failed**. After: **269 passed / 0 failed**.
 
-**44 covered, 10 gaps, 0 not applicable.**
+**Reading the `Suite result` column:** this section was measured over three
+rounds and each round's rows are baselined on the tree that existed when they
+were run, so the totals per row differ by design. Rows measured in round one
+sum to **260**, rows added in round two to **264**, and rows added in round
+three to **267** or **268** depending on which of that round's two tests already
+existed when they ran; the tree now stands at 269. A `gap` row therefore reads
+`260 / 0`, `264 / 0`, `267 / 0` or `268 / 0` depending on when it was
+measured, and all of them mean the same thing: nothing went red.
+
+**44 covered, 14 gaps, 0 not applicable.**
 
 Only one of Task 2's two shapes appears, and it accounts for every gap. There
 is no inclusive-ceiling row here at all — this seam holds no ceilings of its
-own — but all ten gaps are the untested member of a rule written in more than
-one place:
+own — but all fourteen gaps are the untested member of a rule written in more
+than one place:
 
 - `scale` is refused for SVG and accepted for raster in **two** arms, `Png`
   and `Jpeg`. The png half is pinned; the jpeg half was not.
@@ -487,18 +498,26 @@ one place:
 - `search must include query or types` has two satisfying halves. `query`
   alone is what every other search test sends; `types` alone was unpinned.
 - `handle_incoming` refreshes liveness from three arms — text, pong, ping.
-  Only the text arm is on the path the suite drives, and each control arm
-  turned out to hold **two** separable properties, not one: is the frame
-  accepted, and does the accepted frame refresh the clock.
+  Only the text arm is on the path the suite drives, and each arm turned out
+  to hold **three** separable properties, not one: is the frame accepted, does
+  it refresh the socket-local clock that decides reaping, and does it refresh
+  the registry's `last_seen_at` that MCP clients read. Eight of the fourteen
+  gaps are cells in that one three-by-three table.
 - `handle_incoming`'s text arm dispatches four accepted plugin frame kinds —
   progress, response, error, pong. Three are pinned. The **error** frame is
   not, and the test that looks like it pins it passes for the wrong reason.
+- `Broker::shutdown` is two statements, and only the first is pinned — the
+  second can be deleted outright with the suite green, because the first
+  causes socket teardown to resolve the same pendings with the same error
+  code. This one was **not** reachable from this section's enumeration.
 
 Turning either control-frame arm into `NonTextProtocolFrame` unregisters the
 plugin session on the next ping or pong a real client sends, and all 260 tests
-stayed green. Keeping the frame accepted and deleting only its two-line
-liveness refresh is quieter still and equally fatal, and is a separate row per
-arm for exactly that reason.
+stayed green. Keeping the frame accepted and deleting only its liveness refresh
+is quieter still and equally fatal; deleting only the `touch_socket` half of
+that refresh is quieter again and freezes what clients are told rather than
+killing the session. Three properties, three mutations, three rows per arm, for
+exactly that reason.
 
 ### What the covered rows prove
 
@@ -596,7 +615,7 @@ this table is a plain `cargo test` run.
 | A WebSocket **ping** frame is taken and answered — the third arm | `Message::Ping(_)` arm → `return Err(BrokerError::NonTextProtocolFrame)` | 260 / 0 | **gap** | `ws_origin::a_control_ping_is_answered_and_leaves_the_session_routable` |
 | The wire version the shipped plugin announces is the one the broker accepts | `PLUGIN_PROTOCOL_VERSION`: `"4"` → `"5"`, which every Rust fake plugin follows because it imports the constant | 259 / 1 | covered — `contracts::both_ends_declare_the_same_wire_version`, which reads `plugin/src/ui/hello.ts` | — |
 | A response arriving while its request is still pending is delivered to the caller | `PendingMap::complete`: drop the result instead of sending it, still returning `true` | 239 / 21 | covered — 21 tests | — |
-| A frontend announcing the current `FRONTEND_PROTOCOL_VERSION` is answered `Ready` | `rpc::serve_frontend`: `!=` → `==` | 243 passed / 15 failed / 6 timed out (nextest) | covered — `multi_client::frontend_handshake_rejects_protocol_mismatch_before_registering_lease`, `multi_client::remote_broker_client_can_back_an_mcp_frontend` and 13 more | — |
+| A frontend announcing the current `FRONTEND_PROTOCOL_VERSION` is answered `Ready` | `rpc::serve_frontend`: `!=` → `==` | 246 passed / 15 failed / 6 timed out (nextest, on the 267-test tree; 243 / 15 / 6 on the 264-test tree — same 21 non-passing) | covered — the ten `multi_client::*`, three `failover::*` and two `stdio_eras::*` failures, plus six timeouts; see the note on the two port-sensitive tests below | — |
 | A frontend lease is granted while the broker is not closing | `Activity::frontend_lease`: `if state.closing` → `if !state.closing` | 233 passed / 21 failed / 10 timed out (nextest) | covered — all three `idle_lifetime::*`, `runtime::the_service_is_up_before_any_election_has_happened` and 17 more | — |
 | A well-formed `hello` first frame registers a session | `handle_socket`: refuse any hello carrying a non-empty `connectionId`, i.e. every real one | 213 passed / 36 failed / 15 timed out (nextest) | covered — `all_tools::every_tool_and_prompt_round_trips_through_mcp_service` and 35 more | — |
 | A plugin lease is granted while the broker is not closing | `Activity::plugin_lease`: `if state.closing` → `if !state.closing` | 213 passed / 36 failed / 15 timed out (nextest) | covered — the same 36 | — |
@@ -608,28 +627,46 @@ this table is a plain `cargo test` run.
 | A plugin **pong** frame (the JSON heartbeat reply, not the WebSocket control frame) is accepted | the `Pong` arm: `{}` → `return Err(BrokerError::SecondHello)` | 250 / 14 (nextest) | covered — 14 tests | — |
 | An accepted WebSocket **pong** refreshes the session's liveness clock — the *other* property of that arm | `Message::Pong` arm keeps accepting and returning `Ok`; only the `last_seen`/`touch_socket` pair is deleted | 264 / 0 | **gap** | `ws_origin::control_pongs_alone_hold_a_session_across_staleness_windows` |
 | An accepted WebSocket **ping** refreshes the session's liveness clock, pong reply unchanged | the same deletion in the `Message::Ping` arm, `send_with_shutdown` left in place | 264 / 0 | **gap** | `ws_origin::control_pings_alone_hold_a_session_across_staleness_windows` |
+| A **text** frame advances the last-seen the registry reports — the *third* property of an arm, and the one an MCP client reads | delete only `touch_socket` from the `Message::Text` arm, keeping `*last_seen = Instant::now()` | 268 / 0 | **gap** | `ws_origin::every_frame_kind_advances_the_last_seen_the_registry_reports` |
+| A **control pong** advances the last-seen the registry reports | the same `touch_socket`-only deletion in the `Message::Pong` arm | 268 / 0 | **gap** | the same test |
+| A **control ping** advances the last-seen the registry reports | the same `touch_socket`-only deletion in the `Message::Ping` arm | 268 / 0 | **gap** | the same test |
+| `Broker::shutdown` fails every outstanding call itself, rather than leaving them to socket teardown | delete `self.state.pending.lock().await.shutdown();` from `Broker::shutdown` (`lib.rs`) | 267 / 0 | **gap** — a whole production statement removable with the suite green; see below | `ws_origin::broker_shutdown_resolves_pending_calls_itself_not_by_socket_teardown` |
 
-### The three-armed liveness refresh, and the two properties per arm
+### The three-armed liveness refresh, and the three properties per arm
 
 `handle_incoming` refreshes `last_seen` and calls `touch_socket` from three
 arms of one match — `Message::Text`, `Message::Pong`, `Message::Ping` — and
 `Message::Ping` additionally owes the sender a pong. The three are the same
-rule written three times, and the suite reaches exactly one of them:
+rule written three times, and the suite reached exactly one of them. Worse,
+"the same rule" is itself three separable properties, and each needed its own
+mutation before the table stopped being wrong:
 
-| Arm | Reached by | Accepted at all? | Refreshes the clock? |
-|---|---|---|---|
-| `Message::Text` | every plugin response and progress frame | covered (the arm cannot be refused without breaking everything) | covered, by one test |
-| `Message::Pong` | nothing — the broker's heartbeat is a JSON `{"type":"ping"}` text frame, so no WebSocket pong ever arrives from a fake plugin | **gap** | **gap** |
-| `Message::Ping` | nothing — no test client sends a WebSocket ping | **gap** | **gap** |
+| Arm | Reached by | Accepted at all? | `*last_seen` — reaping | `touch_socket` — reported last-seen |
+|---|---|---|---|---|
+| `Message::Text` | every plugin response and progress frame | covered (the arm cannot be refused without breaking everything) | covered, by one test | **gap** |
+| `Message::Pong` | nothing — the broker's heartbeat is a JSON `{"type":"ping"}` text frame, so no WebSocket pong ever arrives from a fake plugin | **gap** | **gap** | **gap** |
+| `Message::Ping` | nothing — no test client sends a WebSocket ping | **gap** | **gap** | **gap** |
 
-Four rows, because *accepted* and *refreshes the clock* are two properties and
-one mutation each. The first pass of this section wrote only the acceptance
-half, and that was the same defect this sweep exists to find, one level up: a
-test that catches the frame being **refused** does not catch the frame being
-accepted and then silently hollowed out. Deleting only the two-line refresh
-from both control arms — frames still accepted, `Ok` still returned, the ping
-still answered — leaves the workspace at 264/0 with both acceptance tests
-green.
+Nine cells, eight rows (the text arm's acceptance has no mutation that does not
+break the whole suite), and the table got there in three passes — each pass
+finding that what it had just called "covered" was a coarser grouping hiding a
+finer one. That is the enumeration rule biting at a level the rule's own
+wording does not reach: it warns about a *constant* standing for many items,
+and says nothing about a two-statement body standing for two properties.
+
+- Pass one wrote **accepted** only. Deleting only the two-line refresh from
+  both control arms — frames still accepted, `Ok` still returned, the ping
+  still answered — left the workspace at 264/0 with both acceptance tests
+  green.
+- Pass two added **refreshes the clock**, measured with the pair deleted.
+  Deleting only `touch_socket` from any one arm, keeping
+  `*last_seen = Instant::now()`, left the workspace at 268/0 with the new
+  liveness tests green.
+- Pass three splits the pair. `*last_seen` is the socket-local value that
+  drives `HeartbeatExpired`; `touch_socket` maintains `Session::last_seen_at`,
+  which reaches MCP clients as `LiveFile.lastSeenAt`. The failure modes are
+  opposite in kind: the first reaps a live plugin, the second keeps it alive
+  while reporting a last-seen frozen at the moment it connected.
 
 The production shape each half misses is different, and both are real. Refusal
 falls through to `cleanup_socket`, so a real client's next control frame
@@ -675,6 +712,60 @@ fine", but "an error came back, therefore the right error came back".
 The new test asserts the code the plugin actually sent — `NODE_NOT_FOUND`,
 which no connection-failure path can produce — on a broker whose staleness
 window the test cannot outlive.
+
+### The same shape again, in `Broker::shutdown`, and what it says about the enumeration
+
+`Broker::shutdown` is two statements: cancel the shutdown token, then call
+`PendingMap::shutdown()` to fail every outstanding call. Delete the second and
+the workspace stays at **267 / 0**, with
+`broker_shutdown_and_deadlines_resolve_pending_requests` — a test whose name is
+literally *resolve pending requests* — passing in 10ms. Cancelling the token
+breaks `ws::serve`'s socket loop, `cleanup_socket` calls
+`PendingMap::remove_socket`, and the pendings resolve anyway.
+
+Asserting the error code does not help here, and that is what makes this row
+worth reading: `PendingMap::shutdown` and `remove_socket` both fail with
+`CONNECTION_LOST`, so the fix that worked one row up would produce a third
+test passing for the wrong reason. What discriminates is removing socket
+teardown from the picture. Aborting the task that owns `ws::serve` drops its
+`JoinSet`, so every socket future is dropped at its await point and the
+`cleanup_socket` after the loop never runs; the session stays registered and
+the pending stays in the map. The new test asserts *that this is what
+happened* before it asserts anything else — without that first assertion the
+test could silently decay into the shape it replaces.
+
+**This row is the one that says something about the method, not just the
+code.** It is not reachable from this section's enumeration at all. Every other
+row here descends from one of the 20 refusal-named tests, and
+`broker_shutdown_and_deadlines_resolve_pending_requests` is not one of them —
+it is accept-named. So the refusal-name regex is a **proxy** for the accept
+surface, not a cover of it, and this is a measured instance of the blind spot
+rather than a suspected one: a whole production statement, removable with the
+suite green, that no amount of care inside the enumeration would have reached.
+Fixed here because it is one test of a class this section had just fixed one
+row over; the general question — what else lives outside the proxy — is left to
+the whole-branch review rather than chased here.
+
+### The two port-sensitive tests, and a cell that took three runs to settle
+
+The frontend-version row's cell was recorded as `243 / 15 / 6` on the 264-test
+tree and independently measured elsewhere as `241 / 17 / 6` — two more
+non-passing tests. Re-measuring twice on the 267-test tree gives
+`246 / 15 / 6` both times, with an identical list of 21 non-passing tests, so
+the discrepancy is stable on each side rather than noise.
+
+The two tests that differ are `stdio_eras::legacy_2025_11_25_initialize_and_lists_over_real_stdio`
+and `stdio_eras::modern_2026_07_28_discover_and_stateless_lists_over_real_stdio`.
+They bind the **fixed** production ports 3056 and 3057, and one of their
+assertions is `SIGTERM/EOF cleanup must release production listeners`. A
+controlled check settles it: holding those two ports from an unrelated process
+and running those two tests **at HEAD, with no mutation applied at all**
+reproduces exactly those two failures with exactly that message; releasing the
+ports makes them pass again. Their outcome under any mutation therefore says
+more about what else is on the machine than about the mutation. The recorded
+cell is the mutation-attributable set — the 21 that reproduce — and the
+difference is named here rather than split between two numbers with no
+explanation.
 
 ### `SessionRegistry::try_send` and `try_send_to` are unreachable from production
 
