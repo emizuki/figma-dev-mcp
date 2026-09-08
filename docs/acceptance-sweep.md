@@ -147,7 +147,7 @@ fixed** (reported for a ruling on scope):
 | An error item list of exactly `MAX_INPUT_IDS` items is accepted, **decoded** | `error.rs` `ErrorItemListVisitor`: `while items.len() < MAX_INPUT_IDS` → `+ 1 <` | 260 / 0 | **gap** — this pair has *neither* half pinned | none — reported, not fixed |
 | A deferred JSON payload of exactly `MAX_ENVELOPE_BYTES` is accepted | `deferred.rs`: all three `> MAX_ENVELOPE_BYTES` → `>=` (lines 38, 65, 79) | 260 / 0 | **gap** — a third, independent implementation of the envelope ceiling | none — reported, not fixed |
 | A node whose children fill the remaining node budget exactly is accepted | `validate_node`: `node.children.len() > MAX_RETURNED_NODES - *count` → `>=` | 259 / 1 | covered — `outbound_node_collections_reject_wide_roots_and_children_without_auxiliary_growth` | — |
-| A `NodeIdList` / `PageIdList` / `NodeTypeList` **built** at exactly its ceiling is accepted | `bounded_list_newtype!`'s `TryFrom` (`common.rs:446`): `values.len() > $maximum` → `>=` | 260 / 0 | **gap** — the decode half is in the main table above, the builder half is in neither | none — reported, not fixed |
+| A `NodeIdList` / `PageIdList` / `NodeTypeList` **built** at exactly its ceiling is accepted | `bounded_list_newtype!`'s `TryFrom` (`domain/common.rs:446`): `values.len() > $maximum` → `>=` | 260 / 0 | **gap** — the decode half is in the main table above, the builder half is in neither | none — reported, not fixed |
 
 **Eight groups, six of them unpinned.** Counted by comparison site rather than by
 group it is ten, because the `deferred.rs` row bundles three separate checks that
@@ -823,8 +823,239 @@ untested member of a group whose siblings were pinned.
 
 ## tests/policy
 
+The Scope row above says 8 refusal-only and 0 already paired, and re-running
+the plan's command confirms it: 8 names match, none of them also matches the
+accept regex. The row is correct and is also beside the point here, and the
+reason it is beside the point is decision 3 of the plan.
+
+A `tests/policy` scan runs against the real repository, so the repository is
+the fixture. If a scan broadened, it would fire on compliant code and go red on
+the spot — which makes the spec's "no meaningful opposite" exemption look
+applicable. It is not. **The failure mode of a policy scan is not firing on
+compliant code; it is passing on nothing.** A walk that opens zero files
+returns `""`, and `!"".contains(anything)` is true of every forbidden string
+there is. From the outside, a scan that found nothing wrong and a scan that
+looked at nothing are the same green tick.
+
+So the accept path here is *"the scan reaches its inputs and its predicate
+still fires"*, the mutation is *"empty the scan"*, and the enumeration is over
+**every** test in the suite rather than over the eight refusal-named ones. The
+suite is 31 tests in six modules; they yield 42 accept paths at the granularity
+where one mutation answers one row, because several tests own more than one
+emptyable input — a walk *and* the constant it iterates, a corpus *and* the
+predicate applied to it.
+
+Baseline before this task: **269 passed / 0 failed** across the workspace,
+**31 passed / 0 failed** in the policy binary. After: **279 / 0** and
+**41 / 0**.
+
+Rows: 42. Verdicts: 18 gap, 21 covered, 3 not applicable (18 + 21 + 3 = 42).
+Tests added: 10 — nine answering the 18 gaps, plus one new scan that answers a
+question Task 4 left open rather than a row in this table.
+
 | Accept path | Mutation | Suite result | Verdict | Test added |
 |---|---|---|---|---|
+| `TOOL_NAMES` is exactly the fourteen, in order | none available: the assertion is an equality against a fourteen-element literal, which no emptying satisfies | — | not applicable | — |
+| `PROMPT_NAMES` is exactly the three, in order | the same shape | — | not applicable | — |
+| `extracted_tool_references` picks backticked snake-case verbs out of a sample | the same shape: an equality against a five-element literal set built from a literal string | — | not applicable | — |
+| The plugin manifest is read and compared as JSON | replace the parsed value with `json!({})` | 30 / 1 | covered — `manifest_is_the_exact_read_only_loopback_surface` | — |
+| The Dev-Mode/inspect/dynamic-page/loopback fields are read from that manifest | the same replacement in the second reader | 30 / 1 | covered — `manifest_is_dev_mode_inspect_dynamic_page_loopback` | — |
+| `read_plugin_bundles` returns both artifacts when both exist | make it always return `Err` | 30 / 1 | covered — `bundle_policy_requires_both_artifacts` already ends in an `expect` on the Ok case, which is a positive control | — |
+| The controller and transport walks read real source (`plugin_contexts_keep_network_and_figma_apis_separate`) | point `plugin/src` at an empty directory | 31 / 0 | **gap** | `manifest::the_plugin_context_walks_reach_real_source_and_the_separation_predicate_fires` |
+| The `plugin/src` walk behind the dispatch-closure scan reads real source | point that walk at an empty directory | 31 / 0 | **gap** | the same test |
+| The `plugin/src` walk behind `plugin_source_rejects_unbounded_page_font_and_mutation_surfaces` reads real source | the same, in `plugin_source.rs` | 31 / 0 | **gap** | `plugin_source::the_plugin_source_walk_reaches_real_files_and_the_assignment_predicate_fires` |
+| `has_property_assignment` can report an assignment | `&& false` in front of its `any` predicate, so it never reports one | 40 / 1, and the one red is the new control | **gap** | the same test |
+| The prompt-body scan opens a distinct body per name | `prompt_body` ignores `name` and returns `read_design_strategy.md` | 31 / 0 | **gap** | `prompts::the_prompt_body_scan_reads_a_distinct_body_per_name_and_its_predicates_fire` |
+| `prompts.rs`'s `instructs` can report an instruction | `&& false` in front of its predicate | 40 / 1, and the one red is the new control | **gap** | the same test |
+| `contracts/common.rs` is read and its wrapper shape asserted | replace that read with `String::new()` | 30 / 1 | covered — `public_contract_wrappers_keep_protocol_types_behind_crate_private_conversions` asserts positive shapes as well as negative ones | — |
+| `contracts/visual.rs` is read | the same, for that file only | 30 / 1 | covered — same test | — |
+| `dispatch.rs` is read | the same, for that file only | 30 / 1 | covered — same test | — |
+| The tools catalog is enumerated for names and annotations | replace `catalog.tools` with an empty vec | 30 / 1 | covered — `snapshots_lock_tools_annotations_prompts_and_wire_variants` | — |
+| The generated error catalog yields its canonical messages | none needed: the test already floors the parse at 17, and 17 is exactly what the catalog yields | — | covered — the floor is a real positive control, and this sweep re-measured the number behind it | — |
+| The `plugin/src` walk that looks for those messages reads real source | point it at an empty directory | 31 / 0 | **gap** | `read_only::the_canonical_message_scan_reaches_the_catalog_and_every_production_file` |
+| The `plugin/src` walk behind `plugin_source_denies_mutation_private_and_motion_write_apis` reads real source | the same, in `read_only.rs` | 31 / 0 | **gap** | `read_only::the_mutation_denylist_scan_reaches_real_plugin_source_and_its_list_is_not_empty` |
+| `MUTATION_DENYLIST` enumerates the 23 surfaces its two consumers scan for | replace the constant with `&[]` | 31 / 0 | **gap** | the same test |
+| The read-test walk reaches `plugin/src/read` | point it at an empty directory | 30 / 1 | covered — `read_tests_share_one_figma_harness`, the template this task copies, and the only scan in the suite that already had this control | — |
+| `collect_property_names` collects property names from the real schemas | keep the call and clear the result | 31 / 0 | **gap** | `read_only::the_input_schema_scan_collects_names_from_every_level_it_claims_to_reach` |
+| `FORBIDDEN_INPUT_KEYS` enumerates the 19 keys that scan rejects | replace the constant with `&[]` | 31 / 0 | **gap** | the same test |
+| A well-formed broker request carrying an allowlisted operation decodes | in the test's own envelope, `requestId` → `requestIdTypo`, so every decode below fails on the envelope instead | 31 / 0 | **gap** — and see below: the same row measured against production is worse | `read_only::a_broker_request_carrying_an_allowlisted_operation_still_decodes_intact` |
+| `crates/broker/src/ws.rs` is read and its origin handling asserted | replace that read with `String::new()` | 30 / 1 | covered — `origin_socket_and_rpc_boundaries_stay_raw_tcp_and_null_origin` asserts `Origin` and `null` are present, not only that other things are absent | — |
+| `crates/broker/src/rpc.rs` is read | the same, for that file only | 30 / 1 | covered — same test, via `encode_frame`/`read_frame` | — |
+| `plugin/src/main/dispatch.ts` is read and is the dispatcher | point the read at an empty file | 31 / 0 | **gap** | `read_only::the_read_dispatcher_source_still_names_every_operation_it_dispatches` |
+| `OPERATOR_DOCS` enumerates the four documents `documentation_required_operator_files_exist` checks | `OPERATOR_DOCS.iter().take(0)` | 31 / 0 | **gap** | `read_only::the_operator_documentation_scan_reaches_all_four_files_and_instructs_still_fires` |
+| The operator-doc corpus is read for ports, tools, prompts and the README tables | `require_file` keeps reading and returns `String::new()` | 21 / 10 | covered — `documentation_states_exact_ports_tools_and_prompts` and 9 more | — |
+| The same corpus is read for the strategy resource URIs | the same | 21 / 10 | covered — `documentation_states_the_exact_strategy_resource_uris` | — |
+| `crates/tools/src/service.rs` is read and its resource handlers located | the same | 21 / 10 | covered — `serving_a_strategy_resource_never_reaches_the_broker` already floors `handler_body` at non-empty; the real bodies are 222 and 410 bytes | — |
+| The setup and README text is read for the Dev-Mode import story | the same | 21 / 10 | covered — `documentation_covers_dev_mode_import_connection_selection_and_no_daemon` | — |
+| `docs/testing.md` is read for the verification commands | the same | 21 / 10 | covered — `documentation_lists_all_seven_local_verification_commands` | — |
+| `SEVEN_LOCAL_VERIFICATION_COMMANDS` enumerates seven | replace the constant with `&[]` | 31 / 0 | **gap** — the test is named for the count and never checked it | `read_only::the_operator_documentation_scan_reaches_all_four_files_and_instructs_still_fires` |
+| The corpus is read for the SVG, read-only and origin caveats | `require_file` returns empty | 21 / 10 | covered — `documentation_states_svg_source_readonly_limits_and_origin_threat_model` | — |
+| The corpus `documentation_forbids_local_export_instructions_and_unadvertised_product_tools` scans is the four documents | replace that test's corpus with `String::new()` | 31 / 0 | **gap** | the same operator-documentation control |
+| `read_only.rs`'s `instructs` can report an instruction | `&& false` in front of its predicate | 40 / 1, and the one red is the new control | **gap** — measured: all eight forbidden phrases occur **zero** times in 59903 bytes of operator docs, so nothing real ever asks it a question it could answer wrong | the same control |
+| `DIAGNOSTIC_CALL_NAMES` enumerates the three unadvertised calls | replace the constant with `&[]` | 31 / 0 | **gap** | the same control |
+| `docs/testing.md` is read for the evidence split | `require_file` returns empty | 21 / 10 | covered — `documentation_splits_stdio_evidence_from_official_lifecycle_smoke` | — |
+| `docs/manual-acceptance.md` is read for the nine scenarios | the same | 21 / 10 | covered — `documentation_manual_acceptance_has_nine_spec_scenarios`, which also floors the checkbox count at nine | — |
+| `.gitignore` is read | the same | 21 / 10 | covered — `documentation_gitignore_keeps_lockfiles_and_snapshots_tracked` | — |
+| `.github/workflows/ci.yml` is read | the same | 21 / 10 | covered — `documentation_ci_pins_runtimes_and_never_publishes` | — |
+
+### The template, and what copying it actually required
+
+`read_tests_share_one_figma_harness` is the one scan in this suite that already
+had this control, and its six assertions are the shape everything above copies.
+Its assertion 5 is the lesson: the test originally carried only the *derived*
+rule — a file must import the harness **if** it textually installs a host —
+and after the migration seven of the nine migrated files install no host
+textually, so the gate never evaluated true and moving a builder into a sibling
+module defeated the test with the suite green.
+
+**A rule gated on a condition is only as good as how often that condition
+holds.** So every control added here was written against a measurement of what
+its gate actually evaluates to on the real inputs, and three of those
+measurements changed what got written:
+
+| Gate | Evaluations on real input | How often the discriminating branch fires | Consequence for the control |
+|---|---|---|---|
+| `instructs` in `read_only.rs` | 8 phrases × 59903 bytes of operator docs | **0** — no phrase occurs at all, so the negation-prefix branch never runs | the predicate is proved on planted text, in both directions; nothing real can prove it |
+| `instructs` in `prompts.rs` | 12 phrases × 3 bodies = 36 | **1** — `prototype_flow_strategy` says "Do not create connector nodes" | that one occurrence is pinned by name, because it is the only thing standing between the phrase list and a red suite; the accepting direction is planted |
+| `contains_ident` in `prompts.rs` | 23 denied names × 3 bodies = 69 | **3** — every body contains `get_node` inside `get_nodes`, and the boundary check correctly answers no | the rejecting direction is pinned on the real bodies; the accepting direction is planted |
+| `has_property_assignment` in `plugin_source.rs` | 4 properties × 32 production files | **0** — no file assigns any of them, so neither the `==` exemption nor `code_lines`'s comment filter ever runs | all four directions planted |
+| `collect_property_names` recursion | 14 schemas | `properties` 58, `oneOf`/`anyOf`/`allOf` 37, `$defs` 13, `items` 19 — all four fire | the control asserts the names only the deep branches reach, and plants a forbidden key four levels down |
+| The citation scan's three rules | 54 distinct citations | **0** for all three: every citation resolves, is in range, and points at code | all three planted, and one of them found a real defect (below) |
+
+The `collect_property_names` row is the one where measuring changed the
+control rather than just justifying it. The first draft asserted `nodeIds` and
+`selection` on every tool but three, and went red: `search_nodes` reaches only
+`nodeId` and `pageId` below its top level, and `get_screenshot` has no page
+selector at all. The rewritten control asserts the *union* of names no schema
+exposes at top level — `nodeId`, `nodeIds`, `pageId`, `pageIds`, `selection` —
+together with the counts of tools that reach them (10 of 14 reach at least one,
+9 reach `selection`). Two of the fourteen schemas were miscounted by reading
+and correct only after measuring.
+
+One vacuity is recorded rather than fixed: `list_files` has no input properties
+at all, so the forbidden-key check over it is empty by construction. That is a
+property of the schema, not of the scan, and the control asserts it stays true
+so that it stops being invisible.
+
+### The wrong-reason defect, and why the test-side mutation understates it
+
+`write_shaped_mcp_and_wire_requests_are_rejected` asserts that seven
+write-shaped operations fail to decode as a `BrokerToPlugin`, inside an
+envelope the test writes by hand. Misspelling one envelope key in that literal
+— `requestId` → `requestIdTypo` — makes all seven decodes fail on the envelope
+instead, and the policy suite stayed at **31 / 0**.
+
+That is a test-code mutation, and on its own it would be a weak row. The
+production-side version is not weak. Adding `#[serde(rename = "deadline_ms")]`
+to `wire::Request`'s `deadline_ms` field — so the broker stops accepting the
+camelCase key every real request carries, and therefore stops accepting *any*
+plugin request at all — leaves the existing test **green**. Only the new
+control goes red (**40 / 1**). Every refusal that test makes was being
+satisfied by an envelope that no longer decodes, not by an operation that is
+not allowlisted.
+
+The same shape appears one row over. Reducing `plugin/src/main/dispatch.ts` to
+`export {}` — the dispatcher gone entirely — leaves
+`the_read_dispatcher_mutates_no_process_global_host_state` green, because 23
+forbidden surfaces are all absent from an empty file. Again **40 / 1**, and
+again the one red is the new control.
+
+Both are Task 4's wrong-reason class, and both are sharper here than they were
+there: in `tests/integration` the wrong reason produced a plausible-looking
+error; here it produces a *pass*.
+
+### Two implementations of `instructs` that disagree, reported not fixed
+
+`prompts.rs` and `read_only.rs` each define a private `instructs(haystack,
+phrase)`, and they exempt different negation prefixes. `prompts.rs` exempts
+three — `do not`, `never`, `without`. `read_only.rs` exempts six — those three
+plus `does not`, `no`, `not`. Four phrases appear in **both** modules' lists
+(`save screenshots`, `export frames`, `write to disk`, `save to a path`), so on
+those four the two implementations answer differently: `does not save to a
+path` is an instruction to one and not to the other.
+
+Probed rather than read: on `does not save to a path`, `no save to a path` and
+`not save to a path`, `prompts.rs`'s version returns true and `read_only.rs`'s
+returns false. **No live input distinguishes them today** — the prompt bodies'
+one hit is "Do not create connector nodes", which both exempt, and the operator
+docs contain none of the eight phrases at all. Raised rather than fixed, under
+the ruling that a test written today would freeze the disagreement: the two
+tests now each pin their own version's behaviour, which is what makes the
+divergence visible to whoever reconciles it.
+
+### The record's own citations, and the one that did not resolve
+
+Task 4 established this file's citation convention and left it with a known
+hole: 53 `result-validation.ts` line citations survive on the basis that they
+"have been checked against the tree", and nothing runs that check. This section
+adds a scan that does — `every_file_line_citation_in_the_acceptance_record_resolves_to_a_real_line`
+— and it is worth building for a reason that emerged from measuring rather than
+from arguing: **one of the 54 citations in this record did not resolve.**
+
+The `bounded_list_newtype!` row cited a bare `common.rs`, and two tracked files
+carry that basename — `crates/protocol/src/domain/common.rs`, which is the one
+meant, and `crates/tools/src/contracts/common.rs`, which the row two sections
+above is about. The citation is qualified to `domain/common.rs` now. That is
+the only change this task makes to another task's row, it changes no verdict,
+and it is recorded here rather than made quietly.
+
+What the scan checks, and only this: the cited path resolves to exactly one
+file in the tree, the line number is in range, and the line is neither blank
+nor a lone bracket. It cannot check that a line *means* what a row says it
+means; the record's cells mix prose, quoted markdown and source identifiers,
+and an attempt to anchor each citation to a token near it needed a ±10-line
+window on a 2884-line file before it matched everything — a window that wide
+discriminates almost nothing, so it was not built.
+
+Its sensitivity is measured, not assumed. Simulating a uniform shift of every
+citation into `result-validation.ts` — the shape an insertion above them
+produces — the scan fires at shift 3 and above (2 of 53 citations land on a
+blank line or a lone bracket at shift 3; 41 of 53 at shift 5) and is **silent
+at shifts of 1 and 2**. It is a tripwire with a measured hole, not a verifier.
+Saying so is the point: "these have been checked against the tree" was a claim
+with no verification story, and replacing it with a second unchecked claim
+would be no better. A real production shift confirms the simulation — inserting
+five blank lines at the top of `result-validation.ts` turns the scan red and
+nothing else.
+
+Like every scan in this suite it has its own positive controls, and they were
+necessary: all three of its rules return "fine" on all 54 real citations, so
+none of them is exercised by the repository. The parser is proved on a planted
+string carrying both citation forms and on a string carrying none; the
+resolution rule is proved by asserting that two files named `common.rs` really
+do exist, so that "resolves to exactly one" is a rule that can say no rather
+than a decoration.
+
+### What this section did not close
+
+Three limits, each stated in the test that carries it rather than only here.
+
+**The controls walk the tree a second time.** Four of the six scans walk
+`plugin/src` with their own inline filter — `production_typescript` is written
+out three times, in `manifest.rs`, `plugin_source.rs` and `read_only.rs` — and
+the controls enumerate the same tree through one shared
+`production_typescript_paths`. Two walks means what is pinned is "the tree still
+holds these files", not "that walk still opens them". Where it could be closed
+it was: the mutation-denylist control asserts the scan's own concatenated text
+is exactly as long as the sum of the files the control enumerated, so a filter
+that narrowed would make the two disagree. The canonical-message scan's inline
+walk has no such tie, because tying it means rewriting the scan, and this sweep
+adds counterparts rather than editing what is there.
+
+**Floors, not equalities.** The production-file count (32 measured), the
+property-name total (89 measured) and the citation count (123 occurrences
+measured) are all floors. The failure being pinned is a scan that *shrinks*; a
+tree that grows is not a defect, and an equality there would be churn that
+teaches a reader to update the number without thinking about it.
+
+**Three rows are `not applicable` and the reason is uniform.** The two
+allowlist tests and the extraction test assert equality against a literal — a
+fourteen-element array, a three-element array, a five-element set built from a
+literal sample. There is no input to empty: the assertion carries its own
+expected value, so a scan that saw nothing would compare nothing against
+fourteen names and go red. That is the one shape in this suite that cannot pass
+vacuously, and it is worth naming as the shape the rest of the suite does not
+have.
 
 ## plugin ui and main
 
