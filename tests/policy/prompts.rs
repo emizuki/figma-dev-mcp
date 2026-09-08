@@ -169,7 +169,12 @@ fn the_prompt_body_scan_reads_a_distinct_body_per_name_and_its_predicates_fire()
         .iter()
         .map(|name| (*name, prompt_body(name)))
         .collect();
-    assert_eq!(bodies.len(), 3);
+    assert_eq!(
+        bodies.len(),
+        3,
+        "PROMPT_NAMES no longer names three prompts, so this control iterates a \
+         different set than the scan it controls"
+    );
 
     for (index, (name, body)) in bodies.iter().enumerate() {
         for (other_name, other) in &bodies[index + 1..] {

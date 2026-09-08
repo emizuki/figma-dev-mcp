@@ -78,6 +78,20 @@ pub(crate) const PRODUCTION_SOURCE_ANCHORS: [&str; 4] = [
 /// directory that moves — not one that grows.
 pub(crate) const PRODUCTION_SOURCE_FILE_FLOOR: usize = 32;
 
+/// The one root every production-source policy scan in this suite walks, and
+/// the one every positive control below re-walks.
+///
+/// This exists so the two share a root rather than each computing its own.
+/// With two roots, redirecting a scan's walk at an empty directory leaves its
+/// control still looking at real files, and the control reports success over a
+/// scan that read nothing — which is the exact failure this task was written to
+/// close, reappearing one level up. Sharing the root is an extraction: it moves
+/// no assertion and changes no scan's behaviour, and it is what makes the
+/// walk-root mutation turn a control red.
+pub(crate) fn plugin_source_root() -> PathBuf {
+    workspace_root().join("plugin/src")
+}
+
 fn production_typescript(directory: PathBuf) -> String {
     let mut pending = vec![directory];
     let mut source = String::new();
@@ -247,7 +261,7 @@ fn production_plugin_source_spells_no_canonical_error_message() {
         messages.len()
     );
 
-    let mut pending = vec![workspace_root().join("plugin/src")];
+    let mut pending = vec![plugin_source_root()];
     while let Some(path) = pending.pop() {
         for entry in fs::read_dir(&path).expect("plugin source directory is readable") {
             let path = entry.expect("plugin source entry is readable").path();
@@ -277,7 +291,7 @@ fn production_plugin_source_spells_no_canonical_error_message() {
 
 #[test]
 fn plugin_source_denies_mutation_private_and_motion_write_apis() {
-    let source = production_typescript(workspace_root().join("plugin/src"));
+    let source = production_typescript(plugin_source_root());
     assert!(
         !source.contains("plugin/dist"),
         "source scan must not depend on a pre-existing build"
@@ -1286,13 +1300,22 @@ fn documentation_ci_pins_runtimes_and_never_publishes() {
 /// reaches real files, and the denylist it carries is not empty.
 ///
 /// Measured: the walk opens 32 production `.ts` files; `MUTATION_DENYLIST`
-/// carries 23 entries. Emptying either — redirecting the walk root to an empty
-/// directory, or replacing the constant with `&[]` — left the whole policy
-/// suite at 31 passed / 0 failed before this test existed.
+/// carries 23 entries. Three separate emptyings each left the whole policy
+/// suite at 31 passed / 0 failed before this test existed — redirecting the
+/// walk root to an empty directory, narrowing the filter so it matches no
+/// file, and replacing the constant with `&[]`.
+///
+/// **All three are caught, and the first one only because the root is shared.**
+/// The scan and this control both read `plugin_source_root()`. When they each
+/// computed their own, redirecting the *scan's* root left this control walking
+/// the real tree — 41 passed / 0 failed, a control reporting success over a
+/// scan that had read nothing. The filter narrowing is caught by the byte-sum
+/// below: `production_typescript` re-implements the filter, so if the two
+/// implementations disagree their totals disagree with them.
 #[test]
 fn the_mutation_denylist_scan_reaches_real_plugin_source_and_its_list_is_not_empty() {
     let root = workspace_root();
-    let paths = production_typescript_paths(&root, &root.join("plugin/src"));
+    let paths = production_typescript_paths(&root, &plugin_source_root());
     assert!(
         paths.len() >= PRODUCTION_SOURCE_FILE_FLOOR,
         "the plugin/src walk opened {} production TypeScript files, fewer than \
@@ -1311,7 +1334,7 @@ fn the_mutation_denylist_scan_reaches_real_plugin_source_and_its_list_is_not_emp
     // Tie the control to the scan. `production_typescript` re-implements the
     // filter; if the two ever disagree the byte totals disagree with them, so
     // this control cannot go on passing over a walk that has narrowed.
-    let source = production_typescript(root.join("plugin/src"));
+    let source = production_typescript(plugin_source_root());
     let expected: usize = paths
         .iter()
         .map(|path| {
@@ -1335,8 +1358,16 @@ fn the_mutation_denylist_scan_reaches_real_plugin_source_and_its_list_is_not_emp
         "MUTATION_DENYLIST carried 23 entries when this sweep measured it; a \
          loop over an emptied list asserts nothing and stays green"
     );
-    assert!(MUTATION_DENYLIST.contains(&"createRectangle"));
-    assert!(MUTATION_DENYLIST.contains(&"setTimelineDuration"));
+    assert!(
+        MUTATION_DENYLIST.contains(&"createRectangle"),
+        "MUTATION_DENYLIST no longer names createRectangle, the node-creation \
+         surface a read-only plugin exists to not have"
+    );
+    assert!(
+        MUTATION_DENYLIST.contains(&"setTimelineDuration"),
+        "MUTATION_DENYLIST no longer names setTimelineDuration, the Motion \
+         write surface the same scan was extended to cover"
+    );
 
     // The predicate itself. Every one of the 32 files is clean, so the
     // `contains` search never returns true on real input — it is asserted
@@ -1359,14 +1390,19 @@ fn the_mutation_denylist_scan_reaches_real_plugin_source_and_its_list_is_not_emp
 /// exactly what the catalog yields today). The walk half had none: pointing it
 /// at an empty directory left the policy suite at 31 passed / 0 failed.
 ///
-/// **Known limit.** The scan being controlled walks `plugin/src` with its own
-/// inline filter, and this control walks it again through
-/// `production_typescript_paths`. Two walks, so what is pinned is "the tree
-/// still holds these files", not "that walk still opens them". Narrowing the
-/// *inline* filter alone would still pass here. That is a change to test code
-/// rather than to production, and closing it properly means the scan and the
-/// control sharing one walk — which means rewriting the scan, and this sweep
-/// adds counterparts rather than editing what is there.
+/// The **walk root** is shared with the scan (`plugin_source_root()`), so
+/// redirecting the scan's walk at an empty directory turns this control red.
+/// It did not before the root was hoisted: the two computed separate roots and
+/// the mutation left the suite at 41 passed / 0 failed.
+///
+/// **Known limit, and it is a narrow one.** The scan walks that root with its
+/// own inline filter, written out inside the test; this control walks it
+/// through `production_typescript_paths`. So a narrowing of the *inline filter
+/// alone* — everything else unchanged — is still not caught here. Unlike the
+/// denylist scan next door, there is no byte-sum to tie the two, because the
+/// inline walk builds no concatenated text to compare against; giving it one
+/// means changing what the scan does, and this sweep adds counterparts rather
+/// than editing what is there.
 #[test]
 fn the_canonical_message_scan_reaches_the_catalog_and_every_production_file() {
     let root = workspace_root();
@@ -1396,7 +1432,7 @@ fn the_canonical_message_scan_reaches_the_catalog_and_every_production_file() {
         );
     }
 
-    let paths = production_typescript_paths(&root, &root.join("plugin/src"));
+    let paths = production_typescript_paths(&root, &plugin_source_root());
     assert!(
         paths.len() >= PRODUCTION_SOURCE_FILE_FLOOR,
         "the canonical-message walk opened {} production files, fewer than the \
@@ -1705,6 +1741,17 @@ fn the_operator_documentation_scan_reaches_all_four_files_and_instructs_still_fi
 
     // `instructs`, in both directions, on planted text. Nothing in the real
     // corpus exercises either branch.
+    //
+    // Deliberately only on prefixes *both* implementations of `instructs`
+    // exempt. This module exempts six prefixes and `prompts.rs` exempts three,
+    // and the three that differ (`does not`, `no`, `not`) are a disagreement
+    // this sweep raises rather than settles. An assertion here about one of
+    // those three would freeze it one-directionally — measured: reconciling
+    // toward the shorter list would cost a test edit while reconciling toward
+    // the longer one is free — so the divergent prefixes are pinned by neither
+    // control, and the disagreement stays as free to fix in either direction as
+    // it was before this test existed. `do not` and `never` are common to both,
+    // and pin exactly the property this task is about.
     assert!(
         instructs("you may save to a path when exporting", "save to a path"),
         "instructs no longer reports a plain instruction, so every phrase the \
@@ -1714,23 +1761,48 @@ fn the_operator_documentation_scan_reaches_all_four_files_and_instructs_still_fi
         !instructs("do not save to a path", "save to a path"),
         "instructs lost its negation exemption"
     );
-    assert!(!instructs("does not save to a path", "save to a path"));
-    assert!(!instructs("never save to a path", "save to a path"));
+    assert!(
+        !instructs("never save to a path", "save to a path"),
+        "instructs lost the `never` half of its negation exemption, so a \
+         document that forbids a phrase would read as instructing it"
+    );
 
     // `contains_ident` is exercised by the real corpus in the opposite
     // direction — it is what keeps `get_nodes` from reading as `get_node` —
     // but only ever answers "no" to the forbidden names, so pin both sides.
-    assert!(contains_ident("run list_files first", "list_files"));
-    assert!(!contains_ident("run list_files_v2 first", "list_files"));
-    assert!(!contains_ident("read durationMsField", "durationMs"));
+    assert!(
+        contains_ident("run list_files first", "list_files"),
+        "contains_ident no longer reports an identifier that is present, so the \
+         14 tool names and 3 prompt names the doc scan requires would all read \
+         as missing"
+    );
+    assert!(
+        !contains_ident("run list_files_v2 first", "list_files"),
+        "contains_ident lost its trailing-boundary check and now matches a \
+         longer identifier that merely starts with the name"
+    );
+    assert!(
+        !contains_ident("read durationMsField", "durationMs"),
+        "contains_ident lost its trailing-boundary check for the forbidden \
+         direction: `durationMsField` would now read as documenting durationMs"
+    );
 
     assert_eq!(
         SEVEN_LOCAL_VERIFICATION_COMMANDS.len(),
         7,
         "the test that checks these is named for the count and never checked it"
     );
-    assert_eq!(DIAGNOSTIC_CALL_NAMES.len(), 3);
-    assert!(DIAGNOSTIC_CALL_NAMES.contains(&"test_missing_capability"));
+    assert_eq!(
+        DIAGNOSTIC_CALL_NAMES.len(),
+        3,
+        "DIAGNOSTIC_CALL_NAMES carried 3 entries when this sweep measured it; \
+         an emptied list forbids no unadvertised diagnostic"
+    );
+    assert!(
+        DIAGNOSTIC_CALL_NAMES.contains(&"test_missing_capability"),
+        "DIAGNOSTIC_CALL_NAMES no longer names test_missing_capability, the \
+         diagnostic the README table rule was written about"
+    );
 }
 
 const ACCEPTANCE_RECORD: &str = "docs/acceptance-sweep.md";
@@ -1833,13 +1905,28 @@ fn file_line_citations(record: &str) -> Vec<(String, usize)> {
 /// `domain/common.rs` now, and the assertion that the ambiguity is real keeps
 /// the resolution rule from being decorative.
 ///
-/// **Known limit, measured rather than assumed.** Simulating a uniform shift of
-/// every citation into `result-validation.ts` — the shape an insertion above
-/// them produces — this fires at shift 3 and above (2 of 53 citations land on
-/// a blank line or a lone bracket at shift 3, 41 of 53 at shift 5) and is
-/// **silent at shifts of 1 and 2**. So it is a tripwire with a hole, not a
-/// verifier: it catches the ordinary edit and misses the one-line one. Saying
-/// which is the point — "these citations have been checked against the tree"
+/// **Known limit, measured rather than assumed — and the direction matters.**
+/// Simulating a uniform shift of the 53 `result-validation.ts` citations and
+/// counting how many land on a blank line or a lone bracket:
+///
+/// | lines | **deletion** above (cited `n` now shows old `n+k`) | **insertion** above (cited `n` now shows old `n−k`) |
+/// |---|---|---|
+/// | 1 | 0 of 53 — **silent** | 2 of 53 — fires |
+/// | 2 | 0 of 53 — **silent** | 33 of 53 — fires |
+/// | 3 | 2 of 53 — fires | 30 of 53 — fires |
+/// | 5 | 41 of 53 — fires | 18 of 53 — fires |
+///
+/// So the hole is on **deletion**, at one and two lines, and insertions are
+/// caught from a single line up. Both confirmed against the real tree, not
+/// only simulated: inserting one blank line at the top of
+/// `result-validation.ts` turns this red, and deleting one line from the top
+/// leaves the suite green. Note that a five-line change fires in *both*
+/// columns, so the five-line experiment does not distinguish the directions
+/// and cannot be used to confirm either — which is how the direction came to
+/// be stated backwards here in the first place.
+///
+/// It is a tripwire with a measured hole, not a verifier. Saying exactly which
+/// hole is the point — "these citations have been checked against the tree"
 /// was the claim with no verification story that this test exists to replace,
 /// and replacing it with a second unchecked claim would be no better.
 #[test]

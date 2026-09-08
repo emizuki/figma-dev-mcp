@@ -840,18 +840,21 @@ looked at nothing are the same green tick.
 So the accept path here is *"the scan reaches its inputs and its predicate
 still fires"*, the mutation is *"empty the scan"*, and the enumeration is over
 **every** test in the suite rather than over the eight refusal-named ones. The
-suite is 31 tests in six modules; they yield 42 accept paths at the granularity
+suite is 31 tests in six modules; they yield 43 accept paths at the granularity
 where one mutation answers one row, because several tests own more than one
 emptyable input — a walk *and* the constant it iterates, a corpus *and* the
-predicate applied to it.
+predicate applied to it, a walk root *and* the filter applied at it.
 
 Baseline before this task: **269 passed / 0 failed** across the workspace,
 **31 passed / 0 failed** in the policy binary. After: **279 / 0** and
 **41 / 0**.
 
-Rows: 42. Verdicts: 18 gap, 21 covered, 3 not applicable (18 + 21 + 3 = 42).
-Tests added: 10 — nine answering the 18 gaps, plus one new scan that answers a
-question Task 4 left open rather than a row in this table.
+Rows: 43. Verdicts: 19 gap, 21 covered, 3 not applicable (19 + 21 + 3 = 43).
+Tests added: 10 — nine answering 18 of the 19 gaps, plus one new scan that
+answers a question Task 4 left open rather than a row in this table. The
+nineteenth gap is reported and left open; it is the row about the
+canonical-message scan's inline filter, and the section below on what this
+area did not close explains why.
 
 | Accept path | Mutation | Suite result | Verdict | Test added |
 |---|---|---|---|---|
@@ -861,8 +864,8 @@ question Task 4 left open rather than a row in this table.
 | The plugin manifest is read and compared as JSON | replace the parsed value with `json!({})` | 30 / 1 | covered — `manifest_is_the_exact_read_only_loopback_surface` | — |
 | The Dev-Mode/inspect/dynamic-page/loopback fields are read from that manifest | the same replacement in the second reader | 30 / 1 | covered — `manifest_is_dev_mode_inspect_dynamic_page_loopback` | — |
 | `read_plugin_bundles` returns both artifacts when both exist | make it always return `Err` | 30 / 1 | covered — `bundle_policy_requires_both_artifacts` already ends in an `expect` on the Ok case, which is a positive control | — |
-| The controller and transport walks read real source (`plugin_contexts_keep_network_and_figma_apis_separate`) | point `plugin/src` at an empty directory | 31 / 0 | **gap** | `manifest::the_plugin_context_walks_reach_real_source_and_the_separation_predicate_fires` |
-| The `plugin/src` walk behind the dispatch-closure scan reads real source | point that walk at an empty directory | 31 / 0 | **gap** | the same test |
+| The controller and transport walks read real source (`plugin_contexts_keep_network_and_figma_apis_separate`) | point the walk root at an empty tree — see the note below on why this needed a code change to be catchable | 31 / 0 | **gap** | `manifest::the_plugin_context_walks_reach_real_source_and_the_separation_predicate_fires` |
+| The `plugin/src` walk behind the dispatch-closure scan reads real source, and reads the dispatcher | point the walk root at an empty tree; separately, reduce `dispatch.ts` to `export {}` | 31 / 0; 40 / 1 with only the new control red | **gap** | the same test |
 | The `plugin/src` walk behind `plugin_source_rejects_unbounded_page_font_and_mutation_surfaces` reads real source | the same, in `plugin_source.rs` | 31 / 0 | **gap** | `plugin_source::the_plugin_source_walk_reaches_real_files_and_the_assignment_predicate_fires` |
 | `has_property_assignment` can report an assignment | `&& false` in front of its `any` predicate, so it never reports one | 40 / 1, and the one red is the new control | **gap** | the same test |
 | The prompt-body scan opens a distinct body per name | `prompt_body` ignores `name` and returns `read_design_strategy.md` | 31 / 0 | **gap** | `prompts::the_prompt_body_scan_reads_a_distinct_body_per_name_and_its_predicates_fire` |
@@ -872,7 +875,8 @@ question Task 4 left open rather than a row in this table.
 | `dispatch.rs` is read | the same, for that file only | 30 / 1 | covered — same test | — |
 | The tools catalog is enumerated for names and annotations | replace `catalog.tools` with an empty vec | 30 / 1 | covered — `snapshots_lock_tools_annotations_prompts_and_wire_variants` | — |
 | The generated error catalog yields its canonical messages | none needed: the test already floors the parse at 17, and 17 is exactly what the catalog yields | — | covered — the floor is a real positive control, and this sweep re-measured the number behind it | — |
-| The `plugin/src` walk that looks for those messages reads real source | point it at an empty directory | 31 / 0 | **gap** | `read_only::the_canonical_message_scan_reaches_the_catalog_and_every_production_file` |
+| The `plugin/src` walk that looks for those messages reads real source | point the walk root at an empty tree | 31 / 0 | **gap** | `read_only::the_canonical_message_scan_reaches_the_catalog_and_every_production_file` |
+| That same walk's **inline filter** still matches production `.ts` — the one input in this suite whose scan and control could not be made to share a walk | narrow the inline filter alone (`!= "ts"` → `!= "mts"`), everything else unchanged | 41 / 0, **after** the fix that closed every other walk row | **gap** — reported, not closed by this sweep; see below | none |
 | The `plugin/src` walk behind `plugin_source_denies_mutation_private_and_motion_write_apis` reads real source | the same, in `read_only.rs` | 31 / 0 | **gap** | `read_only::the_mutation_denylist_scan_reaches_real_plugin_source_and_its_list_is_not_empty` |
 | `MUTATION_DENYLIST` enumerates the 23 surfaces its two consumers scan for | replace the constant with `&[]` | 31 / 0 | **gap** | the same test |
 | The read-test walk reaches `plugin/src/read` | point it at an empty directory | 30 / 1 | covered — `read_tests_share_one_figma_harness`, the template this task copies, and the only scan in the suite that already had this control | — |
@@ -978,10 +982,30 @@ Probed rather than read: on `does not save to a path`, `no save to a path` and
 `not save to a path`, `prompts.rs`'s version returns true and `read_only.rs`'s
 returns false. **No live input distinguishes them today** — the prompt bodies'
 one hit is "Do not create connector nodes", which both exempt, and the operator
-docs contain none of the eight phrases at all. Raised rather than fixed, under
-the ruling that a test written today would freeze the disagreement: the two
-tests now each pin their own version's behaviour, which is what makes the
-divergence visible to whoever reconciles it.
+docs contain none of the eight phrases at all.
+
+Raised rather than fixed, under the ruling that a test written today would
+freeze the disagreement — **and the first draft of these controls froze it
+anyway, one-directionally, which is the more useful half of this note.**
+`read_only.rs`'s control asserted `!instructs("does not save to a path", …)`,
+and `does not` is exactly one of the three prefixes the two implementations
+disagree about. Measured at the time: reconciling toward the shorter list cost
+a test edit (40 / 1) while reconciling toward the longer one was free (41 / 0).
+That is worse than freezing symmetrically — it puts a thumb on the scale of a
+decision this sweep has no standing to make, in a test whose stated subject is
+something else entirely.
+
+That assertion is gone. Both controls now pin `instructs` only on `do not` and
+the plain accepting direction — prefixes **both** implementations agree about —
+which is exactly Task 5's property and nothing more. Re-measured after the
+deletion: **both** reconciliation directions are now free at 41 / 0. The
+disagreement is as open to being fixed either way as it was before this task
+existed, which is what "raised, not fixed" is supposed to mean.
+
+The general lesson, since it cost a review round: a positive control asserts a
+predicate *fires*, and the sample it fires on carries opinions. Choosing that
+sample from the region two implementations disagree about turns a control into
+a vote.
 
 ### The record's own citations, and the one that did not resolve
 
@@ -989,8 +1013,8 @@ Task 4 established this file's citation convention and left it with a known
 hole: 53 `result-validation.ts` line citations survive on the basis that they
 "have been checked against the tree", and nothing runs that check. This section
 adds a scan that does — `every_file_line_citation_in_the_acceptance_record_resolves_to_a_real_line`
-— and it is worth building for a reason that emerged from measuring rather than
-from arguing: **one of the 54 citations in this record did not resolve.**
+— and on its first run **one of the 54 citations in this record did not resolve
+under its rule.**
 
 The `bounded_list_newtype!` row cited a bare `common.rs`, and two tracked files
 carry that basename — `crates/protocol/src/domain/common.rs`, which is the one
@@ -998,6 +1022,18 @@ meant, and `crates/tools/src/contracts/common.rs`, which the row two sections
 above is about. The citation is qualified to `domain/common.rs` now. That is
 the only change this task makes to another task's row, it changes no verdict,
 and it is recorded here rather than made quietly.
+
+**Two rules, both correct, and the difference is the interesting part.** Task
+4's round-4 review had already examined this same citation *by reading*, cited
+the same two files and the same evidence — the contracts file is 77 lines, so
+it has no line 446 — and concluded the citation was unambiguous. That is true
+under a resolution rule that consults the line number. This scan resolves by
+path suffix *before* consulting the line number, and under that rule the
+citation is ambiguous. Neither reading is wrong on the facts; they answer
+different questions, and the qualified path satisfies both. The scan's value
+here is not that it found something reading could not — reading found it first
+— but that it will keep finding it, on every run, without anyone remembering to
+look.
 
 What the scan checks, and only this: the cited path resolves to exactly one
 file in the tree, the line number is in range, and the line is neither blank
@@ -1007,16 +1043,35 @@ and an attempt to anchor each citation to a token near it needed a ±10-line
 window on a 2884-line file before it matched everything — a window that wide
 discriminates almost nothing, so it was not built.
 
-Its sensitivity is measured, not assumed. Simulating a uniform shift of every
-citation into `result-validation.ts` — the shape an insertion above them
-produces — the scan fires at shift 3 and above (2 of 53 citations land on a
-blank line or a lone bracket at shift 3; 41 of 53 at shift 5) and is **silent
-at shifts of 1 and 2**. It is a tripwire with a measured hole, not a verifier.
-Saying so is the point: "these have been checked against the tree" was a claim
-with no verification story, and replacing it with a second unchecked claim
-would be no better. A real production shift confirms the simulation — inserting
-five blank lines at the top of `result-validation.ts` turns the scan red and
-nothing else.
+Its sensitivity is measured, not assumed — **and the direction matters, which
+this section got backwards the first time.** Simulating a uniform shift of the
+53 `result-validation.ts` citations and counting how many land on a blank line
+or a lone bracket:
+
+| lines | **deletion** above (cited `n` now shows old `n+k`) | **insertion** above (cited `n` now shows old `n−k`) |
+|---|---|---|
+| 1 | 0 of 53 — **silent** | 2 of 53 — fires |
+| 2 | 0 of 53 — **silent** | 33 of 53 — fires |
+| 3 | 2 of 53 — fires | 30 of 53 — fires |
+| 5 | 41 of 53 — fires | 18 of 53 — fires |
+
+So the hole is on **deletion** at one and two lines; insertions are caught from
+a single line up. Both directions confirmed against the real tree, not only
+simulated: inserting one blank line at the top of `result-validation.ts` turns
+the scan red and nothing else, and deleting one line from the top leaves the
+suite green at 41 / 0.
+
+The first version of this paragraph claimed the opposite — silent at one- and
+two-line *insertions* — because the simulation shifted the citation numbers
+upward, which models a deletion, and the confirming experiment inserted five
+lines, which fires in **both** columns and so distinguished nothing. A
+five-line change cannot confirm either direction; that is why it did not catch
+the error.
+
+It is a tripwire with a measured hole, not a verifier. Saying exactly which
+hole is the point: "these have been checked against the tree" was a claim with
+no verification story, and replacing it with a second unchecked claim would be
+no better.
 
 Like every scan in this suite it has its own positive controls, and they were
 necessary: all three of its rules return "fine" on all 54 real citations, so
@@ -1030,17 +1085,35 @@ than a decoration.
 
 Three limits, each stated in the test that carries it rather than only here.
 
-**The controls walk the tree a second time.** Four of the six scans walk
-`plugin/src` with their own inline filter — `production_typescript` is written
-out three times, in `manifest.rs`, `plugin_source.rs` and `read_only.rs` — and
-the controls enumerate the same tree through one shared
-`production_typescript_paths`. Two walks means what is pinned is "the tree still
-holds these files", not "that walk still opens them". Where it could be closed
-it was: the mutation-denylist control asserts the scan's own concatenated text
-is exactly as long as the sum of the files the control enumerated, so a filter
-that narrowed would make the two disagree. The canonical-message scan's inline
-walk has no such tie, because tying it means rewriting the scan, and this sweep
-adds counterparts rather than editing what is there.
+**The controls used to walk the tree a second time, and that made four rows
+above false until a fix round corrected it.** Five production-source scans walk
+`plugin/src`, and each originally computed its own root; so did each control.
+With two roots, redirecting a *scan's* walk at an empty tree left its control
+walking the real one and reporting success over a scan that had read nothing —
+measured at **41 / 0** on every one of those rows, while the rows claimed the
+mutation was caught. That is the template's own original defect wearing a new
+coat, inside the task written to prevent it, and it is worth stating plainly
+because the disclosure at the time pointed the opposite way from the table, and
+a table is what a reader trusts.
+
+Closed by extraction rather than by rewriting anything: one
+`plugin_source_root()` that every scan and every control now reads. It moves no
+assertion and changes no scan's behaviour, and after it the walk-root mutation
+turns all four controls red (**37 / 4**). The row-level verification for each is
+in the fix report.
+
+What that leaves is narrower and is the nineteenth gap in the table above.
+`production_typescript` is still written out three times, in `manifest.rs`,
+`plugin_source.rs` and `read_only.rs`, and the canonical-message scan has a
+fourth, inline copy of the filter. A *filter* narrowing is caught for the first
+three — the mutation-denylist control asserts the scan's own concatenated text
+is exactly as long as the sum of the files the control enumerated, so two
+disagreeing filters make the totals disagree, and the two module-local filters
+empty the text the `WebSocket` / `figma.` / `has_property_assignment`
+assertions read. The canonical-message scan's inline walk builds no concatenated
+text to compare against, so there is nothing to tie it to; narrowing that filter
+alone is still green at 41 / 0. Giving it a tie means changing what the scan
+does, and this sweep adds counterparts rather than editing what is there.
 
 **Floors, not equalities.** The production-file count (32 measured), the
 property-name total (89 measured) and the citation count (123 occurrences

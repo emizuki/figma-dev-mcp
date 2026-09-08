@@ -48,7 +48,7 @@ fn has_property_assignment(source: &str, property: &str) -> bool {
 
 #[test]
 fn plugin_source_rejects_unbounded_page_font_and_mutation_surfaces() {
-    let source = production_typescript(project_root().join("plugin/src"));
+    let source = production_typescript(crate::read_only::plugin_source_root());
 
     for forbidden in [
         "loadAllPagesAsync",
@@ -100,6 +100,12 @@ fn plugin_source_rejects_unbounded_page_font_and_mutation_surfaces() {
 /// 31 passed / 0 failed: seventeen `!contains` assertions and four
 /// `has_property_assignment` assertions, all true of the empty string.
 ///
+/// **Which mutations this catches.** Both the walk-root redirect and this
+/// module's own filter narrowing — the first only because the scan and the
+/// control share one `plugin_source_root()`. With two roots the redirect left
+/// the suite at 41 passed / 0 failed, the control walking the real tree while
+/// the scan read nothing.
+///
 /// The measurement that makes the planted samples necessary:
 /// `has_property_assignment` returns **false on every one of the 32 production
 /// files**, for all four properties. It is only ever asked about text that does
@@ -109,7 +115,10 @@ fn plugin_source_rejects_unbounded_page_font_and_mutation_surfaces() {
 #[test]
 fn the_plugin_source_walk_reaches_real_files_and_the_assignment_predicate_fires() {
     let root = project_root();
-    let paths = crate::read_only::production_typescript_paths(&root, &root.join("plugin/src"));
+    let paths = crate::read_only::production_typescript_paths(
+        &root,
+        &crate::read_only::plugin_source_root(),
+    );
     assert!(
         paths.len() >= crate::read_only::PRODUCTION_SOURCE_FILE_FLOOR,
         "the plugin/src walk opened {} production files, fewer than the {} this \
@@ -124,7 +133,7 @@ fn the_plugin_source_walk_reaches_real_files_and_the_assignment_predicate_fires(
              moved, or the walk's filter stopped matching it"
         );
     }
-    let source = production_typescript(root.join("plugin/src"));
+    let source = production_typescript(crate::read_only::plugin_source_root());
     assert!(
         source.contains("figma.") && source.contains("export"),
         "the walk read no production TypeScript, so every forbidden surface it \
