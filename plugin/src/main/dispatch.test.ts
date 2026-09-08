@@ -313,9 +313,13 @@ describe("closed read dispatcher", () => {
     })
   })
 
-  // One page child, carrying a reaction, so that the three readers whose
-  // results share a key set — dev-mode, reactions and motion — produce
-  // visibly different payloads on the same host.
+  // One page child that each of the three readers sharing a key set —
+  // dev-mode, reactions and motion — reads differently, so their payloads tell
+  // them apart. It carries a reaction for `getReactions`, and the four host
+  // fields `supportsMotion` requires plus one applied animation style, which is
+  // what makes `getMotion` emit a record for it rather than skip it as empty;
+  // and it carries no annotation and no dev resource, which is what leaves
+  // `getDevModeData` with nothing.
   const ROUTING_NODE = {
     id: "1:2",
     name: "Card",
@@ -330,6 +334,10 @@ describe("closed read dispatcher", () => {
         ],
       },
     ],
+    animationStyles: [{ id: "motion-1", styleId: "S:1", name: "Fade in" }],
+    animations: [],
+    manualKeyframeTracks: [],
+    timelines: [],
   }
 
   const ROUTING_INPUTS: Record<
@@ -418,9 +426,30 @@ describe("closed read dispatcher", () => {
       },
       get_motion: {
         keys: ["items", "observation", "truncated", "visitedNodes"],
+        // What motion read, not how much of the tree it walked past: the page
+        // has none of the four fields `supportsMotion` wants and comes back as
+        // an `UNSUPPORTED_NODE` item, which this filters out. The applied
+        // style id is the part no other reader's record carries — `getReactions`
+        // also returns a successful item for this node, so a mark of the node
+        // id alone would not tell motion from reactions (measured: it does
+        // not). Being about what was read rather than how many nodes were
+        // seen, this does not move if a later change alters the walk's scope.
         read: (result) =>
-          (result.items as { status: string }[]).map((item) => item.status),
-        mark: ["error", "error"],
+          (
+            result.items as {
+              status: string
+              value?: {
+                nodeId?: string
+                animationStyles?: { styleId?: string }[]
+              }
+            }[]
+          )
+            .filter((item) => item.status === "success")
+            .map(
+              (item) =>
+                `${item.value?.nodeId}/${item.value?.animationStyles?.[0]?.styleId}`,
+            ),
+        mark: ["1:2/S:1"],
       },
       get_screenshot: {
         keys: ["assets", "observation", "truncated"],

@@ -1433,7 +1433,7 @@ branch.
   for `data:,payload`, whose media type defaults to `text/plain` and is refused
   either way.
 
-### Three re-measured mutations, and one red that was a flake
+### Five rows whose first measurement did not stand
 
 Five rows — `SV24`, `CS24`, the two the `+`/`/` row split into, and `P19` — are
 not the straightforward "mutate, run, record" case, and each is worth naming
