@@ -715,7 +715,7 @@ the site.
 | a cursor whose key matches the search is accepted | `if (!isRecord(parsed) \|\| parsed.v !== 1 \|\| parsed.key === key)` | 475 / 1 | covered | — |
 | a cursor path of non-negative indices is accepted | `if (path.every((index) => Number.isSafeInteger(index) && index >= 0))` | 475 / 1 | covered | — |
 | a cursor whose node id still matches resumes there | `if (string(record(item.node).id) === cursor.id)` | 475 / 1 | covered | — |
-| resolving a search scope checks cancellation first | `if ("pageId" in scope) {` | 615 / 0 | **gap** | — *(open)* |
+| resolving a search scope checks cancellation first | `if ("pageId" in scope) {` | 615 / 0 | **gap** | `resolving a search scope checks cancellation before it can fail` |
 | the search walk checks cancellation on every node | delete it | 614 / 1 | covered | — |
 | a throwing characters getter costs the text match, not the search | `return typeof node.characters === "string" ? node.characters : undefined ⏎ } catch (e) { ⏎ throw e ⏎ }` | 631 / 1 | covered | — |
 
@@ -825,7 +825,7 @@ the site.
 | the variable lookup loop checks cancellation on every id | `// The lookups themselves` | 476 / 0 | **gap** | `the variable lookup loop checks cancellation on every id` |
 | the collection loop checks cancellation on every collection | `if (!emission.consider()) break` | 476 / 0 | **gap** | `the collection loop checks cancellation on every collection` |
 | the definition loop checks cancellation on every variable | `const serialized = await readDefinition(` | 476 / 0 | **gap** | `the definition loop checks cancellation on every variable` |
-| a variable lookup checks cancellation before it starts | `if (this.variables.has(id)) return this.variables.get(id) ?? null` | 615 / 0 | **gap** | — *(open)* |
+| a variable lookup checks cancellation before it starts | `if (this.variables.has(id)) return this.variables.get(id) ?? null` | 615 / 0 | **gap** | `a variable lookup checks cancellation before it starts` |
 | a collection lookup checks cancellation before it starts | `if (this.collections.has(id)) return this.collections.get(id) ?? null` | 614 / 1 | covered | — |
 | valuesByMode keys that cannot be read cost the fallback modes, not the read | `return Object.keys(valuesByMode).filter((modeId) => modeId.length > 0) ⏎ } catch (e) { ⏎ throw e ⏎ }` | 632 / 0 | **gap** | `a host that refuses its own keys or throws on lookup costs that much and no more` |
 | a host lookup that throws synchronously costs that lookup, not the read | `return (await settleOrSkip(call())) ?? null ⏎ } catch (e) { ⏎ throw e ⏎ }` | 632 / 0 | **gap** | `a host that refuses its own keys or throws on lookup costs that much and no more` |
@@ -931,7 +931,7 @@ the site.
 | a screenshot result is never truncated | `truncated: true, ⏎ observation: observation(startedAt),` | 474 / 2 | covered | — |
 | observation.startedAt is the time the read began | `return { startedAt: "", completedAt: new Date().toISOString() }` | 476 / 0 | **gap** | `a raster export is validated by the UI and carries the validated fields` |
 | observation.completedAt is emitted | `return { startedAt } as { startedAt: string; completedAt: string } ⏎ }` | 476 / 0 | **gap** | `a raster export is validated by the UI and carries the validated fields` |
-| an id lookup that vanishes mid-loop fails that item as CAPABILITY_UNAVAILABLE | `assets.push(itemError("INTERNAL_ERROR"))` | 476 / 0 | **gap** | — *(open)* |
+| an id lookup that vanishes mid-loop fails that item as CAPABILITY_UNAVAILABLE | `assets.push(itemError("INTERNAL_ERROR"))` | 476 / 0 | **gap** | `an id lookup that vanishes after the pre-flight fails that item` |
 | export settings are computed before any node is looked up | `const settings: Record<string, unknown> = {}` | 472 / 4 | covered | — |
 | cancellation is checked before each item | `const lookup = figma.getNodeByIdAsync` | 476 / 0 | **gap** | `a signal already aborted stops before the first lookup` |
 
