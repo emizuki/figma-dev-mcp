@@ -1996,11 +1996,15 @@ Task 6 measured that the ten `checks cancellation …` read tests stay green whe
 question here. Deleting each of those fifteen calls one at a time is `B01`–`B15`:
 all fifteen stay green, confirming that measurement site by site.
 
-Thirteen of the fifteen sit beside an unconditional `signal?.throwIfAborted()`
-on the same signal; `fonts.ts:230` sits inside a walk visitor, with `walkNode`'s
-poll *before* the visitor rather than after — which is not the same thing as
-being subsumed by it, as the rest of this section works out; and
-`components.ts:339`'s twin is `B32`, found later. Deleting fifteen unconditional
+Nine of the fifteen are immediately followed by an unconditional
+`signal?.throwIfAborted()` on the same signal at the same index, and five by a
+call whose first statement is one — the 9 + 5 = 14 partition set out below.
+`fonts.ts:230` is the fifteenth: it sits inside a walk visitor, with
+`walkNode`'s poll *before* the visitor rather than after, which is not the same
+thing as being subsumed by it, as the rest of this section works out.
+`components.ts:339`'s twin is `B32`, found later.
+
+Deleting fifteen unconditional
 checks one at a time is `B16`–`B30`: **fourteen of the fifteen stay green**
 against the suite as it stood. The single exception is `serializeNode`'s own
 check, `B20`, which goes red against the pre-existing `bounded node serializer >
@@ -2162,9 +2166,9 @@ The single largest class of gaps is the lookup table with one member pinned and
 the rest not. Expanded per member, as the enumeration rule requires:
 
 - **19 blend modes.** Seventeen were unpinned. The two that stay open are
-  `PASS_THROUGH` and `NORMAL`, and they are open for a reason rather than by
-  omission: `blendMode()` returns `undefined` both for a mode missing from the
-  table and for those two, so deleting either entry cannot change an answer.
+  `PASS_THROUGH` and `NORMAL`: `blendMode()` returns `undefined` both for a
+  mode missing from the table and for those two. **Not probed** (`Z070`,
+  `Z071`).
 - **15 motion easing types**, of which five were unpinned; **9 keyframe value
   shapes**, all nine unpinned; **3 keyframe operations**, two unpinned.
 - **9 media runtime actions and 8 overlay positions** in `reactions.ts`: every
@@ -2222,8 +2226,11 @@ round examined five more claims and all five were wrong too:
 3. *The six `break`/`continue` rows return byte-identical output* — true of the
    payload, and beside the point for `components.ts:262`, which reads a third
    component from the host after the ceiling.
-4. and 5. *`M76` and `M88` are shapes no real host produces* — both close with
-   an ordinary `get_motion` fixture.
+4. and 5. *`M76` and `M88` are shapes no real host produces* — both close
+   through the ordinary `get_motion` entry point and harness, on a
+   deliberately discriminating payload (an indexed item carrying `tracks` but
+   no `timelineDuration`; a collection map carrying a keyframe binding's own
+   fields) that is not claimed to be realistic host output.
 
 **Fourteen examined, fourteen wrong.** At that rate the honest posture is not a
 better probe standard; it is abstention. So: **every row here that could not be
@@ -2268,7 +2275,7 @@ without recognising it as the general answer.
   host is read *twice* — and `Z699` / `Z700`, the two visibility cycle guards,
   closed together by counting `parent` reads: 65 for a self-cycle, not the
   1024 the bound allows.
-- **A `break` a `continue` cannot be told apart from in the payload (5).**
+- **A `break` whose `continue` leaves the payload byte-identical (5).**
   `the instance batch stops at the emission ceiling`, `the font loop stops at
   the emission ceiling`, `the local pass stops at the node ceiling rather than
   considering the rest`, and `the collection loop stops at both ceilings rather
@@ -2299,7 +2306,10 @@ without recognising it as the general answer.
   keyframe binding and the classification is what stops the scan of its
   `properties`; and `M88`, where `fills`, `strokes` and `effects` are read by
   the indexed pass and so skipped by the plain property scan. Both show up as
-  an extra binding in the emitted list.
+  an extra binding in the emitted list. Their fixtures go through the ordinary
+  `get_motion` entry point and the standard harness, but the payload shapes are
+  chosen to discriminate rather than to model a host — the claim they pin is
+  about the classification, not about what Figma emits.
 
 14 + 11 + 5 + 5 + 5 + 13 = 53.
 
