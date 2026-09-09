@@ -1,11 +1,17 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 import {
+  PluginReadError,
   readDesignContext,
   readMetadata,
   readNodes,
   readSelection,
 } from "./navigation"
-import { MAX_RETURNED_NODES } from "../shared/limits"
+import { MAX_DEPTH, MAX_RETURNED_NODES } from "../shared/limits"
+import { CANONICAL_MESSAGES } from "../shared/error-catalog"
+import {
+  LocalCancellationController,
+  LocalCancellationError,
+} from "../main/cancellation"
 import { parseReadResult } from "../shared/result-validation"
 
 const page = (id: string, name: string) => ({ id, name })
@@ -1379,5 +1385,644 @@ describe("design context reader", () => {
     // `undefined`; only `Object.hasOwn` proves a healthy response stays
     // byte-identical to what it was before this field existed.
     expect(Object.hasOwn(result, "unresolved")).toBe(false)
+  })
+})
+
+describe("what the navigation readers accept", () => {
+  test("a plugin read error names itself and carries a message", () => {
+    const error = new PluginReadError("NODE_NOT_FOUND", true)
+    expect(error.name).toBe("PluginReadError")
+    expect(error.message).toBe("Plugin read failed")
+    expect(error.code).toBe("NODE_NOT_FOUND")
+    expect(error.retryable).toBe(true)
+  })
+
+  test("metadata reports the capabilities of the host it is given", () => {
+    expect(readMetadata().capabilities).toEqual({
+      annotations: false,
+      devResources: false,
+      motion: false,
+      svgStringExport: true,
+      variableCodeSyntax: false,
+    })
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [] },
+      currentPage: {
+        id: "0:1",
+        name: "Page 1",
+        getDevResourcesAsync: () => [],
+      },
+      editorType: "dev",
+      annotations: {},
+      motion: {},
+      variables: {},
+    }
+    expect(readMetadata().capabilities).toEqual({
+      annotations: true,
+      devResources: true,
+      motion: true,
+      svgStringExport: true,
+      variableCodeSyntax: true,
+    })
+  })
+
+  test("detail defaults to compact and depth to two, capped at MAX_DEPTH", async () => {
+    const deep = (level: number): Record<string, unknown> => ({
+      id: `1:${level}`,
+      name: `Level ${level}`,
+      type: "FRAME",
+      children: level >= 8 ? [] : [deep(level + 1)],
+    })
+    const root = deep(0)
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [] },
+      currentPage: { id: "0:1", name: "Page 1" },
+      editorType: "dev",
+      getNodeByIdAsync: async () => root,
+    }
+
+    const byDefault = await readDesignContext({
+      selector: { nodeId: "1:0" },
+      dedupeComponents: false,
+    })
+    expect(byDefault.detail).toBe("compact")
+    expect(byDefault.truncation).toEqual({
+      reason: "depthLimit",
+      appliedDepth: 2,
+    })
+
+    const capped = await readDesignContext({
+      selector: { nodeId: "1:0" },
+      depth: 99,
+      dedupeComponents: false,
+    })
+    expect(capped.truncation).toEqual({
+      reason: "depthLimit",
+      appliedDepth: MAX_DEPTH,
+    })
+
+    const asked = await readDesignContext({
+      selector: { nodeId: "1:0" },
+      depth: 1,
+      dedupeComponents: false,
+    })
+    expect(asked.truncation).toEqual({ reason: "depthLimit", appliedDepth: 1 })
+  })
+
+  test("a minimal read resolves no names and no instance identities", async () => {
+    const lookups: string[] = []
+    const instance = {
+      id: "1:2",
+      name: "Instance",
+      type: "INSTANCE",
+      fillStyleId: "S:1",
+      boundVariables: { fills: [{ type: "VARIABLE_ALIAS", id: "V:1" }] },
+      children: [],
+      getMainComponentAsync: async () => {
+        lookups.push("main")
+        return { id: "3:1" }
+      },
+    }
+    const root = {
+      id: "1:1",
+      name: "Root",
+      type: "FRAME",
+      children: [instance],
+    }
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [] },
+      currentPage: { id: "0:1", name: "Page 1" },
+      editorType: "dev",
+      getNodeByIdAsync: async () => root,
+      getStyleByIdAsync: async (id: string) => {
+        lookups.push(`style:${id}`)
+        return { name: "Brand" }
+      },
+      variables: {
+        getVariableByIdAsync: async (id: string) => {
+          lookups.push(`variable:${id}`)
+          return { name: "brand/blue" }
+        },
+      },
+    }
+
+    const minimal = await readDesignContext({
+      selector: { nodeId: "1:1" },
+      detail: "minimal",
+      depth: 3,
+      dedupeComponents: false,
+    })
+    expect(minimal.roots[0]?.data).toEqual({})
+    expect(lookups).toEqual([])
+
+    await readDesignContext({
+      selector: { nodeId: "1:1" },
+      detail: "full",
+      depth: 3,
+      dedupeComponents: false,
+    })
+    expect(lookups.sort()).toEqual(["main", "style:S:1", "variable:V:1"])
+  })
+
+  test("the instance pre-pass stops at the requested depth", async () => {
+    const lookups: string[] = []
+    const instanceAt = (id: string) => ({
+      id,
+      name: id,
+      type: "INSTANCE",
+      children: [] as unknown[],
+      getMainComponentAsync: async () => {
+        lookups.push(id)
+        return { id: "3:1" }
+      },
+    })
+    const deepInstance = instanceAt("1:3")
+    const middle = {
+      id: "1:2",
+      name: "Middle",
+      type: "FRAME",
+      children: [deepInstance],
+    }
+    const root = { id: "1:1", name: "Root", type: "FRAME", children: [middle] }
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [] },
+      currentPage: { id: "0:1", name: "Page 1" },
+      editorType: "dev",
+      getNodeByIdAsync: async () => root,
+    }
+
+    await readDesignContext({
+      selector: { nodeId: "1:1" },
+      detail: "compact",
+      depth: 1,
+      dedupeComponents: false,
+    })
+    expect(lookups).toEqual([])
+
+    await readDesignContext({
+      selector: { nodeId: "1:1" },
+      detail: "compact",
+      depth: 2,
+      dedupeComponents: false,
+    })
+    expect(lookups).toEqual(["1:3"])
+  })
+
+  test("a selected id the host cannot find does not end the read", async () => {
+    const visible = {
+      id: "1:2",
+      name: "Visible",
+      type: "FRAME",
+      children: [],
+    }
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [] },
+      currentPage: {
+        id: "0:1",
+        name: "Page 1",
+        selection: [{ id: "1:1" }, { id: "1:2" }],
+      },
+      editorType: "dev",
+      getNodeByIdAsync: async (id: string) => (id === "1:2" ? visible : null),
+    }
+
+    const result = await readSelection({ detail: "minimal", depth: 0 })
+    expect(result.nodes.map((node) => node.summary.id)).toEqual(["1:2"])
+    expect(Object.hasOwn(result, "unresolved")).toBe(false)
+  })
+
+  test("a selection read serializes a repeated component in full both times", async () => {
+    const component = {
+      id: "3:1",
+      name: "Icon",
+      type: "COMPONENT",
+      children: [{ id: "3:2", name: "Glyph", type: "VECTOR", children: [] }],
+    }
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [] },
+      currentPage: {
+        id: "0:1",
+        name: "Page 1",
+        selection: [{ id: "3:1" }, { id: "3:1" }],
+      },
+      editorType: "dev",
+      getNodeByIdAsync: async () => component,
+    }
+
+    const result = await readSelection({ detail: "minimal", depth: 2 })
+    expect(result.nodes.map((node) => node.childrenTruncated)).toEqual([
+      false,
+      false,
+    ])
+    expect(result.nodes.map((node) => node.children.length)).toEqual([1, 1])
+  })
+
+  test("a design-context read honours dedupeComponents and echoes its detail", async () => {
+    const component = {
+      id: "3:1",
+      name: "Icon",
+      type: "COMPONENT",
+      children: [{ id: "3:2", name: "Glyph", type: "VECTOR", children: [] }],
+    }
+    const root = {
+      id: "1:1",
+      name: "Root",
+      type: "FRAME",
+      children: [component, component],
+    }
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [] },
+      currentPage: { id: "0:1", name: "Page 1" },
+      editorType: "dev",
+      getNodeByIdAsync: async () => root,
+    }
+
+    const deduped = await readDesignContext({
+      selector: { nodeId: "1:1" },
+      detail: "minimal",
+      depth: 3,
+      dedupeComponents: true,
+    })
+    expect(deduped.detail).toBe("minimal")
+    expect(
+      deduped.roots[0]?.children.map((child) => child.childrenTruncated),
+    ).toEqual([false, true])
+
+    const whole = await readDesignContext({
+      selector: { nodeId: "1:1" },
+      detail: "minimal",
+      depth: 3,
+      dedupeComponents: false,
+    })
+    expect(
+      whole.roots[0]?.children.map((child) => child.childrenTruncated),
+    ).toEqual([false, false])
+    expect(whole.observation.startedAt).toMatch(/Z$/)
+  })
+
+  test("an explicitly named page is paged in before it is serialized", async () => {
+    const loaded: string[] = []
+    const explicit = {
+      id: "0:9",
+      name: "Explicit",
+      type: "PAGE",
+      children: [],
+      loadAsync: async () => {
+        loaded.push("0:9")
+      },
+    }
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [] },
+      currentPage: { id: "0:1", name: "Page 1" },
+      editorType: "dev",
+      getNodeByIdAsync: async () => explicit,
+    }
+
+    await readNodes({ nodeIds: ["0:9"], detail: "minimal", depth: 0 })
+    expect(loaded).toEqual(["0:9"])
+
+    await readDesignContext({
+      selector: { nodeIds: ["0:9"] },
+      detail: "minimal",
+      depth: 0,
+      dedupeComponents: false,
+    })
+    expect(loaded).toEqual(["0:9", "0:9"])
+  })
+
+  test("every item fails as CAPABILITY_UNAVAILABLE when the host has no id lookup", async () => {
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [] },
+      currentPage: { id: "0:1", name: "Page 1" },
+      editorType: "dev",
+    }
+
+    const result = await readNodes({
+      nodeIds: ["1:1", "1:2"],
+      detail: "minimal",
+      depth: 0,
+    })
+    expect(result.items).toEqual([
+      {
+        status: "error",
+        error: {
+          code: "CAPABILITY_UNAVAILABLE",
+          message: CANONICAL_MESSAGES.CAPABILITY_UNAVAILABLE,
+          retryable: false,
+        },
+      },
+      {
+        status: "error",
+        error: {
+          code: "CAPABILITY_UNAVAILABLE",
+          message: CANONICAL_MESSAGES.CAPABILITY_UNAVAILABLE,
+          retryable: false,
+        },
+      },
+    ])
+  })
+
+  test("a read error raised while serializing an item ends the whole call", async () => {
+    const hostile = {
+      id: "1:1",
+      type: "FRAME",
+      children: [],
+      get name(): string {
+        throw new PluginReadError("CAPABILITY_UNAVAILABLE", false)
+      },
+    }
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [] },
+      currentPage: { id: "0:1", name: "Page 1" },
+      editorType: "dev",
+      getNodeByIdAsync: async () => hostile,
+    }
+
+    await expect(
+      readNodes({ nodeIds: ["1:1"], detail: "minimal", depth: 0 }),
+    ).rejects.toBeInstanceOf(PluginReadError)
+  })
+
+  test("cancellation is checked before a nodeId lookup and before an explicit page load", async () => {
+    const lookedUp: string[] = []
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [] },
+      currentPage: { id: "0:1", name: "Page 1" },
+      editorType: "dev",
+      getNodeByIdAsync: async (id: string) => {
+        lookedUp.push(id)
+        return null
+      },
+    }
+    const cancellation = new LocalCancellationController()
+    cancellation.abort()
+
+    await expect(
+      readDesignContext(
+        { selector: { nodeId: "1:1" }, dedupeComponents: false },
+        cancellation.signal,
+      ),
+    ).rejects.toBeInstanceOf(LocalCancellationError)
+    await expect(
+      readDesignContext(
+        { selector: { pageId: "0:9" }, dedupeComponents: false },
+        cancellation.signal,
+      ),
+    ).rejects.toBeInstanceOf(LocalCancellationError)
+    expect(lookedUp).toEqual([])
+  })
+
+  test("the cancellation signal reaches the forest serializer", async () => {
+    const children = Array.from({ length: 101 }, (_, index) => ({
+      id: `1:${index + 2}`,
+      name: `Child ${index}`,
+      type: "FRAME",
+      children: [],
+    }))
+    const cancellation = new LocalCancellationController()
+    Object.defineProperty(children, 50, {
+      configurable: true,
+      enumerable: true,
+      get() {
+        cancellation.abort()
+        return { id: "1:52", name: "Child", type: "FRAME", children: [] }
+      },
+    })
+    const root = { id: "1:1", name: "Root", type: "FRAME", children }
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [] },
+      currentPage: { id: "0:1", name: "Page 1" },
+      editorType: "dev",
+      getNodeByIdAsync: async () => root,
+    }
+
+    await expect(
+      readDesignContext(
+        {
+          selector: { nodeId: "1:1" },
+          detail: "minimal",
+          depth: 3,
+          dedupeComponents: false,
+        },
+        cancellation.signal,
+      ),
+    ).rejects.toBeInstanceOf(LocalCancellationError)
+  })
+
+  // Each of these aborts partway through a loop and asserts that the loop's
+  // own check is what stops it: the fixtures are built so that with that one
+  // check gone the read runs to completion rather than being caught later.
+  test("get_selection checks cancellation on every selected id", async () => {
+    const cancellation = new LocalCancellationController()
+    const lookedUp: string[] = []
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [] },
+      currentPage: {
+        id: "0:1",
+        name: "Page 1",
+        selection: [{ id: "1:1" }, { id: "1:2" }],
+      },
+      editorType: "dev",
+      getNodeByIdAsync: async (id: string) => {
+        lookedUp.push(id)
+        if (id === "1:1") cancellation.abort()
+        return null
+      },
+    }
+
+    await expect(
+      readSelection({ detail: "minimal", depth: 0 }, cancellation.signal),
+    ).rejects.toBeInstanceOf(LocalCancellationError)
+    expect(lookedUp).toEqual(["1:1"])
+  })
+
+  test("get_nodes checks cancellation on every requested id", async () => {
+    const cancellation = new LocalCancellationController()
+    const lookedUp: string[] = []
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [] },
+      currentPage: { id: "0:1", name: "Page 1" },
+      editorType: "dev",
+      getNodeByIdAsync: async (id: string) => {
+        lookedUp.push(id)
+        if (id === "1:1") cancellation.abort()
+        return null
+      },
+    }
+
+    await expect(
+      readNodes(
+        { nodeIds: ["1:1", "1:2"], detail: "minimal", depth: 0 },
+        cancellation.signal,
+      ),
+    ).rejects.toBeInstanceOf(LocalCancellationError)
+    expect(lookedUp).toEqual(["1:1"])
+  })
+
+  test("a selection scope checks cancellation on every selected id", async () => {
+    const cancellation = new LocalCancellationController()
+    const lookedUp: string[] = []
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [] },
+      currentPage: {
+        id: "0:1",
+        name: "Page 1",
+        selection: [{ id: "1:1" }, { id: "1:2" }],
+      },
+      editorType: "dev",
+      getNodeByIdAsync: async (id: string) => {
+        lookedUp.push(id)
+        if (id === "1:1") cancellation.abort()
+        return null
+      },
+    }
+
+    await expect(
+      readDesignContext(
+        {
+          selector: { selection: true },
+          detail: "minimal",
+          depth: 0,
+          dedupeComponents: false,
+        },
+        cancellation.signal,
+      ),
+    ).rejects.toBeInstanceOf(LocalCancellationError)
+    expect(lookedUp).toEqual(["1:1"])
+  })
+
+  test("a nodeIds scope checks cancellation on every id", async () => {
+    const cancellation = new LocalCancellationController()
+    const lookedUp: string[] = []
+    // Both nodes are switched off, so neither becomes a root and the forest
+    // serializer — whose own check would otherwise catch this — never runs.
+    const hidden = (id: string) => ({
+      id,
+      name: id,
+      type: "FRAME",
+      visible: false,
+      children: [],
+    })
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [] },
+      currentPage: { id: "0:1", name: "Page 1" },
+      editorType: "dev",
+      getNodeByIdAsync: async (id: string) => {
+        lookedUp.push(id)
+        if (id === "1:1") cancellation.abort()
+        return hidden(id)
+      },
+    }
+
+    await expect(
+      readDesignContext(
+        {
+          selector: { nodeIds: ["1:1", "1:2"] },
+          detail: "minimal",
+          depth: 0,
+          dedupeComponents: false,
+        },
+        cancellation.signal,
+      ),
+    ).rejects.toBeInstanceOf(LocalCancellationError)
+    expect(lookedUp).toEqual(["1:1"])
+  })
+
+  test("loading document pages checks cancellation before each page is loaded", async () => {
+    const cancellation = new LocalCancellationController()
+    const loads: string[] = []
+    const pageOf = (id: string) => ({
+      id,
+      name: id,
+      type: "PAGE",
+      children: [],
+      loadAsync: async () => {
+        loads.push(id)
+        if (id === "0:p1") cancellation.abort()
+      },
+    })
+    const document = {
+      id: "0:0",
+      name: "Doc",
+      type: "DOCUMENT",
+      children: [pageOf("0:p1"), pageOf("0:p2")],
+    }
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [] },
+      currentPage: page("0:2", "Current"),
+      editorType: "dev",
+      getNodeByIdAsync: async (id: string) => (id === "0:0" ? document : null),
+    }
+
+    await expect(
+      readDesignContext(
+        {
+          selector: { nodeIds: ["0:0"] },
+          detail: "minimal",
+          depth: 0,
+          dedupeComponents: false,
+        },
+        cancellation.signal,
+      ),
+    ).rejects.toBeInstanceOf(LocalCancellationError)
+    // The forest serializer would reject this read anyway; what the per-page
+    // check buys is that the second page is never loaded from the host after
+    // the caller cancelled.
+    expect(loads).toEqual(["0:p1"])
+  })
+
+  test("loading document pages checks cancellation before each document root", async () => {
+    const cancellation = new LocalCancellationController()
+    const childrenReads: string[] = []
+    const documentOf = (id: string, children: unknown[]) => {
+      const node = { id, name: id, type: "DOCUMENT" }
+      Object.defineProperty(node, "children", {
+        configurable: true,
+        enumerable: true,
+        get() {
+          childrenReads.push(id)
+          return children
+        },
+      })
+      return node
+    }
+    const first = documentOf("0:d1", [
+      {
+        id: "0:p1",
+        name: "0:p1",
+        type: "PAGE",
+        children: [],
+        loadAsync: async () => {
+          cancellation.abort()
+        },
+      },
+    ])
+    const second = documentOf("0:d2", [])
+    const documents = new Map<string, unknown>([
+      ["0:d1", first],
+      ["0:d2", second],
+    ])
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [] },
+      currentPage: page("0:2", "Current"),
+      editorType: "dev",
+      getNodeByIdAsync: async (id: string) => documents.get(id) ?? null,
+    }
+
+    await expect(
+      readDesignContext(
+        {
+          selector: { nodeIds: ["0:d1", "0:d2"] },
+          detail: "minimal",
+          depth: 0,
+          dedupeComponents: false,
+        },
+        cancellation.signal,
+      ),
+    ).rejects.toBeInstanceOf(LocalCancellationError)
+    // `loadDocumentPages` reads `children` twice per root, so the count is
+    // filtered to the second document: with the per-root check in place it is
+    // never touched after the abort.
+    expect(childrenReads.filter((id) => id === "0:d2")).toEqual([])
   })
 })

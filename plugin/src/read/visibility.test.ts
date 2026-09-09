@@ -94,4 +94,24 @@ describe("visibilityOf", () => {
     expect(rendersVisibly({ visible: false })).toBe(false)
     expect(rendersVisibly(looped)).toBe(false)
   })
+
+  test("a cycle is cut at its own length rather than at the walk bound", () => {
+    // Both answers are "undetermined", so the verdict alone cannot tell the
+    // cycle watch from the bound. What the watch buys is host reads: it starts
+    // recording at step 64 and a self-cycle repeats on the very next step, so
+    // the walk asks for `parent` 65 times instead of the 1024 the bound allows.
+    let parentReads = 0
+    const looped: Record<string, unknown> = { visible: true }
+    Object.defineProperty(looped, "parent", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        parentReads += 1
+        return looped
+      },
+    })
+
+    expect(visibilityOf(looped)).toBe("undetermined")
+    expect(parentReads).toBe(65)
+  })
 })

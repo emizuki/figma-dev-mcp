@@ -1,10 +1,17 @@
 import { describe, expect, test } from "bun:test"
 
 import {
+  awaitWithSignal,
   CancellationRegistry,
+  ignoreSettlement,
   LocalCancellationController,
+  LocalCancellationError,
+  throwIfAbortedAtBatch,
 } from "./cancellation"
 import { dispatchControllerMessage, requestBoundaryFailure } from "./dispatch"
+import { PluginReadError } from "../read/navigation"
+import { progressFor } from "./progress"
+import { installFigma } from "../../tests/figma-harness"
 import {
   OPERATION_NAMES,
   parseControllerBoundMessage,
@@ -70,24 +77,16 @@ const EMPTY_INPUTS: Record<
 }
 
 describe("closed read dispatcher", () => {
-  test("every named milestone operation returns a typed unavailable error", async () => {
+  // Was "every named milestone operation returns a typed unavailable error",
+  // whose body `continue`d on all thirteen names in OPERATION_NAMES and so
+  // executed nothing: every milestone operation is implemented now, and the
+  // list of exceptions had grown to cover the list itself. The claim worth
+  // keeping is the complement — no name in OPERATION_NAMES falls through to
+  // the unavailable answer — and this asserts it once per name.
+  test("every named operation is dispatched rather than answered as unavailable", async () => {
+    installFigma({})
+    let dispatched = 0
     for (const [index, operation] of OPERATION_NAMES.entries()) {
-      if (
-        operation === "get_metadata" ||
-        operation === "get_selection" ||
-        operation === "get_nodes" ||
-        operation === "search_nodes" ||
-        operation === "get_design_context" ||
-        operation === "get_styles" ||
-        operation === "get_variables" ||
-        operation === "get_components" ||
-        operation === "get_fonts" ||
-        operation === "get_dev_mode_data" ||
-        operation === "get_reactions" ||
-        operation === "get_motion" ||
-        operation === "get_screenshot"
-      )
-        continue
       const correlationId = controllerRequestId(index)
       const request = parseControllerBoundMessage({
         type: "request",
@@ -97,17 +96,19 @@ describe("closed read dispatcher", () => {
         target: {},
         operation: { operation, input: EMPTY_INPUTS[operation] },
       })
-      expect(request.type).toBe("request")
       if (request.type !== "request")
         throw new Error("test request did not decode")
 
-      expect(await dispatchControllerMessage(request)).toEqual({
-        type: "error",
+      const answer = await dispatchControllerMessage(request)
+      dispatched += 1
+      expect(answer).toMatchObject({
+        type: "response",
         controllerRequestId: correlationId,
         requestId: `plugin-${index}`,
-        error: { code: "CAPABILITY_UNAVAILABLE", retryable: false },
       })
     }
+    expect(dispatched).toBe(OPERATION_NAMES.length)
+    expect(dispatched).toBe(13)
   })
 
   test("get_metadata returns bounded file and page metadata", async () => {
@@ -304,5 +305,441 @@ describe("closed read dispatcher", () => {
         error: { code: "CANCELLED", retryable: false },
       },
     })
+  })
+
+  // One page child that each of the three readers sharing a key set —
+  // dev-mode, reactions and motion — reads differently, so their payloads tell
+  // them apart. It carries a reaction for `getReactions`, and the four host
+  // fields `supportsMotion` requires plus one applied animation style, which is
+  // what makes `getMotion` emit a record for it rather than skip it as empty;
+  // and it carries no annotation and no dev resource, which is what leaves
+  // `getDevModeData` with nothing.
+  const ROUTING_NODE = {
+    id: "1:2",
+    name: "Card",
+    type: "FRAME",
+    visible: true,
+    children: [],
+    reactions: [
+      {
+        trigger: { type: "ON_CLICK" },
+        actions: [
+          { type: "NODE", destinationId: "1:3", navigation: "NAVIGATE" },
+        ],
+      },
+    ],
+    animationStyles: [{ id: "motion-1", styleId: "S:1", name: "Fade in" }],
+    animations: [],
+    manualKeyframeTracks: [],
+    timelines: [],
+  }
+
+  const ROUTING_INPUTS: Record<
+    (typeof OPERATION_NAMES)[number],
+    Record<string, unknown>
+  > = { ...EMPTY_INPUTS, get_nodes: { nodeIds: ["1:2"] } }
+
+  // What each reader's own result looks like. `keys` is the exact set of
+  // top-level fields — different for ten of the thirteen — and `mark` is a
+  // value only that reader produces, which is what separates the three whose
+  // key sets coincide. Asserting the response's *label* is not enough: a
+  // `case` arm that keeps its label and calls the wrong reader, or none, is
+  // caught by nothing else in this suite (the type checker rejects it, but
+  // the type checker is not this suite).
+  interface RoutingExpectation {
+    keys: string[]
+    read: (result: Record<string, unknown>) => unknown
+    mark: unknown
+  }
+
+  const NO_MARK = { read: () => null, mark: null }
+
+  const ROUTING: Record<(typeof OPERATION_NAMES)[number], RoutingExpectation> =
+    {
+      get_metadata: {
+        keys: [
+          "capabilities",
+          "currentPageId",
+          "file",
+          "observation",
+          "pages",
+          "pluginVersion",
+          "truncated",
+        ],
+        read: (result) => (result.file as { name: string }).name,
+        mark: "Checkout flow",
+      },
+      get_selection: {
+        keys: ["detail", "nodes", "observation", "truncated"],
+        ...NO_MARK,
+      },
+      get_nodes: {
+        keys: ["detail", "items", "observation", "truncated"],
+        ...NO_MARK,
+      },
+      search_nodes: {
+        keys: ["matches", "observation", "truncated"],
+        ...NO_MARK,
+      },
+      get_design_context: {
+        keys: ["detail", "observation", "roots", "truncated"],
+        ...NO_MARK,
+      },
+      get_styles: {
+        keys: ["observation", "styles", "truncated"],
+        ...NO_MARK,
+      },
+      get_variables: {
+        keys: ["collections", "observation", "truncated"],
+        ...NO_MARK,
+      },
+      get_components: {
+        keys: ["components", "instances", "observation", "truncated"],
+        ...NO_MARK,
+      },
+      get_fonts: {
+        keys: ["fonts", "observation", "truncated"],
+        ...NO_MARK,
+      },
+      get_dev_mode_data: {
+        keys: ["items", "observation", "truncated", "visitedNodes"],
+        // The node carries no annotation and no dev resource, so dev-mode finds
+        // nothing on it — where reactions finds one and motion finds two.
+        read: (result) => `items:${(result.items as unknown[]).length}`,
+        mark: "items:0",
+      },
+      get_reactions: {
+        keys: ["items", "observation", "truncated", "visitedNodes"],
+        read: (result) =>
+          (
+            result.items as {
+              value?: { reactions?: { trigger?: string }[] }
+            }[]
+          ).map((item) => item.value?.reactions?.[0]?.trigger),
+        mark: ["click"],
+      },
+      get_motion: {
+        keys: ["items", "observation", "truncated", "visitedNodes"],
+        // What motion read, not how much of the tree it walked past: the page
+        // has none of the four fields `supportsMotion` wants and comes back as
+        // an `UNSUPPORTED_NODE` item, which this filters out. The applied
+        // style id is the part no other reader's record carries — `getReactions`
+        // also returns a successful item for this node, so a mark of the node
+        // id alone would not tell motion from reactions (measured: it does
+        // not). Being about what was read rather than how many nodes were
+        // seen, this does not move if a later change alters the walk's scope.
+        read: (result) =>
+          (
+            result.items as {
+              status: string
+              value?: {
+                nodeId?: string
+                animationStyles?: { styleId?: string }[]
+              }
+            }[]
+          )
+            .filter((item) => item.status === "success")
+            .map(
+              (item) =>
+                `${item.value?.nodeId}/${item.value?.animationStyles?.[0]?.styleId}`,
+            ),
+        mark: ["1:2/S:1"],
+      },
+      get_screenshot: {
+        keys: ["assets", "observation", "truncated"],
+        ...NO_MARK,
+      },
+    }
+
+  // Every operation below is a separate `case` in `dispatchRead`. Deleting any
+  // one of them drops the request through to `assertNever`, which throws and
+  // comes back as INTERNAL_ERROR — a request the plugin can serve answered as
+  // if the plugin were broken. Eleven of the thirteen cases had nothing
+  // holding them.
+  test("every read operation reaches the reader named in the request", async () => {
+    installFigma({
+      pageChildren: [ROUTING_NODE],
+      nodes: new Map([["1:2", ROUTING_NODE]]),
+    })
+    let routed = 0
+    for (const [index, operation] of OPERATION_NAMES.entries()) {
+      const request = parseControllerBoundMessage({
+        type: "request",
+        controllerRequestId: controllerRequestId(400 + index),
+        requestId: `plugin-route-${operation}`,
+        deadlineMs: 1,
+        target: {},
+        operation: { operation, input: ROUTING_INPUTS[operation] },
+      })
+      if (request.type !== "request")
+        throw new Error("test request did not decode")
+
+      const answer = await dispatchControllerMessage(request)
+      expect({ operation, answer }).toMatchObject({
+        operation,
+        answer: {
+          type: "response",
+          requestId: `plugin-route-${operation}`,
+          result: { operation },
+        },
+      })
+
+      const expected = ROUTING[operation]
+      const payload = (
+        answer as { result: { result: Record<string, unknown> } }
+      ).result.result
+      expect({
+        operation,
+        keys: Object.keys(payload).sort(),
+        mark: expected.read(payload),
+      }).toEqual({
+        operation,
+        keys: expected.keys,
+        mark: expected.mark,
+      })
+      routed += 1
+    }
+    // Positive control: the loop above asserts nothing if it never runs, and
+    // the one pre-existing test over `OPERATION_NAMES` skips every entry.
+    expect(routed).toBe(OPERATION_NAMES.length)
+    expect(routed).toBe(13)
+  })
+
+  test("a cancel message aborts the request it names and answers nothing", async () => {
+    installHangingScreenshot()
+    const registry = new CancellationRegistry()
+    const correlationId = controllerRequestId(500)
+    const request = parseControllerBoundMessage({
+      type: "request",
+      controllerRequestId: correlationId,
+      requestId: "plugin-cancel-message",
+      deadlineMs: 1,
+      target: {},
+      operation: {
+        operation: "get_screenshot",
+        input: { format: "png", selector: { nodeId: "4:1" } },
+      },
+    })
+    const cancel = parseControllerBoundMessage({
+      type: "cancel",
+      controllerRequestId: correlationId,
+      requestId: "plugin-cancel-message",
+    })
+    if (request.type !== "request" || cancel.type !== "cancel")
+      throw new Error("test messages did not decode")
+
+    const dispatched = dispatchControllerMessage(request, registry)
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    // The cancel travels the same way a request does — through
+    // `dispatchControllerMessage` — rather than by reaching into the registry.
+    expect(await dispatchControllerMessage(cancel, registry)).toBeNull()
+
+    expect(await raceAgainstTimeout(dispatched, 200)).toEqual({
+      settled: true,
+      value: {
+        type: "error",
+        controllerRequestId: correlationId,
+        requestId: "plugin-cancel-message",
+        error: { code: "CANCELLED", retryable: false },
+      },
+    })
+  })
+
+  test("a settled request frees its correlation ID for the next one", async () => {
+    installFigma({})
+    const registry = new CancellationRegistry()
+    const correlationId = controllerRequestId(501)
+    const build = (requestId: string) => {
+      const message = parseControllerBoundMessage({
+        type: "request",
+        controllerRequestId: correlationId,
+        requestId,
+        deadlineMs: 1,
+        target: {},
+        operation: { operation: "get_metadata", input: {} },
+      })
+      if (message.type !== "request")
+        throw new Error("test request did not decode")
+      return message
+    }
+
+    const first = await dispatchControllerMessage(
+      build("plugin-reuse-1"),
+      registry,
+    )
+    const second = await dispatchControllerMessage(
+      build("plugin-reuse-2"),
+      registry,
+    )
+
+    // Both answers are responses: the second would be INTERNAL_ERROR if the
+    // first had left its identifier in the registry.
+    expect(first).toMatchObject({
+      type: "response",
+      controllerRequestId: correlationId,
+      requestId: "plugin-reuse-1",
+    })
+    expect(second).toMatchObject({
+      type: "response",
+      controllerRequestId: correlationId,
+      requestId: "plugin-reuse-2",
+    })
+    expect(registry.size).toBe(0)
+  })
+
+  test("a read failure keeps its own code and retryable flag at the boundary", () => {
+    expect(
+      requestBoundaryFailure(new PluginReadError("NODE_NOT_FOUND", false)),
+    ).toEqual({ code: "NODE_NOT_FOUND", retryable: false })
+    expect(
+      requestBoundaryFailure(new PluginReadError("CONNECTION_LOST", true)),
+    ).toEqual({ code: "CONNECTION_LOST", retryable: true })
+  })
+
+  test("read code finds the reporter bound to its signal, and its totals reach the controller", async () => {
+    const posted: unknown[] = []
+    const harness = installFigma({
+      ui: {
+        postMessage(message: unknown) {
+          posted.push(message)
+        },
+      },
+    })
+    void harness
+    const correlationId = controllerRequestId(502)
+    const request = parseControllerBoundMessage({
+      type: "request",
+      controllerRequestId: correlationId,
+      requestId: "plugin-bound-progress",
+      deadlineMs: 1,
+      target: {},
+      operation: { operation: "get_metadata", input: {} },
+    })
+    if (request.type !== "request")
+      throw new Error("test request did not decode")
+
+    const controller = new LocalCancellationController()
+    const registry = new CancellationRegistry()
+    // Stand in for the registry's controller so the test holds the very signal
+    // the dispatcher binds the reporter to.
+    const begin = registry.begin.bind(registry)
+    registry.begin = () => {
+      const real = begin(correlationId)
+      void real
+      return controller
+    }
+
+    await dispatchControllerMessage(request, registry)
+
+    const reporter = progressFor(controller.signal)
+    expect(reporter).toBeDefined()
+    reporter?.tick("encoding", 3, 7)
+
+    expect(posted).toContainEqual({
+      type: "progress",
+      controllerRequestId: correlationId,
+      requestId: "plugin-bound-progress",
+      completed: 3,
+      total: 7,
+      message: "encoding",
+    })
+  })
+
+  test("the batch cancellation gate throws on a batch boundary and only there", () => {
+    const controller = new LocalCancellationController()
+    controller.abort()
+
+    expect(() => throwIfAbortedAtBatch(controller.signal, 0, 100)).toThrow()
+    expect(() => throwIfAbortedAtBatch(controller.signal, 100, 100)).toThrow()
+    expect(() => throwIfAbortedAtBatch(controller.signal, 250, 50)).toThrow()
+    expect(() => throwIfAbortedAtBatch(controller.signal, 1, 100)).not.toThrow()
+    expect(() =>
+      throwIfAbortedAtBatch(controller.signal, 99, 100),
+    ).not.toThrow()
+    expect(() =>
+      throwIfAbortedAtBatch(controller.signal, 101, 100),
+    ).not.toThrow()
+    // The default batch size is what every call site in `plugin/src/read`
+    // relies on when it passes its own constant, so it is pinned here too.
+    expect(() => throwIfAbortedAtBatch(controller.signal, 200)).toThrow()
+    expect(() => throwIfAbortedAtBatch(controller.signal, 201)).not.toThrow()
+  })
+
+  test("awaitWithSignal passes work through, refuses an aborted signal, and unhooks itself", async () => {
+    await expect(
+      awaitWithSignal(Promise.resolve("no signal"), undefined),
+    ).resolves.toBe("no signal")
+
+    const aborted = new LocalCancellationController()
+    aborted.abort()
+    await expect(
+      awaitWithSignal(Promise.resolve("ignored"), aborted.signal),
+    ).rejects.toBeInstanceOf(LocalCancellationError)
+
+    const live = new LocalCancellationController()
+    await expect(
+      awaitWithSignal(Promise.resolve("carried"), live.signal),
+    ).resolves.toBe("carried")
+    // Nothing is left listening once the work has settled, so a later abort
+    // has no rejection to raise.
+    expect(() => live.abort()).not.toThrow()
+    expect(live.signal.aborted).toBe(true)
+  })
+
+  test("cancelAll aborts every active request and reports how many it stopped", () => {
+    const registry = new CancellationRegistry()
+    const first = registry.begin(controllerRequestId(600))
+    const second = registry.begin(controllerRequestId(601))
+    registry.cancel(controllerRequestId(601))
+    const third = registry.begin(controllerRequestId(602))
+
+    expect(registry.size).toBe(3)
+    // The already-cancelled one is not counted twice.
+    expect(registry.cancelAll()).toBe(2)
+    expect([first, second, third].map((one) => one.signal.aborted)).toEqual([
+      true,
+      true,
+      true,
+    ])
+    expect(registry.cancelAll()).toBe(0)
+  })
+
+  test("a removed abort listener is not called", () => {
+    const controller = new LocalCancellationController()
+    let kept = 0
+    let removed = 0
+    const keptListener = (): void => {
+      kept += 1
+    }
+    const removedListener = (): void => {
+      removed += 1
+    }
+    controller.signal.addEventListener("abort", keptListener)
+    controller.signal.addEventListener("abort", removedListener)
+    controller.signal.removeEventListener("abort", removedListener)
+
+    controller.abort()
+
+    expect(kept).toBe(1)
+    expect(removed).toBe(0)
+  })
+
+  test("an abandoned promise's rejection is swallowed rather than left unhandled", async () => {
+    let reject: ((reason: unknown) => void) | undefined
+    const work = new Promise<never>((_, reject_) => {
+      reject = reject_
+    })
+    ignoreSettlement(work)
+    reject?.(new Error("late failure"))
+
+    // Nothing here can observe the swallowing directly; what it proves is that
+    // the rejection never reaches the runtime as unhandled, which bun reports
+    // as a failure of whichever test is running when it fires.
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(true).toBe(true)
   })
 })

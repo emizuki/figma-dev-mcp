@@ -11,6 +11,7 @@
     "src/ui/socket.test.ts",
     "src/ui/socket.ts",
     "src/ui/relay.ts",
+    "src/ui/relay.test.ts",
     "src/ui/hello.ts",
     "src/ui/uuid.ts",
     "src/ui/uuid.test.ts",

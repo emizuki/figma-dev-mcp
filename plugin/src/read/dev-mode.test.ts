@@ -4,6 +4,7 @@ import { installFigma } from "../../tests/figma-harness"
 import { LocalCancellationController } from "../main/cancellation"
 import { PluginReadError } from "./navigation"
 import { getDevModeData } from "./dev-mode"
+import { byteLength } from "./serialize"
 
 const page = (id: string, name: string, children: unknown[] = []) => ({
   id,
@@ -355,5 +356,169 @@ describe("get_dev_mode_data", () => {
       ),
     ).rejects.toThrow("Operation cancelled")
     expect(PluginReadError).toBeDefined()
+  })
+
+  test("each kind of content on its own is enough to emit a node", async () => {
+    const nodes = [
+      frame("4:1", {
+        annotations: [{ label: "Note", categoryId: "cat-note" }],
+      }),
+      frame("4:2", {
+        getDevResourcesAsync: async () => [
+          { name: "Spec", url: "https://docs.example/spec" },
+        ],
+      }),
+      frame("4:3", {
+        documentationLinks: [{ uri: "https://docs.example/only" }],
+      }),
+      frame("4:4", { descriptionMarkdown: "**only markdown**" }),
+      frame("4:5", { ownerNodeId: "2:9" }),
+      frame("4:6", { inheritedFromNodeId: "2:8" }),
+      frame("4:7", { description: "" }),
+    ]
+    installFigma({ currentPage: page("0:2", "Current", nodes) })
+
+    const result = await getDevModeData({})
+
+    expect(
+      result.items.map((item) =>
+        item.status === "success" ? item.value.nodeId : item.error.code,
+      ),
+    ).toEqual(["4:1", "4:2", "4:3", "4:4", "4:5", "4:6"])
+    expect(result.visitedNodes).toBe(8)
+    expect(result.observation.completedAt).toMatch(/Z$/)
+  })
+
+  test("only the categories a node references are attached, once each", async () => {
+    const card = frame("4:1", {
+      annotations: [
+        { label: "One", categoryId: "cat-note" },
+        { label: "Two", categoryId: "cat-note" },
+      ],
+    })
+    installFigma({ currentPage: page("0:2", "Current", [card]) })
+
+    const result = await getDevModeData({ selector: { nodeId: "4:1" } })
+    const item = result.items[0]
+
+    expect(
+      item?.status === "success" ? item.value.annotationCategories : [],
+    ).toEqual([{ id: "cat-note", label: "Note" }])
+  })
+
+  test("an annotation keeps the host's own id when it has one", async () => {
+    const card = frame("4:1", {
+      annotations: [
+        { id: "an-host", label: "Named", categoryId: "cat-note" },
+        { label: "Unnamed" },
+      ],
+    })
+    installFigma({ currentPage: page("0:2", "Current", [card]) })
+
+    const result = await getDevModeData({ selector: { nodeId: "4:1" } })
+    const item = result.items[0]
+
+    expect(item?.status === "success" ? item.value.annotations : []).toEqual([
+      { id: "an-host", text: "Named", categoryId: "cat-note" },
+      { id: "4:1:annotation:1", text: "Unnamed" },
+    ])
+  })
+
+  test("the category reader is called on figma.annotations", async () => {
+    const card = frame("4:1", {
+      annotations: [{ label: "Note", categoryId: "cat-self" }],
+    })
+    installFigma({ currentPage: page("0:2", "Current", [card]) })
+    const host = (
+      globalThis as typeof globalThis & { figma: Record<string, unknown> }
+    ).figma
+    host.annotations = {
+      badge: "cat-self",
+      async getAnnotationCategoriesAsync(this: { badge: string }) {
+        return [{ id: this.badge, label: "From this" }]
+      },
+    }
+
+    const result = await getDevModeData({ selector: { nodeId: "4:1" } })
+    const item = result.items[0]
+
+    expect(
+      item?.status === "success" ? item.value.annotationCategories : [],
+    ).toEqual([{ id: "cat-self", label: "From this" }])
+  })
+
+  test("the item ceiling is inclusive, the walk outranks it, and the byte ceiling reports its total", async () => {
+    const nodes = [1, 2, 3, 4].map((index) =>
+      frame(`4:${index}`, { description: `Card ${index}` }),
+    )
+    installFigma({ currentPage: page("0:2", "Current", nodes) })
+
+    // The page carries nothing, so it is inspected and skipped: the second
+    // emitted node is the third inspected.
+    const capped = await getDevModeData({}, undefined, { returnedNodes: 1 })
+    expect(capped.items).toHaveLength(1)
+    expect(capped.truncation).toEqual({ reason: "nodeLimit", visitedNodes: 3 })
+
+    // The walk stops after four nodes and the emission after three; the walk
+    // is the earlier loss and its count is the one reported.
+    const walked = await getDevModeData({}, undefined, {
+      visitedNodes: 4,
+      returnedNodes: 1,
+    })
+    expect(walked.truncation).toEqual({ reason: "nodeLimit", visitedNodes: 4 })
+
+    // The budget is spent on the node record, not on the item envelope.
+    const value = (index: number) => ({
+      nodeId: `4:${index}`,
+      annotations: [],
+      annotationCategories: [],
+      documentation: [],
+      devResources: [],
+      description: `Card ${index}`,
+    })
+    const budget = byteLength(value(1)) + byteLength(value(2)) - 1
+    const bytes = await getDevModeData({}, undefined, { encodedBytes: budget })
+    expect(bytes.items).toEqual([{ status: "success", value: value(1) }])
+    expect(bytes.truncation).toEqual({
+      reason: "byteLimit",
+      encodedBytes: byteLength(value(1)) + byteLength(value(2)),
+    })
+  })
+
+  // `throwIfAbortedAtBatch` polls only when `index % 100 === 0`, so an abort
+  // raised between batch boundaries is seen by nothing but the unconditional
+  // check beside it.
+  test("the dev-mode item loop checks cancellation on every item", async () => {
+    const first = frame("4:1", {
+      getDevResourcesAsync: async () => {
+        cancellation.abort()
+        return []
+      },
+    })
+    const second = frame("4:2", { description: "Second" })
+    const cancellation = new LocalCancellationController()
+    installFigma({ currentPage: page("0:2", "Current", [first, second]) })
+
+    await expect(
+      getDevModeData(
+        { selector: { nodeIds: ["4:1", "4:2"] } },
+        cancellation.signal,
+      ),
+    ).rejects.toThrow("Operation cancelled")
+  })
+
+  test("the dev-mode item loop stops at the ceiling, and stops counting too", async () => {
+    const nodes = [1, 2, 3, 4].map((index) =>
+      frame(`4:${index}`, { description: `Card ${index}` }),
+    )
+    installFigma({ currentPage: page("0:2", "Current", nodes) })
+
+    const result = await getDevModeData({}, undefined, { returnedNodes: 1 })
+
+    expect(result.items).toHaveLength(1)
+    expect(result.truncation).toEqual({ reason: "nodeLimit", visitedNodes: 3 })
+    // `visitedNodes` is in the result, so stopping the loop and merely
+    // skipping the rest of it are not the same answer.
+    expect(result.visitedNodes).toBe(3)
   })
 })

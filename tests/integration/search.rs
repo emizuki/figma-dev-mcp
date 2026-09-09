@@ -162,6 +162,108 @@ fn search_nodes_rejects_a_call_with_neither_query_nor_types() {
     );
 }
 
+/// The rule the test above pins is a disjunction, and there are two ways to
+/// satisfy it. `query` alone is what every other search test here sends, so
+/// the deserializer refusing it would be loud. `types` alone was the half
+/// nothing reached: a mutation narrowing the guard to `input.query.is_none()`
+/// left the whole workspace green. The assertion is on the frame the plugin is
+/// handed, because the types list is rebuilt entry by entry after trimming and
+/// a rebuild that dropped or replaced its input would still be accepted here.
+#[tokio::test]
+async fn a_search_carrying_only_node_types_is_dispatched_with_those_types() {
+    let (address, broker, broker_task) = running_broker().await;
+    let mut request = format!("ws://{address}/").into_client_request().unwrap();
+    request
+        .headers_mut()
+        .insert("Origin", "null".parse().unwrap());
+    let (mut plugin, _) = connect_async(request).await.unwrap();
+    plugin.send(hello(FIRST_CONNECTION)).await.unwrap();
+    wait_for_sessions(&broker, 1).await;
+
+    let (server_io, client_io) = tokio::io::duplex(64 * 1024);
+    let server_task = tokio::spawn(async move {
+        McpService::new(broker.clone())
+            .serve(server_io)
+            .await
+            .unwrap()
+    });
+    let client = ().serve(client_io).await.unwrap();
+
+    let plugin_task = tokio::spawn(async move {
+        let request = loop {
+            let Some(Ok(Message::Text(frame))) = plugin.next().await else {
+                panic!("plugin did not receive request")
+            };
+            let request: Value = serde_json::from_str(&frame).unwrap();
+            if request["type"] == "request" {
+                break request;
+            }
+        };
+        assert_eq!(request["operation"]["operation"], "search_nodes");
+        let input = request["operation"]["input"].clone();
+        assert_eq!(
+            input["types"],
+            json!(["FRAME", "COMPONENT"]),
+            "the trimmed types list must reach the plugin: {input}"
+        );
+        assert!(
+            input.get("query").is_none(),
+            "a types-only search must not acquire a query: {input}"
+        );
+        assert_eq!(input["scope"], json!({"pageId": "0:1"}));
+        let request_id = request["requestId"].as_str().unwrap();
+        plugin
+            .send(Message::Text(
+                json!({
+                    "type": "response",
+                    "requestId": request_id,
+                    "result": {
+                        "operation": "search_nodes",
+                        "result": {
+                            "matches": [{
+                                "node": {
+                                    "id": "1:2",
+                                    "name": "Card",
+                                    "nodeType": "FRAME"
+                                },
+                                "reasons": ["type"]
+                            }],
+                            "truncated": false,
+                            "observation": observation()
+                        }
+                    }
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .unwrap();
+    });
+
+    let result = client
+        .call_tool(
+            rmcp::model::CallToolRequestParams::new("search_nodes").with_arguments(
+                serde_json::Map::from_iter([
+                    ("connectionId".to_owned(), json!(FIRST_CONNECTION)),
+                    ("scope".to_owned(), json!({"pageId": "0:1"})),
+                    ("types".to_owned(), json!(["FRAME ", " COMPONENT"])),
+                ]),
+            ),
+        )
+        .await
+        .expect("a search carrying only types must be accepted");
+    assert_ne!(result.is_error, Some(true));
+    assert_eq!(
+        result.structured_content.clone().unwrap()["matches"][0]["node"]["id"],
+        "1:2"
+    );
+
+    plugin_task.await.unwrap();
+    drop(client);
+    server_task.abort();
+    broker_task.abort();
+}
+
 #[test]
 fn search_nodes_public_contract_trims_defaults_and_rejects_invalid_values() {
     assert!(

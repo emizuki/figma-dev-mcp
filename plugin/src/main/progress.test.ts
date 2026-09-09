@@ -5,6 +5,7 @@ import {
   bindProgress,
   createProgressReporter,
   progressFor,
+  PROGRESS_INTERVAL_MS,
   type ProgressFrame,
 } from "./progress"
 import { parseControllerOutboundMessage } from "../shared/validation"
@@ -124,5 +125,126 @@ describe("bounded plugin progress", () => {
     expect(progressFor(first.signal)).toBe(reporter)
     expect(progressFor(second.signal)).toBeUndefined()
     expect(progressFor(undefined)).toBeUndefined()
+  })
+
+  test("a fractional count is floored rather than sent as a fraction", () => {
+    const frames: ProgressFrame[] = []
+    const reporter = createProgressReporter({
+      emit: (frame) => frames.push(frame),
+      intervalMs: 0,
+    })
+    reporter.tick("reading", 7.9, 12.4)
+
+    expect(frames).toEqual([{ completed: 7, total: 12, message: "reading" }])
+  })
+
+  test("a non-positive interval emits every tick of the same phase", () => {
+    const frames: ProgressFrame[] = []
+    const reporter = createProgressReporter({
+      emit: (frame) => frames.push(frame),
+      intervalMs: 0,
+      now: () => 0,
+    })
+    reporter.tick("reading", 1)
+    reporter.tick("reading", 2)
+    reporter.tick("reading", 3)
+
+    expect(frames).toEqual([
+      { completed: 1, message: "reading" },
+      { completed: 2, message: "reading" },
+      { completed: 3, message: "reading" },
+    ])
+  })
+
+  test("a tick without a total drops the total the previous tick carried", () => {
+    const frames: ProgressFrame[] = []
+    const reporter = createProgressReporter({
+      emit: (frame) => frames.push(frame),
+      intervalMs: 0,
+      now: () => 0,
+    })
+    reporter.tick("reading", 1, 9)
+    reporter.tick("reading", 2)
+
+    expect(frames).toEqual([
+      { completed: 1, total: 9, message: "reading" },
+      { completed: 2, message: "reading" },
+    ])
+    expect(Object.hasOwn(frames[1] ?? {}, "total")).toBe(false)
+  })
+
+  test("an emit that throws does not fail the read it is reporting on", () => {
+    let attempts = 0
+    const reporter = createProgressReporter({
+      emit: () => {
+        attempts += 1
+        throw new Error("host postMessage failed")
+      },
+      intervalMs: 0,
+    })
+
+    expect(() => reporter.tick("reading", 1)).not.toThrow()
+    expect(() => reporter.tick("serializing", 2)).not.toThrow()
+    expect(attempts).toBe(2)
+  })
+
+  test("restarting the heartbeat stops the timer the previous one left running", () => {
+    const stopped: number[] = []
+    const callbacks: Array<() => void> = []
+    const reporter = createProgressReporter({
+      emit: () => undefined,
+      intervalMs: 3_000,
+      now: () => 0,
+      schedule: (callback) => {
+        const index = callbacks.length
+        callbacks.push(callback)
+        return () => stopped.push(index)
+      },
+    })
+    reporter.startHeartbeat("reading")
+    reporter.startHeartbeat("encoding")
+    reporter.stopHeartbeat()
+
+    expect(callbacks).toHaveLength(2)
+    expect(stopped).toEqual([0, 1])
+  })
+
+  test("the default interval is the inactivity-safe one, not something shorter", () => {
+    const frames: ProgressFrame[] = []
+    let now = 0
+    const reporter = createProgressReporter({
+      emit: (frame) => frames.push(frame),
+      now: () => now,
+    })
+    reporter.tick("reading", 1)
+    now += PROGRESS_INTERVAL_MS - 1
+    reporter.tick("reading", 2)
+    now += 1
+    reporter.tick("reading", 3)
+
+    expect(PROGRESS_INTERVAL_MS).toBe(3_000)
+    expect(frames).toEqual([
+      { completed: 1, message: "reading" },
+      { completed: 3, message: "reading" },
+    ])
+  })
+
+  test("the default heartbeat repeats instead of firing once", async () => {
+    const frames: ProgressFrame[] = []
+    const reporter = createProgressReporter({
+      emit: (frame) => frames.push(frame),
+      intervalMs: 1,
+    })
+    reporter.startHeartbeat("reading")
+    await new Promise((resolve) => setTimeout(resolve, 40))
+    reporter.stopHeartbeat()
+    const afterStop = frames.length
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    // One frame is the immediate tick; a repeating timer adds several more,
+    // a one-shot timer adds exactly one.
+    expect(frames.length).toBeGreaterThan(2)
+    // And stopping really stops it.
+    expect(frames).toHaveLength(afterStop)
   })
 })

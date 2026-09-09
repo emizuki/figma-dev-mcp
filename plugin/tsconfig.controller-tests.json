@@ -1,0 +1,23 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "tsBuildInfoFile": "./node_modules/.cache/tsconfig.controller-tests.tsbuildinfo",
+    "skipLibCheck": true,
+    "lib": ["ES2022"],
+    "types": ["bun", "@figma/plugin-typings"]
+  },
+  "include": [
+    "src/main/code.test.ts",
+    "src/main/**/*.ts",
+    "src/read/**/*.ts",
+    "src/shared/**/*.ts"
+  ],
+  "exclude": [
+    "src/main/dispatch.test.ts",
+    "src/main/environment.typecheck.ts",
+    "src/main/progress.test.ts",
+    "src/read/**/*.test.ts",
+    "src/read/figma-api-conformance.ts"
+  ]
+}

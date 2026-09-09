@@ -6,7 +6,12 @@ import {
   MAX_RASTER_PIXELS,
   MAX_RASTER_SIDE,
 } from "../shared/limits"
-import { encodeValidatedRaster, validateEmbeddedImageData } from "./raster"
+import {
+  decodeBase64,
+  encodeBase64,
+  encodeValidatedRaster,
+  validateEmbeddedImageData,
+} from "./raster"
 
 function crc32(bytes: Uint8Array): number {
   let crc = 0xffffffff
@@ -180,6 +185,149 @@ describe("raster validation", () => {
     webp.set([0x57, 0x45, 0x42, 0x50], 8)
     expect(validateEmbeddedImageData(webp, "image/webp")).toBe(true)
     expect(validateEmbeddedImageData(pngWithSize(1, 1), "image/webp")).toBe(
+      false,
+    )
+  })
+})
+
+describe("raster acceptance", () => {
+  test("base64 encoding uses the whole alphabet and both padding lengths", () => {
+    // 62 and 63 are the two characters a hand-written table gets wrong, and
+    // nothing encoded them before: 0xfb 0xef 0xbe is four sextets of 62, and
+    // 0xff 0xff 0xff is four of 63.
+    expect(encodeBase64(Uint8Array.of(0xfb, 0xef, 0xbe))).toBe("++++")
+    expect(encodeBase64(Uint8Array.of(0xff, 0xff, 0xff))).toBe("////")
+    expect(encodeBase64(Uint8Array.of(0x4d, 0x61, 0x6e))).toBe("TWFu")
+    // One trailing byte pads with two "=", two trailing bytes with one.
+    expect(encodeBase64(Uint8Array.of(0x4d))).toBe("TQ==")
+    expect(encodeBase64(Uint8Array.of(0x4d, 0x61))).toBe("TWE=")
+    expect(encodeBase64(new Uint8Array())).toBe("")
+  })
+
+  test("base64 decoding reverses that, skipping whitespace and honouring padding", () => {
+    expect(decodeBase64("++++")).toEqual(Uint8Array.of(0xfb, 0xef, 0xbe))
+    expect(decodeBase64("////")).toEqual(Uint8Array.of(0xff, 0xff, 0xff))
+    expect(decodeBase64("TQ==")).toEqual(Uint8Array.of(0x4d))
+    expect(decodeBase64("TWE=")).toEqual(Uint8Array.of(0x4d, 0x61))
+    // Whitespace is dropped before the quartets are counted, so a payload
+    // wrapped across lines still decodes to the same bytes.
+    expect(decodeBase64("TW\nFu\t TWFu\r")).toEqual(
+      Uint8Array.of(0x4d, 0x61, 0x6e, 0x4d, 0x61, 0x6e),
+    )
+    for (const sample of [
+      Uint8Array.of(0x00),
+      Uint8Array.of(0x00, 0xff),
+      Uint8Array.of(0x01, 0x02, 0x03, 0x04, 0x05),
+    ]) {
+      expect(decodeBase64(encodeBase64(sample))).toEqual(sample)
+    }
+  })
+
+  test("a side exactly at the ceiling is accepted, in both dimensions", () => {
+    expect(
+      encodeValidatedRaster(pngWithSize(MAX_RASTER_SIDE, 1), "png"),
+    ).toMatchObject({ ok: true, width: MAX_RASTER_SIDE, height: 1 })
+    expect(
+      encodeValidatedRaster(pngWithSize(1, MAX_RASTER_SIDE), "png"),
+    ).toMatchObject({ ok: true, width: 1, height: MAX_RASTER_SIDE })
+  })
+
+  test("an embedded image exactly at the decoded-byte ceiling is still accepted", () => {
+    const atLimit = pngWithSize(
+      1,
+      1,
+      MAX_RASTER_DECODED_BYTES - pngWithSize(1, 1).byteLength,
+    )
+    expect(atLimit.byteLength).toBe(MAX_RASTER_DECODED_BYTES)
+    expect(validateEmbeddedImageData(atLimit, "image/png")).toBe(true)
+    expect(validateEmbeddedImageData(new Uint8Array(), "image/png")).toBe(false)
+  })
+
+  test("image/jpg is accepted as its own spelling of the JPEG media type", () => {
+    expect(validateEmbeddedImageData(jpegWithSize(2, 2), "image/jpg")).toBe(
+      true,
+    )
+    expect(validateEmbeddedImageData(pngWithSize(2, 2), "image/jpg")).toBe(
+      false,
+    )
+  })
+
+  test("JPEG dimensions are read past skippable segments, from every SOF marker", () => {
+    // Restart and TEM markers carry no length; an APP0 segment does and must
+    // be stepped over by exactly its own length. Every start-of-frame marker
+    // in the four accepted ranges names the same 10x6 frame.
+    const markers = [
+      0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce,
+      0xcf,
+    ]
+    let checked = 0
+    for (const marker of markers) {
+      const bytes = Uint8Array.from([
+        0xff,
+        0xd8,
+        0xff,
+        0x01,
+        0xff,
+        0xd0,
+        0xff,
+        0xe0,
+        0x00,
+        0x06,
+        0x4a,
+        0x46,
+        0x49,
+        0x46,
+        0xff,
+        marker,
+        0x00,
+        0x0b,
+        0x08,
+        0x00,
+        0x06,
+        0x00,
+        0x0a,
+        0x01,
+        0x01,
+        0x11,
+        0x00,
+        0xff,
+        0xd9,
+      ])
+      expect({
+        marker,
+        result: encodeValidatedRaster(bytes, "jpeg"),
+      }).toMatchObject({
+        marker,
+        result: { ok: true, format: "jpeg", width: 10, height: 6 },
+      })
+      checked += 1
+    }
+    expect(checked).toBe(markers.length)
+    expect(checked).toBe(13)
+  })
+
+  test("a PNG carrying nothing but its header is still measured", () => {
+    // 24 bytes exactly: magic, chunk length, "IHDR", width, height. The
+    // dimension reader needs no more than that.
+    const header = new Uint8Array(24)
+    header.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0)
+    header.set([0x00, 0x00, 0x00, 0x0d], 8)
+    header.set([0x49, 0x48, 0x44, 0x52], 12)
+    header.set([0x00, 0x00, 0x00, 0x20], 16)
+    header.set([0x00, 0x00, 0x00, 0x10], 20)
+
+    expect(encodeValidatedRaster(header, "png")).toMatchObject({
+      ok: true,
+      width: 32,
+      height: 16,
+    })
+    expect(encodeValidatedRaster(header.subarray(0, 23), "png").ok).toBe(false)
+  })
+
+  test("a four-byte JPEG is enough to recognise, though not to measure", () => {
+    const soi = Uint8Array.of(0xff, 0xd8, 0xff, 0xd9)
+    expect(validateEmbeddedImageData(soi, "image/jpeg")).toBe(true)
+    expect(validateEmbeddedImageData(soi.subarray(0, 3), "image/jpeg")).toBe(
       false,
     )
   })

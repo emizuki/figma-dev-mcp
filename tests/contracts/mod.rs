@@ -11,8 +11,8 @@ mod tools_catalog;
 use figma_dev_mcp_broker::PLUGIN_PROTOCOL_VERSION;
 use figma_dev_mcp_protocol::{
     domain::{
-        AxisAlign, ComponentValue, ConnectionId, CornerRadiusValue, DesignNode, EffectValue,
-        GetDesignContextResult, GetDevModeDataResult, GetMotionResult, GetNodesResult,
+        AxisAlign, BoundaryValueError, ComponentValue, ConnectionId, CornerRadiusValue, DesignNode,
+        EffectValue, GetDesignContextResult, GetDevModeDataResult, GetMotionResult, GetNodesResult,
         GetReactionsResult, GetSelectionResult, InstanceValue, ItemIdentifier, LayoutValue,
         LetterSpacingValue, LineHeightValue, MinimalNodeDetails, NodeForest, NodeId, NodeTypeList,
         NodeTypeName, NodesSelector, PageId, PagesSelector, PaintValue, RasterScale,
@@ -27,7 +27,9 @@ use figma_dev_mcp_protocol::{
         MAX_RASTER_DECODED_BYTES, MAX_RASTER_PIXELS, MAX_RASTER_SIDE, MAX_RETURNED_NODES,
         MAX_SVG_BYTES, MAX_TEXT_BYTES, MAX_VISITED_NODES, STALE_SESSION_SECS, TOTAL_TIMEOUT_SECS,
     },
-    rpc::{FrontendToLeader, LeaderToFrontend, RpcRequestId, decode_frame, encode_frame},
+    rpc::{
+        FrontendToLeader, LeaderToFrontend, RpcRequestId, decode_frame, encode_frame, read_frame,
+    },
     wire::{
         BrokerCall, BrokerToPlugin, Hello, PluginToBroker, ReadOperation, ReadResult, SelectionFlag,
     },
@@ -816,6 +818,48 @@ fn boundary_decoders_reject_oversized_inputs_before_dispatch() {
     assert!(serde_json::from_str::<SelectionFlag>("false").is_err());
 }
 
+/// The depth the schema publishes as the maximum must actually decode.
+///
+/// `depth` carries `#[schemars(range(max = 6))]`, so `depth: 6` is a value the
+/// published input schema tells every caller to expect to work. The decoder is
+/// a separate hand-written guard, and only its `>` keeps the two agreed. Turned
+/// into `>=` — the one-character slip this shape invites — the whole suite
+/// stayed green while every caller asking for the documented maximum got their
+/// request refused at the boundary before dispatch.
+///
+/// The over-limit half is asserted alongside so the accept half cannot pass by
+/// the fixture being malformed in some way that has nothing to do with depth.
+///
+/// The accept half round-trips rather than checking `is_ok`. `depth` is an
+/// `Option` skipped when absent, so a guard that quietly resolved the boundary
+/// value to `None` — accepting the request and then walking to the default
+/// depth instead of the one asked for — would satisfy a bare `is_ok` while
+/// discarding the very value under test.
+#[test]
+fn an_input_asking_for_exactly_the_maximum_depth_is_accepted() {
+    let request = |depth: u8| {
+        json!({
+            "type": "request", "requestId": "plugin-1", "deadlineMs": 100,
+            "target": {}, "operation": {"operation": "get_nodes", "input": {
+                "nodeIds": ["1:2"], "depth": depth
+            }}
+        })
+    };
+    let decoded: BrokerToPlugin = serde_json::from_value(request(MAX_DEPTH))
+        .expect("the maximum depth the input schema publishes must decode");
+    let reencoded = serde_json::to_value(&decoded).expect("a request re-encodes");
+    assert_eq!(
+        reencoded["operation"]["input"]["depth"],
+        json!(MAX_DEPTH),
+        "the accepted depth must survive the decode, not be silently resolved away: {reencoded}"
+    );
+    assert!(
+        serde_json::from_value::<BrokerToPlugin>(request(MAX_DEPTH + 1)).is_err(),
+        "depth {} must still be refused",
+        MAX_DEPTH + 1
+    );
+}
+
 #[test]
 fn screenshot_schema_and_decoder_exclude_raster_scale_from_svg() {
     let invalid = json!({
@@ -917,6 +961,96 @@ fn rpc_frames_are_length_prefixed_and_reject_oversize_before_body_read() {
         figma_dev_mcp_protocol::rpc::read_frame::<_, LeaderToFrontend>(&mut oversized).unwrap_err();
     assert_eq!(oversized.position(), 4);
     assert!(error.to_string().contains("exceeds"));
+}
+
+/// The ceiling is inclusive: a frame that declares exactly it must be read.
+///
+/// The sibling test above pins only the refusal at `MAX_ENVELOPE_BYTES + 1`.
+/// `validate_body_length` is one `>`; as `>=` the entire suite stayed green
+/// while a screenshot response sitting exactly on the documented envelope
+/// ceiling — the case the ceiling was chosen to admit — was refused before its
+/// body was ever read, dropping the frontend connection rather than one call.
+///
+/// The body here is deliberately short, so the length check is the only thing
+/// that can answer first: past it the frame fails for its truncated body, and
+/// the two failures are told apart by which one the error names.
+///
+/// That second failure is asserted positively, by the length it names, rather
+/// than only by the absence of "exceeds". The declared length is the accepted
+/// value here, and a guard that let the ceiling through but clamped it on the
+/// way past would satisfy a bare "did not refuse it for its size" while
+/// silently altering the number the rest of the read depends on.
+#[test]
+fn a_frame_declaring_exactly_the_envelope_ceiling_is_not_refused_for_its_size() {
+    let framed = |declared: usize| {
+        let mut frame = (declared as u32).to_be_bytes().to_vec();
+        frame.extend_from_slice(b"{}");
+        frame
+    };
+
+    let error = decode_frame::<LeaderToFrontend>(&framed(MAX_ENVELOPE_BYTES)).unwrap_err();
+    assert!(
+        !error.to_string().contains("exceeds"),
+        "a frame at exactly {MAX_ENVELOPE_BYTES} must get past the length check, got: {error}"
+    );
+    assert_eq!(
+        error.to_string(),
+        format!("frame contains 2 body bytes but declares {MAX_ENVELOPE_BYTES}"),
+        "the ceiling must survive the length check intact, not be clamped past it"
+    );
+
+    // The control: one byte more is refused for its size, so the assertion
+    // above is about the boundary rather than about `decode_frame` never
+    // raising this error at all.
+    let error = decode_frame::<LeaderToFrontend>(&framed(MAX_ENVELOPE_BYTES + 1)).unwrap_err();
+    assert!(
+        error.to_string().contains("exceeds"),
+        "a frame one byte over the ceiling must still be refused, got: {error}"
+    );
+}
+
+/// The same ceiling on the *wire* path, which is a second reader of the same
+/// guard and the one a real session runs on.
+///
+/// `decode_frame` takes a slice that already holds the whole frame, so a
+/// one-byte under-read there is invisible. `read_frame` pulls the body off a
+/// stream, and the bytes it leaves behind are the next frame's length prefix —
+/// so the same slip that is cosmetic in one path desynchronises the connection
+/// in the other, which drops the session rather than one call. Pinning one
+/// reader of a shared guard is not pinning the guard.
+///
+/// The frame is padded with trailing spaces, which JSON ignores, so the body
+/// reaches the ceiling without needing a payload that large. A second frame
+/// follows, and reading it is the assertion that matters: it is only reachable
+/// if the first read consumed exactly what it declared.
+#[test]
+fn the_wire_read_path_takes_a_ceiling_frame_and_consumes_exactly_it() {
+    let expected: FrontendToLeader = serde_json::from_value(json!({
+        "type": "cancel", "rpcRequestId": "rpc-1"
+    }))
+    .unwrap();
+
+    let mut body = serde_json::to_vec(&expected).unwrap();
+    assert!(body.len() < MAX_ENVELOPE_BYTES);
+    body.resize(MAX_ENVELOPE_BYTES, b' ');
+
+    let mut stream = (MAX_ENVELOPE_BYTES as u32).to_be_bytes().to_vec();
+    stream.extend_from_slice(&body);
+    stream.extend_from_slice(&encode_frame(&expected).unwrap());
+    let mut reader = Cursor::new(stream);
+
+    let first: FrontendToLeader =
+        read_frame(&mut reader).expect("a frame at exactly the envelope ceiling must be read");
+    assert_eq!(first, expected);
+    assert_eq!(
+        reader.position(),
+        (4 + MAX_ENVELOPE_BYTES) as u64,
+        "a ceiling frame must be consumed whole, or the next frame starts mid-prefix"
+    );
+
+    let second: FrontendToLeader =
+        read_frame(&mut reader).expect("the frame behind it must still be readable");
+    assert_eq!(second, expected);
 }
 
 #[test]
@@ -2174,6 +2308,84 @@ fn outbound_node_collections_reject_wide_roots_and_children_without_auxiliary_gr
     let mut too_wide_parent = leaf.clone();
     too_wide_parent.children = vec![leaf; MAX_RETURNED_NODES + 1];
     assert!(NodeForest::try_from(vec![too_wide_parent]).is_err());
+}
+
+/// The outbound builder must accept the depth the inbound decoder accepts.
+///
+/// `recursive_results_enforce_depth_and_global_returned_node_budgets` pins the
+/// *decode* side at exactly `MAX_DEPTH`. `NodeForest::try_from` is the separate
+/// path the broker builds an outbound result through, and it repeats the depth
+/// check in its own `validate_node`. Turning that one `>` into `>=` left the
+/// whole suite green — while every result walked to the documented maximum
+/// depth would have failed to build, turning a legal read into an error after
+/// the plugin had already done the work.
+///
+/// The over-limit half is asserted alongside so the accept half cannot pass by
+/// the fixture being shallower than it claims.
+///
+/// The accept half compares the whole forest against the fixture rather than
+/// checking `is_ok`, or any single number derived from it. `is_ok` passes on a
+/// builder that accepted the tree and pruned it; a depth count passes on one
+/// that kept the depth and set `childrenTruncated` on the deepest level, which
+/// tells the caller their tree was cut off when it was not. Only comparing what
+/// came back to what went in rules out both, and everything else of that shape.
+///
+/// The ceiling level holds two siblings, one reporting truncation and one not,
+/// because a fixture where every node at the ceiling agrees can only see the
+/// flag move one way. Of the two directions the cleared one is worse — it tells
+/// the caller the tree is complete when it was in fact cut, and the caller has
+/// no way to notice — but a fixture that pins only that direction is as partial
+/// as one that pins only the other. Both are reachable here.
+#[test]
+fn the_outbound_node_builder_accepts_a_tree_at_exactly_the_depth_ceiling() {
+    let fixture = {
+        // A walk stopped by the depth limit reports it; a branch that simply
+        // ended does not. Both sit at exactly MAX_DEPTH.
+        let mut cut_off = detail_node_fixture("minimal");
+        cut_off["childrenTruncated"] = json!(true);
+        cut_off["childrenTruncation"] = json!({
+            "reason": "depthLimit", "appliedDepth": MAX_DEPTH
+        });
+        let complete = detail_node_fixture("minimal");
+
+        let mut node = detail_node_fixture("minimal");
+        node["children"] = json!([cut_off, complete]);
+        for _ in 0..MAX_DEPTH - 1 {
+            let mut parent = detail_node_fixture("minimal");
+            parent["children"] = json!([node]);
+            node = parent;
+        }
+        node
+    };
+    let at_ceiling: DesignNode<MinimalNodeDetails> =
+        serde_json::from_value(fixture.clone()).expect("a tree at the depth ceiling decodes");
+    let forest = NodeForest::try_from(vec![at_ceiling])
+        .expect("the builder must accept the depth the decoder accepts");
+    assert_eq!(
+        serde_json::to_value(&forest).expect("a forest re-encodes"),
+        json!([fixture]),
+        "the accepted tree must come back exactly as it went in"
+    );
+
+    // One level deeper cannot be decoded — the decoder refuses it — so the
+    // control is assembled in Rust, which is the shape the builder guards.
+    let deepest: DesignNode<MinimalNodeDetails> =
+        serde_json::from_value(nested_detail_node("minimal", MAX_DEPTH)).unwrap();
+    let mut past_ceiling: DesignNode<MinimalNodeDetails> =
+        serde_json::from_value(detail_node_fixture("minimal")).unwrap();
+    past_ceiling.children = vec![deepest];
+    let error = NodeForest::try_from(vec![past_ceiling])
+        .expect_err("one level past the ceiling must still be refused");
+    assert!(
+        matches!(
+            error,
+            BoundaryValueError::TooDeep {
+                maximum: MAX_DEPTH,
+                ..
+            }
+        ),
+        "the refusal must name the depth ceiling, not some unrelated bound: {error}"
+    );
 }
 
 fn deserialize_counted_sequence<T>(

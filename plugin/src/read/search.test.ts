@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, test } from "bun:test"
 import { installFigma } from "../../tests/figma-harness"
 import { LocalCancellationController } from "../main/cancellation"
 import { PluginReadError } from "./navigation"
+import { byteLength } from "./serialize"
+import type { SearchNodesInput } from "../shared/protocol"
 import {
   compilePredicate,
   matchReasons,
@@ -575,5 +577,371 @@ describe("search_nodes handler", () => {
         limit: 50,
       }),
     ).rejects.toMatchObject({ code: "NODE_NOT_VISIBLE" })
+  })
+
+  test("a compiled predicate trims, dedupes and keeps the order it was given", () => {
+    expect(
+      compilePredicate({
+        query: "  Card  ",
+        types: [" FRAME ", "TEXT", "FRAME"],
+        match: "contains",
+      }),
+    ).toEqual({ match: "contains", query: "Card", types: ["FRAME", "TEXT"] })
+  })
+
+  test("a match summary carries identity, parent, children and bounds", async () => {
+    const child = {
+      id: "1:11",
+      name: "Child",
+      type: "TEXT",
+      visible: true,
+      children: [],
+    }
+    const unnamed = {
+      id: "",
+      name: "No id",
+      type: "TEXT",
+      visible: true,
+      children: [],
+    }
+    const card = {
+      id: "1:10",
+      name: "Card",
+      type: "FRAME",
+      visible: true,
+      absoluteBoundingBox: { x: 4, y: 8, width: 16, height: 32 },
+      children: [child, unnamed],
+    }
+    const root = page("0:2", "Current", [card])
+    ;(card as Record<string, unknown>).parent = root
+    installFigma({ currentPage: root })
+
+    const result = await searchNodes({
+      scope: { pageId: "0:2" },
+      query: "Card",
+      match: "contains",
+      limit: 10,
+    })
+
+    expect(result.matches).toEqual([
+      {
+        node: {
+          id: "1:10",
+          name: "Card",
+          nodeType: "FRAME",
+          parentId: "0:2",
+          childIds: ["1:11"],
+          bounds: { x: 4, y: 8, width: 16, height: 32 },
+        },
+        reasons: ["name"],
+      },
+    ])
+    expect(result.observation.completedAt).toMatch(/Z$/)
+  })
+
+  test("an explicitly named page is paged in, and a PAGE named by nodeId too", async () => {
+    const other = page("0:3", "Other", [
+      { id: "2:1", name: "Card", type: "FRAME", visible: true, children: [] },
+    ])
+    const harness = installFigma({
+      currentPage: page("0:2", "Current"),
+      pages: [page("0:2", "Current"), other],
+    })
+
+    await searchNodes({
+      scope: { pageId: "0:3" },
+      query: "Card",
+      match: "contains",
+      limit: 10,
+    })
+    expect(harness.loadedPages).toEqual(["0:3"])
+
+    await searchNodes({
+      scope: { nodeId: "0:3" },
+      query: "Card",
+      match: "contains",
+      limit: 10,
+    })
+    expect(harness.loadedPages).toEqual(["0:3", "0:3"])
+  })
+
+  test("a cursor is refused by a search with a different scope, types or match", async () => {
+    const nodes = [
+      {
+        id: "1:1",
+        name: "Card one",
+        type: "FRAME",
+        visible: true,
+        children: [],
+      },
+      {
+        id: "1:2",
+        name: "Card two",
+        type: "FRAME",
+        visible: true,
+        children: [],
+      },
+    ]
+    installFigma({ currentPage: page("0:2", "Current", nodes) })
+
+    const first = await searchNodes({
+      scope: { pageId: "0:2" },
+      query: "Card",
+      types: ["FRAME", "TEXT"],
+      match: "contains",
+      limit: 1,
+    })
+    const cursor = first.nextCursor as string
+    expect(cursor).toBeString()
+
+    const rejected = async (input: Partial<SearchNodesInput>) => {
+      const error = await searchNodes({
+        scope: { pageId: "0:2" },
+        query: "Card",
+        types: ["FRAME", "TEXT"],
+        match: "contains",
+        limit: 1,
+        cursor,
+        ...input,
+      } as SearchNodesInput).then(
+        () => undefined,
+        (caught: unknown) => caught,
+      )
+      expect(error).toBeInstanceOf(PluginReadError)
+      expect((error as PluginReadError).code).toBe("INVALID_CURSOR")
+    }
+
+    await rejected({ scope: { nodeId: "1:1" } })
+
+    // Another page holding the very same nodes: only the page id in the key
+    // tells the two searches apart, so dropping it would let this resume.
+    installFigma({
+      currentPage: page("0:2", "Current", nodes),
+      pages: [page("0:2", "Current", nodes), page("0:3", "Other", nodes)],
+    })
+    const otherPage = await searchNodes({
+      scope: { pageId: "0:3" },
+      query: "Card",
+      types: ["FRAME", "TEXT"],
+      match: "contains",
+      limit: 1,
+      cursor,
+    }).then(
+      () => undefined,
+      (caught: unknown) => caught,
+    )
+    expect(otherPage).toBeInstanceOf(PluginReadError)
+    expect((otherPage as PluginReadError).code).toBe("INVALID_CURSOR")
+    installFigma({ currentPage: page("0:2", "Current", nodes) })
+    await rejected({ query: "Cards" })
+    await rejected({ types: ["FRAME"] })
+    await rejected({ match: "exact" })
+
+    // Reordering the same type list is not a different search.
+    const resumed = await searchNodes({
+      scope: { pageId: "0:2" },
+      query: "Card",
+      types: ["TEXT", "FRAME"],
+      match: "contains",
+      limit: 1,
+      cursor,
+    })
+    expect(resumed.matches.map((match) => match.node.id)).toEqual(["1:2"])
+  })
+
+  test("a cursor is spelled in the base64url alphabet", async () => {
+    const nodes = [
+      {
+        id: "1:1",
+        name: "????????",
+        type: "FRAME",
+        visible: true,
+        children: [],
+      },
+      {
+        id: "1:2",
+        name: "????????",
+        type: "FRAME",
+        visible: true,
+        children: [],
+      },
+    ]
+    installFigma({ currentPage: page("0:2", "Current", nodes) })
+
+    const result = await searchNodes({
+      scope: { pageId: "0:2" },
+      query: "????????",
+      match: "contains",
+      limit: 1,
+    })
+
+    expect(result.nextCursor).toMatch(/^[A-Za-z0-9_-]+$/)
+  })
+
+  test("resuming descends the recorded path rather than restarting", async () => {
+    const leaf = (id: string) => ({
+      id,
+      name: "Card " + id,
+      type: "FRAME",
+      visible: true,
+      children: [],
+    })
+    const branch = {
+      id: "1:0",
+      name: "Branch",
+      type: "FRAME",
+      visible: true,
+      children: [leaf("1:1"), leaf("1:2"), leaf("1:3")],
+    }
+    installFigma({ currentPage: page("0:2", "Current", [branch]) })
+
+    const seen: string[] = []
+    let cursor: string | undefined
+    for (let round = 0; round < 3; round += 1) {
+      const result = await searchNodes({
+        scope: { pageId: "0:2" },
+        query: "Card",
+        match: "contains",
+        limit: 1,
+        ...(cursor === undefined ? {} : { cursor }),
+      })
+      seen.push(...result.matches.map((match) => match.node.id))
+      cursor = result.nextCursor
+    }
+    expect(seen).toEqual(["1:1", "1:2", "1:3"])
+  })
+
+  test("a parent cycle terminates without exhausting the visit budget", async () => {
+    const parent: Record<string, unknown> = {
+      id: "1:1",
+      name: "Card",
+      type: "FRAME",
+      visible: true,
+    }
+    const child: Record<string, unknown> = {
+      id: "1:2",
+      name: "Card child",
+      type: "FRAME",
+      visible: true,
+      children: [parent],
+    }
+    parent.children = [child]
+    installFigma({ currentPage: page("0:2", "Current", [parent]) })
+
+    const result = await searchNodes({
+      scope: { pageId: "0:2" },
+      query: "Card",
+      match: "contains",
+      limit: 10,
+    })
+
+    // The guard is on the ancestor path, not on "seen anywhere": the parent is
+    // matched a second time as its own grandchild, and only then are its
+    // children cut. Without the guard the walk would spin to the visit ceiling.
+    expect(result.matches.map((match) => match.node.id)).toEqual([
+      "1:1",
+      "1:2",
+      "1:1",
+    ])
+    expect(result.truncated).toBe(false)
+  })
+
+  test("the visit ceiling is inclusive and names what it stopped at", async () => {
+    const nodes = [
+      {
+        id: "1:1",
+        name: "Card one",
+        type: "FRAME",
+        visible: true,
+        children: [],
+      },
+      {
+        id: "1:2",
+        name: "Card two",
+        type: "FRAME",
+        visible: true,
+        children: [],
+      },
+    ]
+    installFigma({ currentPage: page("0:2", "Current", nodes) })
+
+    const exact = await searchNodes(
+      { scope: { pageId: "0:2" }, query: "Card", match: "contains", limit: 10 },
+      undefined,
+      { visitedNodes: 3 },
+    )
+    expect(exact.truncated).toBe(false)
+    expect(exact.matches.map((match) => match.node.id)).toEqual(["1:1", "1:2"])
+
+    const cut = await searchNodes(
+      { scope: { pageId: "0:2" }, query: "Card", match: "contains", limit: 10 },
+      undefined,
+      { visitedNodes: 2 },
+    )
+    expect(cut.truncated).toBe(true)
+    expect(cut.truncation).toEqual({ reason: "nodeLimit", visitedNodes: 2 })
+  })
+
+  test("the byte ceiling counts every emitted match and reports the total", async () => {
+    const nodes = [
+      {
+        id: "1:1",
+        name: "Card one",
+        type: "FRAME",
+        visible: true,
+        children: [],
+      },
+      {
+        id: "1:2",
+        name: "Card two",
+        type: "FRAME",
+        visible: true,
+        children: [],
+      },
+    ]
+    installFigma({ currentPage: page("0:2", "Current", nodes) })
+    const first = {
+      node: { id: "1:1", name: "Card one", nodeType: "FRAME" },
+      reasons: ["name"],
+    }
+    const second = {
+      node: { id: "1:2", name: "Card two", nodeType: "FRAME" },
+      reasons: ["name"],
+    }
+    const budget = byteLength(first) + byteLength(second) - 1
+
+    const result = await searchNodes(
+      { scope: { pageId: "0:2" }, query: "Card", match: "contains", limit: 10 },
+      undefined,
+      { encodedBytes: budget },
+    )
+
+    expect(result.matches).toEqual([first])
+    expect(result.truncated).toBe(true)
+    expect(result.truncation).toEqual({
+      reason: "byteLimit",
+      encodedBytes: byteLength(first) + byteLength(second),
+    })
+  })
+
+  // The scope resolves to nothing, so the search walk — whose own poll would
+  // otherwise notice — is never entered: without this check the read answers
+  // PAGE_NOT_FOUND to a caller who cancelled.
+  test("resolving a search scope checks cancellation before it can fail", async () => {
+    const cancellation = new LocalCancellationController()
+    installFigma({ currentPage: page("0:2", "Current") })
+    cancellation.abort()
+
+    await expect(
+      searchNodes(
+        {
+          scope: { pageId: "0:9" },
+          query: "Card",
+          match: "contains",
+          limit: 10,
+        },
+        cancellation.signal,
+      ),
+    ).rejects.toThrow("Operation cancelled")
   })
 })

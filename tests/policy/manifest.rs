@@ -64,7 +64,7 @@ fn manifest_is_the_exact_read_only_loopback_surface() {
 
 #[test]
 fn plugin_contexts_keep_network_and_figma_apis_separate() {
-    let root = project_root().join("plugin/src");
+    let root = crate::read_only::plugin_source_root();
     let main = production_typescript(root.join("main"));
     let ui = production_typescript(root.join("ui"));
     assert!(
@@ -105,7 +105,7 @@ fn bundle_policy_requires_both_artifacts() {
 
 #[test]
 fn production_dispatch_is_closed_and_removed_operations_stay_absent() {
-    let source = production_typescript(project_root().join("plugin/src"));
+    let source = production_typescript(crate::read_only::plugin_source_root());
     for forbidden in [
         "get_css",
         "get_tokens",
@@ -124,4 +124,104 @@ fn production_dispatch_is_closed_and_removed_operations_stay_absent() {
     // Bundle scans live in plugin/tests/policy/bundle.test.ts so this crate
     // stays green from a clean source checkout without plugin/dist.
     let _ = read_plugin_bundles;
+}
+
+/// The two context walks reach real source, and the separation predicate they
+/// apply still fires.
+///
+/// `plugin_contexts_keep_network_and_figma_apis_separate` asserts the
+/// controller has no `WebSocket` and the iframe has no `figma.`; both are
+/// `!contains`, and both are true of the empty string. Pointing either walk at
+/// an empty directory left the policy suite at 31 passed / 0 failed. So did
+/// pointing `production_dispatch_is_closed_and_removed_operations_stay_absent`'s
+/// `plugin/src` walk at one.
+///
+/// The control is the rule read the other way round. `WebSocket` is what the
+/// transport *is*, and `figma.` is what the controller *is* — so asserting each
+/// where it belongs proves both that the walk opened files and that the same
+/// substring search that reports "absent" over there can report "present" over
+/// here. It cannot rot into a branch that always passes.
+///
+/// **Which mutations this catches, and why the root is shared.** Two different
+/// emptyings reach these scans and they are not the same mutation:
+///
+/// - **Walk root redirected.** Caught, but only because both scans and this
+///   control read one `plugin_source_root()`. When each computed its own root,
+///   redirecting the scans' root left this control walking the real tree and
+///   reporting success over scans that had read nothing — measured at
+///   41 passed / 0 failed. Sharing the root is what closed it.
+/// - **Filter narrowed.** Caught: this module's own `production_typescript`
+///   filter no longer matching `.ts` empties `main` and `ui`, and the
+///   `WebSocket`/`figma.` assertions fire.
+#[test]
+fn the_plugin_context_walks_reach_real_source_and_the_separation_predicate_fires() {
+    let root = project_root();
+    let source_root = crate::read_only::plugin_source_root();
+    let main = production_typescript(source_root.join("main"));
+    let ui = production_typescript(source_root.join("ui"));
+
+    let main_paths =
+        crate::read_only::production_typescript_paths(&root, &source_root.join("main"));
+    let ui_paths = crate::read_only::production_typescript_paths(&root, &source_root.join("ui"));
+    assert!(
+        main_paths
+            .iter()
+            .any(|path| path == "plugin/src/main/dispatch.ts"),
+        "the controller walk no longer reaches plugin/src/main/dispatch.ts: {main_paths:?}"
+    );
+    assert!(
+        ui_paths
+            .iter()
+            .any(|path| path == "plugin/src/ui/socket.ts"),
+        "the transport walk no longer reaches plugin/src/ui/socket.ts: {ui_paths:?}"
+    );
+
+    assert!(
+        ui.contains("WebSocket"),
+        "the iframe transport no longer spells WebSocket, so the assertion that \
+         the controller does not spell it is being made over a walk that may \
+         have read nothing at all"
+    );
+    assert!(
+        main.contains("figma."),
+        "the controller no longer touches the Figma API, so the assertion that \
+         the iframe does not touch it proves nothing about either walk"
+    );
+
+    // The third walk, the one behind the dispatch-closure scan.
+    let all = crate::read_only::production_typescript_paths(&root, &source_root);
+    assert!(
+        all.len() >= crate::read_only::PRODUCTION_SOURCE_FILE_FLOOR,
+        "the plugin/src walk opened {} production files, fewer than the {} this \
+         sweep measured; every forbidden surface is absent from nothing",
+        all.len(),
+        crate::read_only::PRODUCTION_SOURCE_FILE_FLOOR
+    );
+    for anchor in crate::read_only::PRODUCTION_SOURCE_ANCHORS {
+        assert!(
+            all.iter().any(|path| path == anchor),
+            "the plugin/src walk no longer reaches {anchor}"
+        );
+    }
+    // The dispatch table itself, read from the file that holds it rather than
+    // looked for anywhere in the tree: `get_metadata` and `get_screenshot`
+    // appear in the read handlers too, so a whole-tree `contains` for them is
+    // green with the dispatcher deleted — which it was, under the mutation that
+    // reduced `dispatch.ts` to `export {}`. Two assertions, because they answer
+    // two different questions.
+    let dispatch = fs::read_to_string(source_root.join("main/dispatch.ts"))
+        .expect("the read dispatcher source is readable");
+    assert!(
+        dispatch.contains("get_metadata") && dispatch.contains("get_screenshot"),
+        "plugin/src/main/dispatch.ts no longer names the operations it \
+         dispatches, so a scan for `handlers[` and `eval(` that expects to find \
+         the dispatcher is not a closed-dispatch proof"
+    );
+    let source = production_typescript(source_root.clone());
+    assert!(
+        source.contains(&dispatch),
+        "the plugin/src walk's text does not contain plugin/src/main/dispatch.ts, \
+         so the dispatch-closure scan is being made over source that excludes \
+         the dispatcher"
+    );
 }
