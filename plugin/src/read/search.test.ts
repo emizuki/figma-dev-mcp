@@ -923,4 +923,25 @@ describe("search_nodes handler", () => {
       encodedBytes: byteLength(first) + byteLength(second),
     })
   })
+
+  // The scope resolves to nothing, so the search walk — whose own poll would
+  // otherwise notice — is never entered: without this check the read answers
+  // PAGE_NOT_FOUND to a caller who cancelled.
+  test("resolving a search scope checks cancellation before it can fail", async () => {
+    const cancellation = new LocalCancellationController()
+    installFigma({ currentPage: page("0:2", "Current") })
+    cancellation.abort()
+
+    await expect(
+      searchNodes(
+        {
+          scope: { pageId: "0:9" },
+          query: "Card",
+          match: "contains",
+          limit: 10,
+        },
+        cancellation.signal,
+      ),
+    ).rejects.toThrow("Operation cancelled")
+  })
 })

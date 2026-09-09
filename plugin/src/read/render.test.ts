@@ -1545,4 +1545,41 @@ describe("get_screenshot export mechanics", () => {
     ).rejects.toBeInstanceOf(LocalCancellationError)
     expect(harness.lookedUp).toEqual([])
   })
+
+  // `figma.getNodeByIdAsync` is read twice — once in the pre-flight, once per
+  // item — so a host that stops offering it between the two reads reaches the
+  // per-item arm the pre-flight is supposed to make unreachable. Under
+  // `documentAccess: dynamic-page` a host that changes under you is the
+  // premise, not a contrivance.
+  test("an id lookup that vanishes after the pre-flight fails that item", async () => {
+    let reads = 0
+    const node = exportNode("1:2", async () => new Uint8Array([1]))
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [] },
+      currentPage: page("0:1", "Page 1"),
+      editorType: "dev",
+      get getNodeByIdAsync() {
+        reads += 1
+        return reads === 1 ? async () => node : undefined
+      },
+    }
+
+    const result = await getScreenshot(
+      { format: "png", selector: { nodeId: "1:2" } },
+      undefined,
+      passthrough,
+    )
+
+    expect(reads).toBeGreaterThan(1)
+    expect(result.assets).toEqual([
+      {
+        status: "error",
+        error: {
+          code: "CAPABILITY_UNAVAILABLE",
+          message: CANONICAL_MESSAGES.CAPABILITY_UNAVAILABLE,
+          retryable: false,
+        },
+      },
+    ])
+  })
 })

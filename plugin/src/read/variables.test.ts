@@ -1581,4 +1581,59 @@ describe("get_variables", () => {
     expect(thrown.collections).toEqual([])
     expect(thrown.truncated).toBe(false)
   })
+
+  // Nothing polls between readDefinition's collection lookup and the alias
+  // hop's variable lookup, so an abort raised on the mode entry in between is
+  // seen by that lookup alone: without it the read returns a resolved alias to
+  // a caller who cancelled.
+  test("a variable lookup checks cancellation before it starts", async () => {
+    const cancellation = new LocalCancellationController()
+    const values: Record<string, unknown> = {}
+    Object.defineProperty(values, "M:default", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        cancellation.abort()
+        return { type: "VARIABLE_ALIAS", id: "V:ink" }
+      },
+    })
+    installFigma({
+      pageChildren: [bound("1:1", ["V:alias"])],
+      collections: [
+        collection({
+          id: "C:1",
+          name: "One",
+          modes: [{ modeId: "M:default", name: "Default" }],
+        }),
+      ],
+      variables: [
+        {
+          id: "V:alias",
+          name: "alias",
+          variableCollectionId: "C:1",
+          valuesByMode: values,
+          scopes: [],
+          codeSyntax: {},
+        },
+      ],
+      byId: new Map<string, unknown>([
+        [
+          "V:ink",
+          variable({
+            id: "V:ink",
+            name: "ink",
+            collectionId: "C:1",
+            valuesByMode: { "M:default": "resolved" },
+          }),
+        ],
+      ]),
+    })
+
+    await expect(
+      getVariables(
+        { selector: { nodeId: "1:1" }, resolveAliases: true },
+        cancellation.signal,
+      ),
+    ).rejects.toThrow("Operation cancelled")
+  })
 })
