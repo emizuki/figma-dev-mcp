@@ -17,6 +17,26 @@ Verdicts:
 - **not applicable** — the mutation does not compile (the type system already
   forbids it), or the refusal has no meaningful opposite.
 
+**One rule, everywhere.** `not applicable` means only what the line above says.
+A mutation that compiles, runs and leaves the suite green is a **gap**, whatever
+the reason it stayed green; a gap for which no test was added stays **open**, and
+the reason is given in that section's prose as a fact about the *production
+code*, never as a claim about what a test could do (Ruling 21). Fourteen rows
+once carried `not applicable` under a second, unstated rule — "no input can tell
+this mutation apart" — and have been reclassified: **three to `covered`**, in
+`tests/policy`, once a mutation was found on the production constant rather than
+on the test's own literal; and **eleven to `gap`, open**, in `plugin ui and main`.
+**No row in this file carries `not applicable`**, so the verdict survives as a
+definition and not as a bucket.
+
+**Tense.** A sentence here saying a mutation "leaves the suite green" records
+what that mutation measured, against the baseline its own section states. Where
+the row was a **gap**, the test named in its last column now catches it, and the
+sentence is a description of the tree before this sweep — not a claim about the
+tree it leaves behind. Three passages that read the other way were corrected in
+the final round; every remaining production-change recommendation was re-probed
+against the finished tree.
+
 Citing code: name the test and quote its assertion message, or name the
 production function — a `file.rs:NNN` is the one claim in this record no
 mutation checks, and a line number into a test file is worse still, because
@@ -26,19 +46,34 @@ the name does not; every one that survives has been checked against the tree.
 
 ## Scope
 
-Enumerated by the commands in `docs/superpowers/plans/2026-09-07-acceptance-sweep.md`.
-Counts are regex-dependent and are a starting point, not an authority.
+Enumerated by the Step-1 commands in
+`docs/superpowers/plans/2026-09-07-acceptance-sweep.md`, **measured at
+`85960df`** — the commit this branch starts from, before any of its tests
+existed. Each figure counts *test-function names*, not accept paths: a Rust
+`fn` line or a plugin `test(`/`it(` line whose name matches the refusal regex,
+minus (**refusal-only**) or intersected with (**already paired**) the
+acceptance regex. Counts are regex-dependent and are a starting point, not an
+authority — the row counts in the sections below come from the production code,
+not from here.
 
-| Area | refusal-only | already paired |
-|---|---|---|
-| tests/contracts | 15 | 11 |
-| tests/integration | 16 | 4 |
-| tests/policy | 8 | 0 |
-| crates | 5 | 1 |
-| plugin/src/read | 72 | — |
-| plugin/src/shared | 11 | — |
-| plugin/src/main | 5 | — |
-| plugin/src/ui | 24 | — |
+Re-running the same commands on the **finished tree** gives higher figures in
+five of the eight rows, because the sweep's own ~170 added tests match the
+refusal regex too. Both columns are given so the table is checkable rather than
+merely stated; every figure below was re-derived by running those commands
+against each tree.
+
+| Area | refusal-only at `85960df` | already paired at `85960df` | refusal-only, finished tree |
+|---|---|---|---|
+| tests/contracts | 15 | 11 | 16 |
+| tests/integration | 16 | 4 | 16 |
+| tests/policy | 8 | 0 | 9 |
+| crates | 5 | 1 | 5 |
+| plugin/src/read | 72 | — | 93 |
+| plugin/src/shared | 11 | — | 11 |
+| plugin/src/main | 5 | — | 10 |
+| plugin/src/ui | 24 | — | 28 |
+
+(`already paired` is unchanged in all four Rust areas: 11, 4, 0, 1.)
 
 ## tests/contracts and crates/protocol
 
@@ -160,6 +195,50 @@ Two are worth ruling on first:
 - **`deferred.rs` is not a pair at all.** It holds a third, independent
   implementation of the envelope ceiling that `validate_body_length` knows
   nothing about, and nothing in the suite touches any of its three checks.
+  Re-probed against the finished tree: turning `insert`'s
+  `next > MAX_ENVELOPE_BYTES` into `>=` still leaves the workspace at
+  **279 / 0**.
+
+### A real bug: `deferred.rs`'s two implementations of one ceiling are a byte apart
+
+Raised, **deliberately not fixed** — this sweep adds tests and does not change
+production code. It is written down here because the coverage gap above is the
+reason nobody would notice it, and because a bug recorded only outside the
+repository is a bug nobody finds after merge.
+
+`DeferredObject` counts the same object twice, and the two counts disagree by
+exactly one byte.
+
+- **`insert` estimates.** It starts at `2` (for `{}`) and adds
+  `name.len() + 4 + value.len()` per field. For *n* fields that is
+  `2 + 4n + Σname + Σvalue`.
+- **`decode` encodes.** It writes `{`, then per field `"` + name + `":` + value,
+  a `,` before every field but the first, then `}` — which is
+  `2 + 4n − 1 + Σname + Σvalue`.
+
+**The estimate over-counts the real encoding by exactly 1 byte for every field
+count ≥ 1** (0 for the empty object). Measured rather than reasoned: simulating
+both formulas for n = 1…5 gives a delta of 1 every time — estimate
+17/32/47/62/77 against actual 16/31/46/61/76.
+
+Two consequences, both live:
+
+1. **The inclusive ceiling behaves exclusively.** `insert` refuses when
+   `estimate > MAX_ENVELOPE_BYTES`, which is exactly `actual ≥
+   MAX_ENVELOPE_BYTES`. A deferred object encoding to *precisely*
+   `MAX_ENVELOPE_BYTES` is refused. That is this record's single most common
+   finding class, in production rather than in a test.
+2. **`decode`'s own guard is unreachable.** Having passed `insert`, the buffer
+   `decode` builds is at most `MAX_ENVELOPE_BYTES − 1`, so
+   `encoded.len() > MAX_ENVELOPE_BYTES` never fires. Its `>` / `>=` distinction
+   is invisible from outside for that reason, not because the ceiling is
+   untested.
+
+Nothing in the suite observes any of this: mutating all three guards to `>=`
+leaves the workspace green, which is the row above. A fix belongs in its own
+change — either make `insert` account `name.len() + 3` for the first field and
+`+ 4` thereafter, or drop the estimate and measure the encoded buffer once —
+and it needs the accept-side test the row above already names as missing.
 
 ## plugin shared/validation.ts and shared/result-validation.ts
 
@@ -516,10 +595,14 @@ than one place:
 - `handle_incoming`'s text arm dispatches four accepted plugin frame kinds —
   progress, response, error, pong. Three are pinned. The **error** frame is
   not, and the test that looks like it pins it passes for the wrong reason.
-- `Broker::shutdown` is two statements, and only the first is pinned — the
-  second can be deleted outright with the suite green, because the first
-  causes socket teardown to resolve the same pendings with the same error
-  code. This one was **not** reachable from this section's enumeration.
+- `Broker::shutdown` is two statements, and at the branch point only the
+  first was pinned: deleting the second left the suite green, because the
+  first causes socket teardown to resolve the same pendings with the same
+  error code. This one was **not** reachable from this section's enumeration.
+  It is pinned now — re-probed against the finished tree, deleting
+  `self.state.pending.lock().await.shutdown()` gives **278 / 1**, the one red
+  being `ws_origin::broker_shutdown_resolves_pending_calls_itself_not_by_socket_teardown`,
+  the test this row added.
 
 Turning either control-frame arm into `NonTextProtocolFrame` unregisters the
 plugin session on the next ping or pong a real client sends, and all 260 tests
@@ -641,7 +724,7 @@ this table is a plain `cargo test` run.
 | A **text** frame advances the last-seen the registry reports — the *third* property of an arm, and the one an MCP client reads | delete only `touch_socket` from the `Message::Text` arm, keeping `*last_seen = Instant::now()` | 268 / 0 | **gap** | `ws_origin::every_frame_kind_advances_the_last_seen_the_registry_reports` |
 | A **control pong** advances the last-seen the registry reports | the same `touch_socket`-only deletion in the `Message::Pong` arm | 268 / 0 | **gap** | the same test |
 | A **control ping** advances the last-seen the registry reports | the same `touch_socket`-only deletion in the `Message::Ping` arm | 268 / 0 | **gap** | the same test |
-| `Broker::shutdown` fails every outstanding call itself, rather than leaving them to socket teardown | delete `self.state.pending.lock().await.shutdown();` from `Broker::shutdown` (`lib.rs`) | 267 / 0 | **gap** — a whole production statement removable with the suite green; see below | `ws_origin::broker_shutdown_resolves_pending_calls_itself_not_by_socket_teardown` |
+| `Broker::shutdown` fails every outstanding call itself, rather than leaving them to socket teardown | delete `self.state.pending.lock().await.shutdown();` from `Broker::shutdown` (`lib.rs`) | 267 / 0 | **gap** — a whole production statement that was removable with the suite green when measured; see below | `ws_origin::broker_shutdown_resolves_pending_calls_itself_not_by_socket_teardown` |
 
 ### The three-armed liveness refresh, and the three properties per arm
 
@@ -849,15 +932,15 @@ Baseline before this task: **269 passed / 0 failed** across the workspace,
 **31 passed / 0 failed** in the policy binary. After: **279 / 0** and
 **41 / 0**.
 
-Rows: 42. Verdicts: 18 gap, 21 covered, 3 not applicable (18 + 21 + 3 = 42).
+Rows: 42. Verdicts: 18 gap, 24 covered, 0 not applicable (18 + 24 = 42).
 Tests added: 10 — nine answering the 18 gaps, plus one new scan that answers a
 question Task 4 left open rather than a row in this table.
 
 | Accept path | Mutation | Suite result | Verdict | Test added |
 |---|---|---|---|---|
-| `TOOL_NAMES` is exactly the fourteen, in order | none available: the assertion is an equality against a fourteen-element literal, which no emptying satisfies | — | not applicable | — |
-| `PROMPT_NAMES` is exactly the three, in order | the same shape | — | not applicable | — |
-| `extracted_tool_references` picks backticked snake-case verbs out of a sample | the same shape: an equality against a five-element literal set built from a literal string | — | not applicable | — |
+| `TOOL_NAMES` is exactly the fourteen, in order | rename two entries in the production constant (`protocol/src/lib.rs`), breaking both the equality and the sort | 270 / 9 | covered — `allowlists::mvp_tool_allowlist_is_sorted_closed_and_exact` among them | — |
+| `PROMPT_NAMES` is exactly the three, in order | the same, on the three-element constant | 265 / 14 | covered — `allowlists::mvp_prompt_allowlist_is_sorted_closed_and_exact` among them | — |
+| `extracted_tool_references` picks backticked snake-case verbs out of a sample | `extracted_tool_references` never inserts, so it always returns the empty set (`prompts/src/validation.rs`) | 276 / 3 | covered — `prompts::tool_reference_extraction_is_limited_to_backticked_snake_case_verbs` among them | — |
 | The plugin manifest is read and compared as JSON | replace the parsed value with `json!({})` | 30 / 1 | covered — `manifest_is_the_exact_read_only_loopback_surface` | — |
 | The Dev-Mode/inspect/dynamic-page/loopback fields are read from that manifest | the same replacement in the second reader | 30 / 1 | covered — `manifest_is_dev_mode_inspect_dynamic_page_loopback` | — |
 | `read_plugin_bundles` returns both artifacts when both exist | make it always return `Err` | 30 / 1 | covered — `bundle_policy_requires_both_artifacts` already ends in an `expect` on the Ok case, which is a positive control | — |
@@ -1141,14 +1224,22 @@ measured) are all floors. The failure being pinned is a scan that *shrinks*; a
 tree that grows is not a defect, and an equality there would be churn that
 teaches a reader to update the number without thinking about it.
 
-**Three rows are `not applicable` and the reason is uniform.** The two
+**Three rows were recorded `not applicable` and are now `covered`.** The two
 allowlist tests and the extraction test assert equality against a literal — a
 fourteen-element array, a three-element array, a five-element set built from a
-literal sample. There is no input to empty: the assertion carries its own
-expected value, so a scan that saw nothing would compare nothing against
-fourteen names and go red. That is the one shape in this suite that cannot pass
-vacuously, and it is worth naming as the shape the rest of the suite does not
-have.
+literal sample — so there is no *input* to empty, and the first pass concluded
+from that there was no mutation to run. That conclusion was aimed at the wrong
+side. The mutation belongs on the **production constant**, not on the test's
+own literal: renaming two entries of `TOOL_NAMES` in `protocol/src/lib.rs`
+takes the workspace to 270 / 9 with
+`allowlists::mvp_tool_allowlist_is_sorted_closed_and_exact` among the red;
+the same on `PROMPT_NAMES` gives 265 / 14 with its allowlist test red; and
+making `extracted_tool_references` never insert gives 276 / 3 with
+`prompts::tool_reference_extraction_is_limited_to_backticked_snake_case_verbs`
+red. All three are covered, and the observation the old note was reaching for
+survives without the verdict: an assertion that carries its own expected value
+is the one shape in this suite that cannot pass vacuously, which is why these
+three needed no new test.
 
 ## plugin ui and main
 
@@ -1167,10 +1258,13 @@ the committed diff adds tests only. Baseline before this task: **413 pass / 0
 fail / 1854 expect() calls / 26 files**. After: **476 pass / 0 fail / 2100
 expect() calls / 28 files**.
 
-**136 covered, 163 gaps, 11 not applicable.** 136 + 163 + 11 = 310. By half:
-`main` 94 rows — 35 covered, 52 gaps, 7 not applicable; `ui` 216 rows — 101
-covered, 111 gaps, 4 not applicable; 52 + 111 = 163. The new tests close **152**
-of the 163 gaps and 11 stay open; 152 + 11 = 163.
+**136 covered, 174 gaps, 0 not applicable.** 136 + 174 = 310. By half:
+`main` 94 rows — 35 covered, 59 gaps; `ui` 216 rows — 101 covered, 115 gaps;
+59 + 115 = 174. (Eleven of those gaps — 7 in `main`, 4 in `ui` — were recorded
+`not applicable` until the final round; see *Eleven mutations nothing here
+distinguishes* below.) The new tests close **152**
+of the 174 gaps and **22** stay open; 152 + 22 = 174. Eleven of the open
+twenty-two are the reclassified rows; the other eleven were open already.
 
 The Scope table's `plugin/src/ui` 24 and `plugin/src/main` 5 are right as the
 plan defines them, and the brief's own Step-1 command disagrees with them for a
@@ -1205,7 +1299,7 @@ tests project deliberately does not load, so it gets its own tsconfig project
 
 ### The relay's screenshot path had no acceptance coverage at all
 
-`ui/relay.ts` has 23 rows: **20 gaps**, 2 covered, 1 not applicable. The two
+`ui/relay.ts` has 23 rows: **21 gaps**, 2 covered. The two
 that are covered — `sendToController` posting inside a `pluginMessage`
 envelope, and `onControllerMessage` handing a parsed message to `receive` — are
 covered only incidentally, by `socket.test.ts` driving the socket through the
@@ -1290,21 +1384,36 @@ The mutation that reproduces the historical regression — replacing
 dispatch failing to settle, which is exactly the property. The row is `covered`
 on the strength of the second, not the first.
 
-What was *not* covered is the cancel arriving as a message. `registry.cancel`
-in `dispatchControllerMessage`'s `cancel` case could be deleted, and the arm
-could answer with an error envelope instead of `null`, with the suite green
-both times: the covering test reaches into the registry directly. The new
-`a cancel message aborts the request it names and answers nothing` sends the
-cancel the way the socket does.
+What was *not* covered is the cancel arriving as a message. When measured,
+`registry.cancel` in `dispatchControllerMessage`'s `cancel` case could be
+deleted, and the arm could answer with an error envelope instead of `null`,
+with the suite green both times: the covering test reached into the registry
+directly. The new `a cancel message aborts the request it names and answers
+nothing` sends the cancel the way the socket does, and it holds — re-probed
+against the finished tree, deleting `registry.cancel` gives **644 / 1**, the
+one red being that test.
 
-### `throwIfAbortedAtBatch` can be deleted outright
+### `throwIfAbortedAtBatch` was pinned by nothing
+
+**It is pinned now, and it must not be deleted.** An earlier draft of this
+section carried the heading "`throwIfAbortedAtBatch` can be deleted outright".
+That recommendation is **disproven** — see *What is left open* in the
+`plugin read` section, where `fonts.ts:230` turns out to be load-bearing: with
+that one call gone, `getFonts` returns a result to a caller who cancelled.
+Re-probed against the finished tree, emptying the helper's body gives
+**643 / 2**, the two red being this section's
+`the batch cancellation gate throws on a batch boundary and only there` and
+Task 7's `get_fonts > the walk visitor checks cancellation before it collects a
+node`. A reader acting on the old heading would delete a live cancellation gate
+and silently retire two tests. **No production change is recommended here.**
 
 `throwIfAbortedAtBatch(signal, index, batchSize)` is called from **fifteen
 sites** across `plugin/src/read` — `dev-mode.ts` ×1, `components.ts` ×2,
 `fonts.ts` ×1, `styles.ts` ×2, `motion.ts` ×1, `reactions.ts` ×1,
-`variables.ts` ×2, `serialize.ts` ×5. Emptying its body, so it never throws at
-any index, leaves the suite at **413 / 0**. Neither half is pinned, nor is the
-complementary property that it does *not* throw between boundaries.
+`variables.ts` ×2, `serialize.ts` ×5. When measured, emptying its body — so it
+never threw at any index — left the suite at **413 / 0**. Neither half was
+pinned, nor was the complementary property that it does *not* throw between
+boundaries.
 
 The ten tests whose names begin `checks cancellation` — seven of them named
 `checks cancellation between child batches of 100` — all stay green under that
@@ -1383,45 +1492,53 @@ it is how that test proves acceptance — but asserts only the status text, so
 deleting the pong send entirely leaves the suite green. The broker's liveness
 check would go unanswered and nothing would notice.
 
-### Eleven mutations no input can distinguish
+### Eleven mutations nothing here distinguishes
 
-Eleven rows are `not applicable`, and none is the "does not compile" case the
-vocabulary was written for: `bun run build` strips types, so a type-invalid
-mutation still bundles. They are mutations that no input can tell apart. Where
-the claim is that a branch is unreachable, it was checked by measurement rather
-than by reading — the branch was replaced with a `throw`, and the suite,
-including the new tests, stayed at 476 / 0, so nothing in it reaches the
-branch.
+**These eleven rows are `gap`s that stay open.** They were recorded
+`not applicable` for four rounds, and none is the "does not compile" case the
+vocabulary was written for — `bun run build` strips types, so a type-invalid
+mutation still bundles. They were filed under a second, unstated rule: *no input
+can tell this mutation apart*. That rule is retired. It is a negative claim of
+exactly the class the `plugin read` section examined **fourteen times and found
+wrong fourteen times**, and it was applied here to eleven rows that compile,
+run, and leave the suite green — which is the definition of a gap. Under
+Ruling 21 each is now a gap with no test, marked open, and what follows states
+what the *production code* does and claims nothing about what a test could
+reach.
 
-- `createProgressReporter` has **three defensive lines no caller can reach**,
-  each confirmed by a planted `throw`. `due()`'s
+Where a branch is described as unreached, that was measured rather than read:
+the branch was replaced with a `throw` and the suite, including the new tests,
+stayed at 476 / 0, so nothing **in the suite as it then stood** reaches it.
+
+- `createProgressReporter` has **three defensive lines no caller in this tree
+  reaches**, each measured with a planted `throw` rather than read. `due()`'s
   `!Number.isFinite(lastEmitAt)` clause never decides anything, because on the
   only tick where `lastEmitAt` is `NaN` the `lastPhase !== phase` clause is
   already true. The scheduled heartbeat's
   `if (lastPhase === undefined) lastPhase = phase` and `emitLatest`'s
-  `lastPhase ?? "reading"` are unreachable for the same reason:
+  `lastPhase ?? "reading"` are unreached for the same reason:
   `startHeartbeat` ticks before it schedules, and that tick always assigns
-  `lastPhase`. Worth reporting as dead code, not as coverage gaps.
+  `lastPhase`. Reported to whoever owns `progress.ts`; the three rows stay open
+  here.
 - `due()`'s `if (intervalMs <= 0) return true` is reached but decides nothing:
   the comparison after it, `now() - lastEmitAt >= intervalMs`, is true whenever
   `intervalMs <= 0` and the clock does not run backwards. Deleting the clause
   leaves the suite at 476 / 0 with the new `a non-positive interval emits every
   tick of the same phase` test in place.
-- `LocalCancellationSignal.abort()`'s `if (this.#aborted) return` is
-  unobservable: the first abort clears the listener set, and `addEventListener`
-  refuses to add to an aborted signal, so a second pass finds nothing to call.
+- `LocalCancellationSignal.abort()`'s `if (this.#aborted) return` guards a
+  second pass that has nothing to do: the first abort clears the listener set,
+  and `addEventListener` refuses to add to an aborted signal.
 - `code.ts`'s `inbound` returning the original string when `JSON.parse` throws,
-  and the `return` after `completeScreenshotValidation`, are unobservable from
-  outside: whatever those paths hand on, both `parseControllerMetadataRequest`
-  and `parseControllerBoundMessage` refuse it and the handler falls out
-  silently either way.
+  and the `return` after `completeScreenshotValidation`, hand on a value that
+  both `parseControllerMetadataRequest` and `parseControllerBoundMessage`
+  refuse, so the handler falls out silently either way.
 - `asBytes`'s `value instanceof Uint8Array` arm is subsumed by the
   `ArrayBuffer.isView(value)` arm two lines below, which handles a `Uint8Array`
   identically. Deleting the first arm alone leaves the suite green; deleting
   both turns three of the new relay tests red, which is what establishes that
   the view arm is doing the work.
-- `readUint32`'s big-endian assembly cannot be distinguished within the range
-  its caller admits. Shifting the first byte by 16 instead of 24 changes the
+- `readUint32`'s big-endian assembly agrees with the mutated one across the
+  range its caller admits. Shifting the first byte by 16 instead of 24 changes the
   value only when that byte is non-zero, and any such width or height is at
   least 65,536 — refused by `MAX_RASTER_SIDE` (4,096) with or without the
   mutation.
@@ -1504,8 +1621,12 @@ Recorded because a later reader will meet them and nothing else names them.
 
 ### What is left open
 
-Eleven gaps stay open, marked `— (open)` in the table. They are open for three
-kinds of reason, and the reason is the point rather than the count:
+Twenty-two gaps stay open, marked `— (open)` in the table: the eleven below,
+plus the eleven reclassified out of `not applicable` in the final round (see
+*Eleven mutations nothing here distinguishes*). All twenty-two are **not
+probed**. Each reason below is a fact about the production code; none of them
+claims a test could not reach the row — this area's sibling section examined
+fourteen such claims and found fourteen of them wrong.
 
 - **Doubly covered in the harness, so the mutation is invisible to it.** The
   socket's teardown calls `cancelGenerationRequests` and then `close()`, and
@@ -1525,14 +1646,12 @@ kinds of reason, and the reason is the point rather than the count:
   (`D12`). And two in `svg.ts` — preferring a DOM's own `localName` over
   `tagName`, and reading attribute names through `getAttributeNames()` rather
   than the `attributes` map (`SV28`, `SV29`) — where the two paths agree for
-  every DOM a real parser produces, so separating them would mean asserting
-  against a document no parser emits.
-- **A default only a slow test could distinguish.** `createProgressReporter`
+  every DOM a real parser produces, and no fixture here separates them.
+- **A default whose observable is three seconds away.** `createProgressReporter`
   falling back to `Date.now`: the mutation replaces it with `() => 0`, and the
-  only observable difference is a comparison against a 3,000 ms interval, so
-  separating them needs a real three-second wait. Attempted and abandoned
-  rather than declared impossible — the shape of the test is obvious and the
-  cost is a three-second suite. (`P24`.)
+  difference shows only in a comparison against a 3,000 ms interval. A test was
+  attempted and abandoned over the cost of a real three-second wait, not
+  because none was found. (`P24`.)
 
 ### The table
 
@@ -1582,7 +1701,7 @@ kinds of reason, and the reason is the point rather than the count:
 | a removed abort listener is not called | make `removeEventListener` never delete from the listener set | 413 / 0 | **gap** | `a removed abort listener is not called` |
 | `abort()` marks the signal aborted | delete `this.#aborted = true` | 397 / 16 | covered | — |
 | `abort()` calls every registered listener | replace `listener()` with `void listener` | 410 / 3 | covered | — |
-| a second `abort()` does not notify again | delete the `if (this.#aborted) return` guard | 413 / 0 | not applicable | — |
+| a second `abort()` does not notify again | delete the `if (this.#aborted) return` guard | 413 / 0 | **gap** | — *(open)* |
 | a listener that throws does not stop the ones after it | call `listener()` outside the `try` | 412 / 1 | covered | — |
 | `throwIfAborted()` throws once the signal is aborted | empty the `throwIfAborted` body | 399 / 14 | covered | — |
 | `throwIfAborted()` is silent while the signal is live | invert to `if (!this.#aborted) throw` | 409 / 4 | covered | — |
@@ -1610,9 +1729,9 @@ kinds of reason, and the reason is the point rather than the count:
 | a count at or above `U32_MAX` is clamped to it | delete the `value >= U32_MAX` clamp | 412 / 1 | covered | — |
 | a non-finite or non-positive count becomes `0` | delete the `!Number.isFinite(value) \|\| value <= 0` guard | 412 / 1 | covered | — |
 | a change of phase emits immediately | drop `lastPhase !== phase` from `due()` | 412 / 1 | covered | — |
-| the very first tick emits even inside the interval | drop `!Number.isFinite(lastEmitAt)` from `due()` | 413 / 0 | not applicable | — |
+| the very first tick emits even inside the interval | drop `!Number.isFinite(lastEmitAt)` from `due()` | 413 / 0 | **gap** | — *(open)* |
 | a tick after the interval has elapsed emits | return `false` from the elapsed-interval comparison | 412 / 1 | covered | — |
-| with a non-positive interval every tick emits | delete the `intervalMs <= 0` short-circuit | 413 / 0 | not applicable | — |
+| with a non-positive interval every tick emits | delete the `intervalMs <= 0` short-circuit | 413 / 0 | **gap** | — *(open)* |
 | a repeat tick inside the interval updates counts without emitting | delete `if (!due(phase)) return` | 411 / 2 | covered | — |
 | a frame carries `total` when the tick supplied one | delete `if (total !== undefined) frame.total = toU32(total)` | 410 / 3 | covered | — |
 | a tick without a total drops the previous one | keep the previous total when `nextTotal` is undefined | 413 / 0 | **gap** | `a tick without a total drops the total the previous tick carried` |
@@ -1622,11 +1741,11 @@ kinds of reason, and the reason is the point rather than the count:
 | `startHeartbeat` stops the timer a previous one left | delete `if (stopTimer !== undefined) stopTimer()` | 413 / 0 | **gap** | `restarting the heartbeat stops the timer the previous one left running` |
 | `startHeartbeat` schedules the repeat | never call `schedule(...)` | 412 / 1 | covered | — |
 | each heartbeat tick emits the latest frame | delete `emitLatest()` from the scheduled callback | 412 / 1 | covered | — |
-| a heartbeat with no phase yet adopts the one it was started with | delete `if (lastPhase === undefined) lastPhase = phase` | 413 / 0 | not applicable | — |
+| a heartbeat with no phase yet adopts the one it was started with | delete `if (lastPhase === undefined) lastPhase = phase` | 413 / 0 | **gap** | — *(open)* |
 | `stopHeartbeat` cancels the timer | delete `stopTimer?.()` | 412 / 1 | covered | — |
 | a reporter with no interval uses `PROGRESS_INTERVAL_MS` | default `intervalMs` to `1` | 413 / 0 | **gap** | `the default interval is the inactivity-safe one, not something shorter` |
 | the default heartbeat repeats rather than firing once | `setTimeout`/`clearTimeout` in place of `setInterval`/`clearInterval` | 413 / 0 | **gap** | `the default heartbeat repeats instead of firing once` |
-| a frame with no phase yet is labelled `reading` | default the frame message to `encoding` | 413 / 0 | not applicable | — |
+| a frame with no phase yet is labelled `reading` | default the frame message to `encoding` | 413 / 0 | **gap** | — *(open)* |
 | a reporter with no clock uses `Date.now` | default `now` to `() => 0` | 413 / 0 | **gap** | — *(open)* |
 
 **`plugin/src/main/code.ts`**
@@ -1634,10 +1753,10 @@ kinds of reason, and the reason is the point rather than the count:
 | Accept path | Mutation | Suite result | Verdict | Test added |
 |---|---|---|---|---|
 | a message delivered as a JSON string is parsed | return the string unparsed from `inbound` | 413 / 0 | **gap** | `accepts a readiness request in each transport shape the host uses` |
-| a string that is not JSON is passed on unchanged | return `null` from `inbound`'s catch | 413 / 0 | not applicable | — |
+| a string that is not JSON is passed on unchanged | return `null` from `inbound`'s catch | 413 / 0 | **gap** | — *(open)* |
 | a `{ pluginMessage }` envelope is unwrapped | return the envelope itself | 413 / 0 | **gap** | `accepts a readiness request in each transport shape the host uses` |
 | a plain object is passed through untouched | return `null` from `inbound`'s fall-through | 413 / 0 | **gap** | `answers a readiness request with the file's own identity`, `accepts a readiness request in each transport shape the host uses`, `dispatches a well-formed request and posts the response back` |
-| a settled screenshot validation ends the handler | drop the `return` after `completeScreenshotValidation` | 413 / 0 | not applicable | — |
+| a settled screenshot validation ends the handler | drop the `return` after `completeScreenshotValidation` | 413 / 0 | **gap** | — *(open)* |
 | a readiness request is answered with `controllerReady` | drop the `postReady(request.metadataRequestId)` call | 413 / 0 | **gap** | `answers a readiness request with the file's own identity`, `accepts a readiness request in each transport shape the host uses` |
 | a controller-bound message is dispatched | never call `dispatchControllerMessage` | 413 / 0 | **gap** | `dispatches a well-formed request and posts the response back` |
 | the dispatcher's answer is posted to the iframe | replace `figma.ui.postMessage(output)` with `void output` | 413 / 0 | **gap** | `dispatches a well-formed request and posts the response back` |
@@ -1666,7 +1785,7 @@ kinds of reason, and the reason is the point rather than the count:
 | an unsafe SVG asset carries the rule that fired | delete the `value.rejection = result.rejection` assignment | 413 / 0 | **gap** | `returns an SVG screenshot with its own source and safety verdict` |
 | an item declared `png` is encoded | narrow the format guard to `!== "jpeg"` | 413 / 0 | **gap** | `validates a PNG screenshot and answers with the encoded asset`, `accepts the export bytes in every shape the host can hand over` |
 | an item declared `jpeg` is encoded | narrow the format guard to `!== "png"` | 413 / 0 | **gap** | `validates a JPEG screenshot, which the PNG path cannot stand in for` |
-| export bytes arriving as a `Uint8Array` are taken | delete the `Uint8Array` arm of `asBytes` | 413 / 0 | not applicable | — |
+| export bytes arriving as a `Uint8Array` are taken | delete the `Uint8Array` arm of `asBytes` | 413 / 0 | **gap** | — *(open)* |
 | export bytes arriving as an `ArrayBuffer` are taken | delete the `ArrayBuffer` arm of `asBytes` | 413 / 0 | **gap** | `accepts the export bytes in every shape the host can hand over` |
 | export bytes arriving as a typed-array view are taken | delete the `ArrayBuffer.isView` arm of `asBytes` | 413 / 0 | **gap** | `accepts the export bytes in every shape the host can hand over` |
 | export bytes arriving as a plain number array are taken | return `null` before the array arm of `asBytes` | 413 / 0 | **gap** | `accepts the export bytes in every shape the host can hand over` |
@@ -1771,7 +1890,7 @@ kinds of reason, and the reason is the point rather than the count:
 | an embedded image exactly at `MAX_RASTER_DECODED_BYTES` is accepted | `>` becomes `>=` | 413 / 0 | **gap** | `an embedded image exactly at the decoded-byte ceiling is still accepted` |
 | a PNG's width is read from IHDR offset 16 | read from offset 17 | 411 / 2 | covered | — |
 | a PNG's height is read from IHDR offset 20 | read from offset 21 | 411 / 2 | covered | — |
-| a PNG dimension is assembled big-endian | shift the first byte by 16 instead of 24 | 413 / 0 | not applicable | — |
+| a PNG dimension is assembled big-endian | shift the first byte by 16 instead of 24 | 413 / 0 | **gap** | — *(open)* |
 | TEM and restart markers are stepped over | delete the standalone-marker `continue` | 413 / 0 | **gap** | `JPEG dimensions are read past skippable segments, from every SOF marker` |
 | start-of-frame markers 0xC0–0xC3 are measured | drop that range | 411 / 2 | covered | — |
 | start-of-frame markers 0xC5–0xC7 are measured | drop that range | 413 / 0 | **gap** | `JPEG dimensions are read past skippable segments, from every SOF marker` |
@@ -1798,7 +1917,7 @@ kinds of reason, and the reason is the point rather than the count:
 | the encoded result carries the measured dimensions | report `0` for both | 412 / 1 | covered | — |
 | the encoded result carries both byte counts | report `0` for both | 411 / 2 | covered | — |
 | the encoded result carries the base64 payload | report an empty payload | 412 / 1 | covered | — |
-| a buffer exactly as long as the magic is long enough | `<` becomes `<=` | 413 / 0 | not applicable | — |
+| a buffer exactly as long as the magic is long enough | `<` becomes `<=` | 413 / 0 | **gap** | — *(open)* |
 
 **`plugin/src/ui/css-syntax.ts`**
 
@@ -1885,7 +2004,7 @@ kinds of reason, and the reason is the point rather than the count:
 | a space is not stripped when normalising a URL | strip spaces too | 412 / 1 | covered | — |
 | a `//host` value counts as an active URL | drop the protocol-relative check | 413 / 0 | **gap** | `a scheme is a scheme only when it starts with a letter` |
 | a scheme must start with a letter, so `1:2` is not one | drop the leading-letter requirement | 413 / 0 | **gap** | `a scheme is a scheme only when it starts with a letter` |
-| the data: payload starts at the first comma after `data:` | start the search one character later | 413 / 0 | not applicable | — |
+| the data: payload starts at the first comma after `data:` | start the search one character later | 413 / 0 | **gap** | — *(open)* |
 | the `;base64` parameter is detected | never set the base64 flag | 410 / 3 | covered | — |
 | the media type is compared in lower case | keep the original casing | 412 / 1 | covered | — |
 | a `%XX` sequence decodes to its byte | keep the literal `%` | 413 / 0 | **gap** | `a percent-encoded data: URL is read as the same bytes as its base64 twin` |
@@ -1928,17 +2047,19 @@ as it stood when they were found (600 / 0, 615 / 0 or 632 / 0) rather than
 against 476 / 0. The split file says which.
 
 **On `not applicable`.** This section uses the file's stated definition and
-nothing wider: a row is `not applicable` only when the mutation does not compile
-or the refusal has no meaningful opposite. **No row here meets it**, so the
-column is empty for this area. An earlier draft used it for eleven rows of
-live-but-unread code — dead fields, a set member consulted after an earlier
-`return`, a context field no walker reads — and that was a second, unstated rule:
-structurally identical code elsewhere (the batch cancellation checks,
-`PASS_THROUGH` and `NORMAL` in `BLEND_MODES`) was recorded as a gap. A row no
-test was found for is now uniformly a **gap that stays open**, marked
+nothing wider, and that rule now governs the whole document (see *One rule,
+everywhere* at the top). **No row here meets it.** An earlier draft used it for
+eleven rows of live-but-unread code — dead fields, a set member consulted after
+an earlier `return`, a context field no walker reads — and that was a second,
+unstated rule: structurally identical code elsewhere (the batch cancellation
+checks, `PASS_THROUGH` and `NORMAL` in `BLEND_MODES`) was recorded as a gap. A
+row no test was found for is uniformly a **gap that stays open**, marked
 `not probed`, so the three-way split follows from one rule a reader can apply —
 and, as `fonts.ts:230` shows, from a rule that does not quietly retire a row
-before someone has aimed at it.
+before someone has aimed at it. The same repair was applied to the fourteen
+rows in `tests/policy` and `plugin ui and main` that still carried the second
+rule; that was the last thing this branch fixed, and it is the same lesson one
+level up — **a correction is only as complete as the sweep that applies it.**
 
 By file — rows, then covered / gap, then of the gaps closed / open:
 
