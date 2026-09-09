@@ -1020,4 +1020,37 @@ describe("get_components", () => {
       },
     ])
   })
+
+  test("the component loop stops reading nodes once the ceiling is reached", async () => {
+    // The ceiling is visible in the payload either way. What the `break` buys
+    // is that the third component is never read from the host: with a
+    // `continue` the loop walks on and serializes it, spending host getters on
+    // a definition that can no longer be returned.
+    const reads: string[] = []
+    const counted = (id: string, name: string) => {
+      const node = standaloneComponent(id, name)
+      Object.defineProperty(node, "documentationLinks", {
+        configurable: true,
+        enumerable: true,
+        get() {
+          reads.push(id)
+          return []
+        },
+      })
+      return node
+    }
+    installFigma({
+      currentPage: page("0:2", "Current", [
+        counted("3:1", "One"),
+        counted("3:2", "Two"),
+        counted("3:3", "Three"),
+      ]),
+    })
+
+    const result = await getComponents({}, undefined, { returnedNodes: 1 })
+
+    expect(result.components.map((item) => item.id)).toEqual(["3:1"])
+    expect(result.truncated).toBe(true)
+    expect(reads).toEqual(["3:1", "3:2"])
+  })
 })

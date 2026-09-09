@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test"
 
 import { FIGMA_MIXED, installFigma } from "../../tests/figma-harness"
 import { LocalCancellationController } from "../main/cancellation"
+import { bindProgress, createProgressReporter } from "../main/progress"
 import { MAX_INPUT_IDS } from "../shared/limits"
 import { FONT_SEGMENT_RANGE, getFonts } from "./fonts"
 import { byteLength } from "./serialize"
@@ -577,5 +578,28 @@ describe("get_fonts", () => {
     ])
     expect(result.truncated).toBe(true)
     expect(result.truncation).toEqual({ reason: "nodeLimit", visitedNodes: 3 })
+  })
+
+  test("the walk visitor checks cancellation before it collects a node", async () => {
+    const cancellation = new LocalCancellationController()
+    // The gate at the top of the visitor owns exactly one window: `walkNode`
+    // polls the signal, reports progress, then calls the visitor. A reporter
+    // that aborts on emit lands the abort inside that window, and the gate
+    // fires at index 0 because `0 % 100 === 0`.
+    bindProgress(
+      cancellation.signal,
+      createProgressReporter({
+        emit: () => cancellation.abort(),
+        intervalMs: 0,
+      }),
+    )
+    // Nothing polls the signal after the visitor on this fixture: with no
+    // catalog on the host `observedCatalog` returns before its own check, and
+    // a childless page collects no fonts, so the emission loop never runs.
+    installFigma({ currentPage: page("0:2", "Current"), omitCatalog: true })
+
+    await expect(getFonts({}, cancellation.signal)).rejects.toThrow(
+      "Operation cancelled",
+    )
   })
 })

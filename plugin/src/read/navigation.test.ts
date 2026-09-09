@@ -1927,4 +1927,102 @@ describe("what the navigation readers accept", () => {
     ).rejects.toBeInstanceOf(LocalCancellationError)
     expect(lookedUp).toEqual(["1:1"])
   })
+
+  test("loading document pages checks cancellation before each page is loaded", async () => {
+    const cancellation = new LocalCancellationController()
+    const loads: string[] = []
+    const pageOf = (id: string) => ({
+      id,
+      name: id,
+      type: "PAGE",
+      children: [],
+      loadAsync: async () => {
+        loads.push(id)
+        if (id === "0:p1") cancellation.abort()
+      },
+    })
+    const document = {
+      id: "0:0",
+      name: "Doc",
+      type: "DOCUMENT",
+      children: [pageOf("0:p1"), pageOf("0:p2")],
+    }
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [] },
+      currentPage: page("0:2", "Current"),
+      editorType: "dev",
+      getNodeByIdAsync: async (id: string) => (id === "0:0" ? document : null),
+    }
+
+    await expect(
+      readDesignContext(
+        {
+          selector: { nodeIds: ["0:0"] },
+          detail: "minimal",
+          depth: 0,
+          dedupeComponents: false,
+        },
+        cancellation.signal,
+      ),
+    ).rejects.toBeInstanceOf(LocalCancellationError)
+    // The forest serializer would reject this read anyway; what the per-page
+    // check buys is that the second page is never loaded from the host after
+    // the caller cancelled.
+    expect(loads).toEqual(["0:p1"])
+  })
+
+  test("loading document pages checks cancellation before each document root", async () => {
+    const cancellation = new LocalCancellationController()
+    const childrenReads: string[] = []
+    const documentOf = (id: string, children: unknown[]) => {
+      const node = { id, name: id, type: "DOCUMENT" }
+      Object.defineProperty(node, "children", {
+        configurable: true,
+        enumerable: true,
+        get() {
+          childrenReads.push(id)
+          return children
+        },
+      })
+      return node
+    }
+    const first = documentOf("0:d1", [
+      {
+        id: "0:p1",
+        name: "0:p1",
+        type: "PAGE",
+        children: [],
+        loadAsync: async () => {
+          cancellation.abort()
+        },
+      },
+    ])
+    const second = documentOf("0:d2", [])
+    const documents = new Map<string, unknown>([
+      ["0:d1", first],
+      ["0:d2", second],
+    ])
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [] },
+      currentPage: page("0:2", "Current"),
+      editorType: "dev",
+      getNodeByIdAsync: async (id: string) => documents.get(id) ?? null,
+    }
+
+    await expect(
+      readDesignContext(
+        {
+          selector: { nodeIds: ["0:d1", "0:d2"] },
+          detail: "minimal",
+          depth: 0,
+          dedupeComponents: false,
+        },
+        cancellation.signal,
+      ),
+    ).rejects.toBeInstanceOf(LocalCancellationError)
+    // `loadDocumentPages` reads `children` twice per root, so the count is
+    // filtered to the second document: with the per-root check in place it is
+    // never touched after the abort.
+    expect(childrenReads.filter((id) => id === "0:d2")).toEqual([])
+  })
 })

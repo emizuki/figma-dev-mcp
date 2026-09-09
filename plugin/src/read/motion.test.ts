@@ -1200,4 +1200,80 @@ describe("get_motion", () => {
     expect(result.truncation).toEqual({ reason: "nodeLimit", visitedNodes: 2 })
     expect(result.visitedNodes).toBe(2)
   })
+
+  test("an indexed item that declares tracks is a keyframe binding, not a property bag", async () => {
+    // `tracks` alone classifies the item, and the classification is what stops
+    // the scan: a keyframe binding that cannot be built (no timelineDuration)
+    // yields nothing, and its `properties` are never scanned as a fallback.
+    const node = motionNode("6:1", {
+      animations: {
+        OPACITY: {
+          baseValue: { type: "FLOAT", value: 1 },
+          timelineDuration: 0.5,
+          tracks: [],
+        },
+        fills: {
+          0: {
+            tracks: [],
+            properties: {
+              "prop-a": {
+                baseValue: { type: "FLOAT", value: 8 },
+                timelineDuration: 0.5,
+                tracks: [],
+              },
+            },
+          },
+        },
+      },
+    })
+    installFigma({
+      currentPage: page("0:2", "Current", [node]),
+      nodes: new Map<string, unknown>([[String(node.id), node]]),
+    })
+
+    const result = await getMotion({ selector: { nodeId: "6:1" } })
+
+    expect(result.items[0]?.status).toBe("success")
+    if (result.items[0]?.status !== "success") return
+    expect(result.items[0].value.animations.map((item) => item.field)).toEqual([
+      { type: "property", name: "OPACITY" },
+    ])
+  })
+
+  test("the three indexed collections are read once, as collections, not also as properties", async () => {
+    // `fills`, `strokes` and `effects` are read by the indexed pass below, so
+    // the plain property scan skips them. A collection map that also carries
+    // the fields of a keyframe binding would otherwise be emitted twice: once
+    // per indexed item, and once more under its own collection name.
+    const binding = {
+      baseValue: { type: "FLOAT", value: 1 },
+      timelineDuration: 0.5,
+      tracks: [],
+    }
+    const collection = (indexed: Record<string, unknown>) => ({
+      ...indexed,
+      ...binding,
+    })
+    const node = motionNode("6:1", {
+      animations: {
+        fills: collection({ 0: binding }),
+        strokes: collection({ 0: binding }),
+        effects: collection({ 0: { COLOR: binding } }),
+      },
+    })
+    installFigma({
+      currentPage: page("0:2", "Current", [node]),
+      nodes: new Map<string, unknown>([[String(node.id), node]]),
+    })
+
+    const result = await getMotion({ selector: { nodeId: "6:1" } })
+
+    expect(result.items[0]?.status).toBe("success")
+    if (result.items[0]?.status !== "success") return
+    expect(result.items[0].value.animations.map((item) => item.field)).toEqual([
+      { type: "indexedItem", collection: "fills", index: 0 },
+      { type: "indexedItem", collection: "strokes", index: 0 },
+      { type: "indexedItem", collection: "effects", index: 0, field: "COLOR" },
+    ])
+  })
 })
