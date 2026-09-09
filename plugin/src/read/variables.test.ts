@@ -1460,4 +1460,125 @@ describe("get_variables", () => {
       getVariables({ selector: { nodeId: "1:1" } }, cancellation.signal),
     ).rejects.toThrow("Operation cancelled")
   })
+
+  test("the collection loop stops at both ceilings rather than considering the rest", async () => {
+    const build = (index: number) => ({
+      collection: collection({
+        id: `C:${index}`,
+        name: `C${index}`,
+        modes: [{ modeId: "M:1", name: "Default" }],
+      }),
+      variable: variable({
+        id: `V:${index}`,
+        name: `v${index}`,
+        collectionId: `C:${index}`,
+        valuesByMode: { "M:1": index },
+      }),
+    })
+    const built = [1, 2, 3, 4].map(build)
+    installFigma({
+      pageChildren: [
+        bound(
+          "1:1",
+          built.map((item) => item.variable.id),
+        ),
+      ],
+      collections: built.map((item) => item.collection),
+      variables: built.map((item) => item.variable),
+    })
+
+    const capped = await getVariables(
+      { selector: { nodeId: "1:1" } },
+      undefined,
+      { returnedNodes: 1 },
+    )
+    expect(capped.collections.map((item) => item.id)).toEqual(["C:1"])
+    expect(capped.truncation).toEqual({ reason: "nodeLimit", visitedNodes: 2 })
+
+    const serialized = {
+      id: "C:1",
+      name: "C1",
+      modes: [{ id: "M:1", name: "Default" }],
+      variables: [
+        {
+          id: "V:1",
+          name: "v1",
+          collectionId: "C:1",
+          scopes: ["ALL_SCOPES"],
+          values: [
+            { modeId: "M:1", source: { kind: "float" as const, value: 1 } },
+          ],
+          codeSyntax: [],
+        },
+      ],
+    }
+    const bytes = await getVariables(
+      { selector: { nodeId: "1:1" } },
+      undefined,
+      { encodedBytes: byteLength(serialized) },
+    )
+    expect(bytes.collections).toEqual([serialized])
+    expect(bytes.truncation?.reason).toBe("byteLimit")
+  })
+
+  test("a host that refuses its own keys or throws on lookup costs that much and no more", async () => {
+    const hostileModes = new Proxy(
+      {},
+      {
+        ownKeys() {
+          throw new Error("valuesByMode is not enumerable")
+        },
+      },
+    )
+    installFigma({
+      pageChildren: [bound("1:1", ["V:a"])],
+      // No collection is registered, so the mode ids must come from the
+      // variable's own valuesByMode — which refuses to list them.
+      variables: [
+        {
+          id: "V:a",
+          name: "a",
+          variableCollectionId: "C:missing",
+          valuesByMode: hostileModes,
+          scopes: [],
+          codeSyntax: {},
+        },
+      ],
+    })
+
+    const enumerated = await getVariables({ selector: { nodeId: "1:1" } })
+    expect(enumerated.collections).toEqual([
+      {
+        id: "C:missing",
+        name: "",
+        modes: [],
+        variables: [
+          {
+            id: "V:a",
+            name: "a",
+            collectionId: "C:missing",
+            scopes: [],
+            values: [],
+            codeSyntax: [],
+          },
+        ],
+      },
+    ])
+
+    installFigma({ pageChildren: [bound("1:1", ["V:a"])] })
+    const host = (
+      globalThis as typeof globalThis & {
+        figma: { variables: Record<string, unknown> }
+      }
+    ).figma
+    // Synchronous, not a rejected promise: settleOrSkip handles the latter, so
+    // only this shape reaches the guard under test.
+    host.variables.getVariableByIdAsync = (): Promise<unknown> => {
+      throw new Error("dynamic page")
+    }
+
+    const thrown = await getVariables({ selector: { nodeId: "1:1" } })
+    expect(thrown.collections).toEqual([])
+    expect(thrown.truncated).toBe(false)
+  })
 })

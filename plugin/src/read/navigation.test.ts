@@ -1808,4 +1808,123 @@ describe("what the navigation readers accept", () => {
       ),
     ).rejects.toBeInstanceOf(LocalCancellationError)
   })
+
+  // Each of these aborts partway through a loop and asserts that the loop's
+  // own check is what stops it: the fixtures are built so that with that one
+  // check gone the read runs to completion rather than being caught later.
+  test("get_selection checks cancellation on every selected id", async () => {
+    const cancellation = new LocalCancellationController()
+    const lookedUp: string[] = []
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [] },
+      currentPage: {
+        id: "0:1",
+        name: "Page 1",
+        selection: [{ id: "1:1" }, { id: "1:2" }],
+      },
+      editorType: "dev",
+      getNodeByIdAsync: async (id: string) => {
+        lookedUp.push(id)
+        if (id === "1:1") cancellation.abort()
+        return null
+      },
+    }
+
+    await expect(
+      readSelection({ detail: "minimal", depth: 0 }, cancellation.signal),
+    ).rejects.toBeInstanceOf(LocalCancellationError)
+    expect(lookedUp).toEqual(["1:1"])
+  })
+
+  test("get_nodes checks cancellation on every requested id", async () => {
+    const cancellation = new LocalCancellationController()
+    const lookedUp: string[] = []
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [] },
+      currentPage: { id: "0:1", name: "Page 1" },
+      editorType: "dev",
+      getNodeByIdAsync: async (id: string) => {
+        lookedUp.push(id)
+        if (id === "1:1") cancellation.abort()
+        return null
+      },
+    }
+
+    await expect(
+      readNodes(
+        { nodeIds: ["1:1", "1:2"], detail: "minimal", depth: 0 },
+        cancellation.signal,
+      ),
+    ).rejects.toBeInstanceOf(LocalCancellationError)
+    expect(lookedUp).toEqual(["1:1"])
+  })
+
+  test("a selection scope checks cancellation on every selected id", async () => {
+    const cancellation = new LocalCancellationController()
+    const lookedUp: string[] = []
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [] },
+      currentPage: {
+        id: "0:1",
+        name: "Page 1",
+        selection: [{ id: "1:1" }, { id: "1:2" }],
+      },
+      editorType: "dev",
+      getNodeByIdAsync: async (id: string) => {
+        lookedUp.push(id)
+        if (id === "1:1") cancellation.abort()
+        return null
+      },
+    }
+
+    await expect(
+      readDesignContext(
+        {
+          selector: { selection: true },
+          detail: "minimal",
+          depth: 0,
+          dedupeComponents: false,
+        },
+        cancellation.signal,
+      ),
+    ).rejects.toBeInstanceOf(LocalCancellationError)
+    expect(lookedUp).toEqual(["1:1"])
+  })
+
+  test("a nodeIds scope checks cancellation on every id", async () => {
+    const cancellation = new LocalCancellationController()
+    const lookedUp: string[] = []
+    // Both nodes are switched off, so neither becomes a root and the forest
+    // serializer — whose own check would otherwise catch this — never runs.
+    const hidden = (id: string) => ({
+      id,
+      name: id,
+      type: "FRAME",
+      visible: false,
+      children: [],
+    })
+    ;(globalThis as typeof globalThis & { figma: unknown }).figma = {
+      root: { name: "Checkout flow", children: [] },
+      currentPage: { id: "0:1", name: "Page 1" },
+      editorType: "dev",
+      getNodeByIdAsync: async (id: string) => {
+        lookedUp.push(id)
+        if (id === "1:1") cancellation.abort()
+        return hidden(id)
+      },
+    }
+
+    await expect(
+      readDesignContext(
+        {
+          selector: { nodeIds: ["1:1", "1:2"] },
+          detail: "minimal",
+          depth: 0,
+          dedupeComponents: false,
+        },
+        cancellation.signal,
+      ),
+    ).rejects.toBeInstanceOf(LocalCancellationError)
+    expect(lookedUp).toEqual(["1:1"])
+  })
 })

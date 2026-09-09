@@ -1176,4 +1176,28 @@ describe("get_motion", () => {
       getMotion({ selector: { nodeIds: ["6:1", "6:2"] } }, cancellation.signal),
     ).rejects.toThrow("Operation cancelled")
   })
+
+  test("the motion item loop stops at the ceiling, and stops counting too", async () => {
+    const nodes = [1, 2, 3].map((index) =>
+      motionNode(`6:${index}`, {
+        animationStyles: [appliedStyle(`a-${index}`)],
+      }),
+    )
+    installFigma({
+      currentPage: page("0:2", "Current", nodes),
+      nodes: new Map<string, unknown>(
+        nodes.map((node) => [String(node.id), node]),
+      ),
+    })
+
+    const result = await getMotion(
+      { selector: { nodeIds: ["6:1", "6:2", "6:3"] } },
+      undefined,
+      { returnedNodes: 1 },
+    )
+
+    expect(result.items).toHaveLength(1)
+    expect(result.truncation).toEqual({ reason: "nodeLimit", visitedNodes: 2 })
+    expect(result.visitedNodes).toBe(2)
+  })
 })

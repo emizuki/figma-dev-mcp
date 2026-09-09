@@ -523,4 +523,59 @@ describe("get_fonts", () => {
       "Operation cancelled",
     )
   })
+
+  test("the font catalogue read checks cancellation before it starts", async () => {
+    const cancellation = new LocalCancellationController()
+    const child: Record<string, unknown> = {
+      id: "1:1",
+      name: "1:1",
+      type: "FRAME",
+      visible: true,
+    }
+    // No TEXT node anywhere, so no font is collected and the emission loop —
+    // whose own check would otherwise catch this — has nothing to iterate.
+    Object.defineProperty(child, "children", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        cancellation.abort()
+        return []
+      },
+    })
+    installFigma({ currentPage: page("0:2", "Current", [child]) })
+
+    await expect(getFonts({}, cancellation.signal)).rejects.toThrow(
+      "Operation cancelled",
+    )
+  })
+
+  test("the font loop stops at the emission ceiling", async () => {
+    const text = (id: string, family: string) => ({
+      id,
+      name: id,
+      type: "TEXT",
+      visible: true,
+      children: [],
+      characters: "Hi",
+      fontName: { family, style: "Regular" },
+    })
+    installFigma({
+      currentPage: page("0:2", "Current", [
+        text("1:1", "Inter"),
+        text("1:2", "Roboto"),
+        text("1:3", "Georgia"),
+        text("1:4", "Menlo"),
+      ]),
+      available: [],
+    })
+
+    const result = await getFonts({}, undefined, { returnedNodes: 2 })
+
+    expect(result.fonts.map((usage) => usage.font.family)).toEqual([
+      "Inter",
+      "Roboto",
+    ])
+    expect(result.truncated).toBe(true)
+    expect(result.truncation).toEqual({ reason: "nodeLimit", visitedNodes: 3 })
+  })
 })

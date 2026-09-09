@@ -936,4 +936,21 @@ describe("get_reactions", () => {
       ),
     ).rejects.toThrow("Operation cancelled")
   })
+
+  test("the reactions item loop stops at the ceiling, and stops counting too", async () => {
+    const nodes = [1, 2, 3].map((index) =>
+      frame(`5:${index}`, {
+        reactions: [
+          { trigger: { type: "ON_CLICK" }, action: { type: "BACK" } },
+        ],
+      }),
+    )
+    installFigma({ currentPage: page("0:2", "Current", nodes) })
+
+    const result = await getReactions({}, undefined, { returnedNodes: 1 })
+
+    expect(result.items).toHaveLength(1)
+    expect(result.truncation).toEqual({ reason: "nodeLimit", visitedNodes: 3 })
+    expect(result.visitedNodes).toBe(3)
+  })
 })

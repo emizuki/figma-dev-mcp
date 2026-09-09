@@ -925,4 +925,99 @@ describe("get_components", () => {
       "Operation cancelled",
     )
   })
+
+  test("the off-page pass checks cancellation on every batch", async () => {
+    const cancellation = new LocalCancellationController()
+    const instances = Array.from({ length: 17 }, (_, index) => ({
+      id: `5:${index + 1}`,
+      name: `Instance ${index + 1}`,
+      type: "INSTANCE",
+      visible: true,
+      children: [],
+      getMainComponentAsync: async () => ({ id: `9:${index + 1}` }),
+    }))
+    installFigma({
+      currentPage: page("0:2", "Current", instances),
+      // Seventeen off-page ids, so the pass takes two batches of sixteen; the
+      // abort lands inside the first, where the batched poll never looks.
+      getNodeByIdAsync: async (id: string) => {
+        if (id === "9:1") cancellation.abort()
+        return null
+      },
+    })
+
+    await expect(getComponents({}, cancellation.signal)).rejects.toThrow(
+      "Operation cancelled",
+    )
+  })
+
+  test("the component loop stops at the emission ceiling", async () => {
+    const icons = [1, 2, 3, 4].map((index) =>
+      standaloneComponent(`3:${index}`, `Icon ${index}`),
+    )
+    installFigma({ currentPage: page("0:2", "Current", icons) })
+
+    const result = await getComponents({}, undefined, { returnedNodes: 2 })
+
+    expect(result.components.map((item) => item.id)).toEqual(["3:1", "3:2"])
+    expect(result.instances).toEqual([])
+    expect(result.truncated).toBe(true)
+    expect(result.truncation).toEqual({ reason: "nodeLimit", visitedNodes: 3 })
+  })
+
+  test("the instance batch stops at the emission ceiling", async () => {
+    const instances = [1, 2, 3, 4].map((index) => ({
+      id: `5:${index}`,
+      name: `Instance ${index}`,
+      type: "INSTANCE",
+      visible: true,
+      children: [],
+      getMainComponentAsync: async () => ({ id: "3:1" }),
+    }))
+    installFigma({ currentPage: page("0:2", "Current", instances) })
+
+    const result = await getComponents({}, undefined, { returnedNodes: 2 })
+
+    expect(result.components).toEqual([])
+    expect(result.instances.map((item) => item.instanceId)).toEqual([
+      "5:1",
+      "5:2",
+    ])
+    expect(result.truncated).toBe(true)
+    expect(result.truncation).toEqual({ reason: "nodeLimit", visitedNodes: 3 })
+  })
+
+  test("property definitions that cannot be enumerated cost that field only", async () => {
+    const hostile = {
+      id: "3:1",
+      name: "Icon",
+      type: "COMPONENT",
+      visible: true,
+      children: [],
+      description: "",
+      documentationLinks: [],
+      variantProperties: null,
+      componentPropertyDefinitions: new Proxy(
+        {},
+        {
+          ownKeys() {
+            throw new Error("componentPropertyDefinitions is not enumerable")
+          },
+        },
+      ),
+    }
+    installFigma({ currentPage: page("0:2", "Current", [hostile]) })
+
+    const result = await getComponents({})
+
+    expect(result.components).toEqual([
+      {
+        id: "3:1",
+        name: "Icon",
+        documentation: [],
+        variantProperties: [],
+        propertyDefinitions: [],
+      },
+    ])
+  })
 })

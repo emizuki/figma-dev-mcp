@@ -506,4 +506,19 @@ describe("get_dev_mode_data", () => {
       ),
     ).rejects.toThrow("Operation cancelled")
   })
+
+  test("the dev-mode item loop stops at the ceiling, and stops counting too", async () => {
+    const nodes = [1, 2, 3, 4].map((index) =>
+      frame(`4:${index}`, { description: `Card ${index}` }),
+    )
+    installFigma({ currentPage: page("0:2", "Current", nodes) })
+
+    const result = await getDevModeData({}, undefined, { returnedNodes: 1 })
+
+    expect(result.items).toHaveLength(1)
+    expect(result.truncation).toEqual({ reason: "nodeLimit", visitedNodes: 3 })
+    // `visitedNodes` is in the result, so stopping the loop and merely
+    // skipping the rest of it are not the same answer.
+    expect(result.visitedNodes).toBe(3)
+  })
 })

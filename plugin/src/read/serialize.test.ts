@@ -3756,4 +3756,115 @@ describe("cancellation between batch boundaries", () => {
       ),
     ).rejects.toThrow("Operation cancelled")
   })
+
+  test("the instance identity pass checks cancellation on every instance", async () => {
+    const cancellation = new LocalCancellationController()
+    const instance = (id: string, abort: boolean) => ({
+      id,
+      name: id,
+      type: "INSTANCE",
+      visible: true,
+      children: [] as unknown[],
+      getMainComponentAsync: async () => {
+        if (abort) cancellation.abort()
+        return { id: "3:1" }
+      },
+    })
+    const root = {
+      id: "0:1",
+      name: "Root",
+      type: "FRAME",
+      visible: true,
+      children: [instance("1:1", true), instance("1:2", false)],
+    }
+
+    await expect(
+      collectInstanceIdentities([root], cancellation.signal),
+    ).rejects.toThrow("Operation cancelled")
+  })
+
+  test("the style-name pass checks cancellation on every id", async () => {
+    const cancellation = new LocalCancellationController()
+    const node = {
+      id: "1:1",
+      name: "Card",
+      type: "FRAME",
+      visible: true,
+      children: [],
+      fillStyleId: "S:a",
+      strokeStyleId: "S:b",
+    }
+
+    await expect(
+      collectStyleNames(
+        [node],
+        async (id: string) => {
+          if (id === "S:a") cancellation.abort()
+          return { name: "Brand" }
+        },
+        cancellation.signal,
+      ),
+    ).rejects.toThrow("Operation cancelled")
+  })
+
+  test("the variable-name pass checks cancellation on every id", async () => {
+    const cancellation = new LocalCancellationController()
+    const node = {
+      id: "1:1",
+      name: "Card",
+      type: "FRAME",
+      visible: true,
+      children: [],
+      boundVariables: {
+        width: { type: "VARIABLE_ALIAS", id: "V:a" },
+        height: { type: "VARIABLE_ALIAS", id: "V:b" },
+      },
+    }
+
+    await expect(
+      collectVariableNames(
+        [node],
+        async (id: string) => {
+          if (id === "V:a") cancellation.abort()
+          return { name: "brand/blue" }
+        },
+        cancellation.signal,
+      ),
+    ).rejects.toThrow("Operation cancelled")
+  })
+
+  test("host objects that refuse to be enumerated or read cost one field, not the node", () => {
+    // `Object.entries` on the properties map, and the styled-range reader:
+    // each is wrapped so a hostile host costs its own field and no more.
+    expect(
+      namedComponentProperties({
+        componentProperties: new Proxy(
+          {},
+          {
+            ownKeys() {
+              throw new Error("componentProperties is not enumerable")
+            },
+          },
+        ),
+      }),
+    ).toEqual([])
+
+    const text = base({
+      id: "1:9",
+      type: "TEXT",
+      characters: "Hello",
+      getStyledTextSegments() {
+        throw new Error("unsupported field name")
+      },
+    })
+    const data = serializeNodeForest([text], {
+      detail: "full",
+      depth: 0,
+      dedupeComponents: false,
+    }).nodes[0]?.data as {
+      text: { characters: string; styledRanges: unknown[] }
+    }
+    expect(data.text.characters).toBe("Hello")
+    expect(data.text.styledRanges).toEqual([])
+  })
 })

@@ -895,4 +895,27 @@ describe("get_styles", () => {
       getStyles({ source: "referenced" }, cancellation.signal),
     ).rejects.toThrow("Operation cancelled")
   })
+
+  test("the local pass stops at the node ceiling rather than considering the rest", async () => {
+    installFigma({
+      currentPage: page("0:2", "Current"),
+      local: {
+        paint: [
+          paintStyle("S:one", "One"),
+          paintStyle("S:two", "Two"),
+          paintStyle("S:three", "Three"),
+          paintStyle("S:four", "Four"),
+        ],
+      },
+      forbidGetStyle: true,
+    })
+
+    const result = await getStyles({ source: "local" }, undefined, {
+      returnedNodes: 1,
+    })
+
+    expect(result.styles.map((style) => style.id)).toEqual(["S:one"])
+    expect(result.truncated).toBe(true)
+    expect(result.truncation).toEqual({ reason: "nodeLimit", visitedNodes: 2 })
+  })
 })
