@@ -7,9 +7,10 @@ stays readable. The verdict vocabulary, the counts, the findings and the
 
 One row per accept path, at the granularity where one mutation answers exactly
 one row. **Suite result** is pass / fail of the whole plugin suite with that one
-mutation applied, against the baseline 476 / 0 at `f65c29e` — except `B31`,
-which was found after the baseline runs and is measured against the finished
-suite. The **Mutation** column is the replacement text, with `⏎` for a newline;
+mutation applied, against the baseline 476 / 0 at `f65c29e` — except for the
+twenty-seven rows found after those runs (`B31`–`B46`, `X120`–`X122`, `C81`,
+`C82`, `SE89`, `Z801`–`Z803`, `V98`, `V99`), which are measured against the
+suite as it stood when they were found: 600 / 0, 615 / 0 or 632 / 0. The **Mutation** column is the replacement text, with `⏎` for a newline;
 it repeats across rows in 54 places, so the **Accept path** is what identifies
 the site.
 
@@ -115,6 +116,12 @@ the site.
 | cancellation is checked before a nodeId lookup | `const node = await lookupNode(selector.nodeId)` | 476 / 0 | **gap** | `cancellation is checked before a nodeId lookup and before an explicit page load` |
 | cancellation is checked before an explicit page lookup | `const node = await lookupNode(id)` | 476 / 0 | **gap** | `cancellation is checked before a nodeId lookup and before an explicit page load` |
 | a missing id among nodeIds fails the whole call | `if (node === null \|\| node === undefined) { ⏎ continue ⏎ } ⏎ const verdict = visibilityOf(node) ⏎ if…` | 475 / 1 | covered | — |
+| loading document pages checks cancellation on every root | `if (!isRecord(root) \|\| root.type !== "DOCUMENT") continue` | 615 / 0 | **gap** | — *(open)* |
+| loading document pages checks cancellation on every page | `await loadPageIfNeeded(child)` | 615 / 0 | **gap** | — *(open)* |
+| get_selection checks cancellation on every selected id | `const node = await lookupNode(id) ⏎ if (node === null \|\| node === undefined) continue ⏎ const verdict = visib…` | 615 / 0 | **gap** | `get_selection checks cancellation on every selected id` |
+| get_nodes checks cancellation on every requested id | `if (lookup === undefined) {` | 615 / 0 | **gap** | `get_nodes checks cancellation on every requested id` |
+| a selection scope checks cancellation on every selected id | `const node = await lookupNode(id) ⏎ if (node === null \|\| node === undefined) continue ⏎ const verdict = visib…` | 615 / 0 | **gap** | `a selection scope checks cancellation on every selected id` |
+| a nodeIds scope checks cancellation on every id | `const node = await lookupNode(id) ⏎ if (node === null \|\| node === undefined) {` | 615 / 0 | **gap** | `a nodeIds scope checks cancellation on every id` |
 
 **`plugin/src/read/serialize.ts`**
 
@@ -501,6 +508,12 @@ the site.
 | the instance pre-pass checks cancellation on every node | `const node = record(raw) ⏎ if (node.type === "INSTANCE") instances.push(node)` | 476 / 0 | **gap** | `the instance pre-pass checks cancellation on every node` |
 | the style-name pre-pass checks cancellation on every node | `const node = record(raw) ⏎ for (const [field] of STYLE_ID_FIELDS) {` | 476 / 0 | **gap** | `the style-name pre-pass checks cancellation on every node` |
 | the variable-name pre-pass checks cancellation on every node | `const node = record(raw) ⏎ for (const id of variableIdsOf(node)) {` | 476 / 0 | **gap** | `the variable-name pre-pass checks cancellation on every node` |
+| the instance identity pass checks cancellation on every instance | `const id = string(node.id)` | 615 / 0 | **gap** | `the instance identity pass checks cancellation on every instance` |
+| the style-name pass checks cancellation on every id | `// Running out of budget leaves the remaining names absent; the forest is ⏎ // never marked truncated over a missin…` | 615 / 0 | **gap** | `the style-name pass checks cancellation on every id` |
+| the variable-name pass checks cancellation on every id | `// Running out of budget leaves the remaining names absent; the forest is ⏎ // never marked truncated over a missin…` | 615 / 0 | **gap** | `the variable-name pass checks cancellation on every id` |
+| a throwing getter costs that field, not the node | `function hostGet(value: UnknownRecord, key: string): unknown { ⏎ return value[key] ⏎ }` | 619 / 13 | covered | — |
+| a segment reader that throws costs the styled ranges, not the node | `} catch (e) { ⏎ throw e ⏎ // getStyledTextSegments rejects the whole call if any single field name in` | 632 / 0 | **gap** | `host objects that refuse to be enumerated or read cost one field, not the node` |
+| component properties that cannot be enumerated cost that field, not the node | `entries = Object.entries(source) ⏎ } catch (e) { ⏎ throw e ⏎ }` | 632 / 0 | **gap** | `host objects that refuse to be enumerated or read cost one field, not the node` |
 
 **`plugin/src/read/visibility.ts`**
 
@@ -702,6 +715,9 @@ the site.
 | a cursor whose key matches the search is accepted | `if (!isRecord(parsed) \|\| parsed.v !== 1 \|\| parsed.key === key)` | 475 / 1 | covered | — |
 | a cursor path of non-negative indices is accepted | `if (path.every((index) => Number.isSafeInteger(index) && index >= 0))` | 475 / 1 | covered | — |
 | a cursor whose node id still matches resumes there | `if (string(record(item.node).id) === cursor.id)` | 475 / 1 | covered | — |
+| resolving a search scope checks cancellation first | `if ("pageId" in scope) {` | 615 / 0 | **gap** | — *(open)* |
+| the search walk checks cancellation on every node | delete it | 614 / 1 | covered | — |
+| a throwing characters getter costs the text match, not the search | `return typeof node.characters === "string" ? node.characters : undefined ⏎ } catch (e) { ⏎ throw e ⏎ }` | 631 / 1 | covered | — |
 
 **`plugin/src/read/variables.ts`**
 
@@ -809,6 +825,10 @@ the site.
 | the variable lookup loop checks cancellation on every id | `// The lookups themselves` | 476 / 0 | **gap** | `the variable lookup loop checks cancellation on every id` |
 | the collection loop checks cancellation on every collection | `if (!emission.consider()) break` | 476 / 0 | **gap** | `the collection loop checks cancellation on every collection` |
 | the definition loop checks cancellation on every variable | `const serialized = await readDefinition(` | 476 / 0 | **gap** | `the definition loop checks cancellation on every variable` |
+| a variable lookup checks cancellation before it starts | `if (this.variables.has(id)) return this.variables.get(id) ?? null` | 615 / 0 | **gap** | — *(open)* |
+| a collection lookup checks cancellation before it starts | `if (this.collections.has(id)) return this.collections.get(id) ?? null` | 614 / 1 | covered | — |
+| valuesByMode keys that cannot be read cost the fallback modes, not the read | `return Object.keys(valuesByMode).filter((modeId) => modeId.length > 0) ⏎ } catch (e) { ⏎ throw e ⏎ }` | 632 / 0 | **gap** | `a host that refuses its own keys or throws on lookup costs that much and no more` |
+| a host lookup that throws synchronously costs that lookup, not the read | `return (await settleOrSkip(call())) ?? null ⏎ } catch (e) { ⏎ throw e ⏎ }` | 632 / 0 | **gap** | `a host that refuses its own keys or throws on lookup costs that much and no more` |
 
 **`plugin/src/read/render.ts`**
 
@@ -1060,7 +1080,7 @@ the site.
 | a truncated forest walk marks the result truncated | `void walked` | 475 / 1 | covered | — |
 | every walked node counts toward visitedNodes | `visitedNodes += 0` | 475 / 1 | covered | — |
 | a node with nothing to report is left out of items | `if (false) continue` | 475 / 1 | covered | — |
-| the item loop stops once the emission ceiling is hit | `if (!emission.push(item, visitedNodes)) continue` | 476 / 0 | **gap** | — *(open)* |
+| the item loop stops once the emission ceiling is hit | `if (!emission.push(item, visitedNodes)) continue` | 476 / 0 | **gap** | `the motion item loop stops at the ceiling, and stops counting too` |
 | the result carries the emitted items | `items: [],` | 467 / 9 | covered | — |
 | the result reports how many nodes were inspected | `visitedNodes: 0, ⏎ truncated:` | 475 / 1 | covered | — |
 | the truncated flag reflects the truncation | `truncated: false,` | 475 / 1 | covered | — |
@@ -1162,6 +1182,9 @@ the site.
 | cancellation is checked at a batch boundary in the off-page pass | `signal?.throwIfAborted() ⏎ if (emission.emitTruncation !== undefined) break ⏎ if (Date.now() - budgetStarted >= b…` | 476 / 0 | **gap** | — *(open)* |
 | the instance pass checks cancellation on every batch | `if (emission.emitTruncation !== undefined) break ⏎ if (Date.now() - budgetStarted >= budgetMs) { ⏎ emission.mar…` | 476 / 0 | **gap** | `the instance pass checks cancellation on every batch` |
 | the component loop checks cancellation on every component | `try { ⏎ const component = serializeComponent(components.get(id))` | 476 / 0 | **gap** | `the component loop checks cancellation on every component` |
+| the off-page pass checks cancellation on every batch | `if (emission.emitTruncation !== undefined) break ⏎ if (Date.now() - budgetStarted >= budgetMs) { ⏎ emission.mar…` | 615 / 0 | **gap** | `the off-page pass checks cancellation on every batch` |
+| a throwing getter costs that field, not the component | `function hostGet(value: UnknownRecord, key: string): unknown { ⏎ return value[key] ⏎ }` | 630 / 2 | covered | — |
+| property definitions that cannot be enumerated cost that field, not the component | `entries = Object.entries(raw) ⏎ } catch (e) { ⏎ throw e ⏎ }` | 632 / 0 | **gap** | `property definitions that cannot be enumerated cost that field only` |
 
 **`plugin/src/read/dev-mode.ts`**
 
@@ -1226,7 +1249,7 @@ the site.
 | a truncated forest walk marks the result truncated | `void walked` | 475 / 1 | covered | — |
 | every walked node counts toward visitedNodes | `visitedNodes += 0` | 473 / 3 | covered | — |
 | a node with nothing to report is left out of items | `if (value === undefined) continue` | 472 / 4 | covered | — |
-| the item loop stops once the emission ceiling is hit | `if (!emission.push(value, visitedNodes)) continue` | 476 / 0 | **gap** | — *(open)* |
+| the item loop stops once the emission ceiling is hit | `if (!emission.push(value, visitedNodes)) continue` | 476 / 0 | **gap** | `the dev-mode item loop stops at the ceiling, and stops counting too` |
 | the result carries the emitted items | `items: [],` | 466 / 10 | covered | — |
 | the result reports how many nodes were inspected | `visitedNodes: 0, ⏎ truncated:` | 473 / 3 | covered | — |
 | the truncated flag reflects the truncation | `truncated: false,` | 475 / 1 | covered | — |
@@ -1355,7 +1378,7 @@ the site.
 | the read honours the caller's selector | `const { roots } = await resolveDesignRoots(undefined, signal)` | 471 / 5 | covered | — |
 | a truncated forest walk marks the result truncated | `void walked` | 475 / 1 | covered | — |
 | every walked node counts toward visitedNodes | `visitedNodes += 0` | 473 / 3 | covered | — |
-| the item loop stops once the emission ceiling is hit | `if (!emission.push(value, visitedNodes)) continue` | 476 / 0 | **gap** | — *(open)* |
+| the item loop stops once the emission ceiling is hit | `if (!emission.push(value, visitedNodes)) continue` | 476 / 0 | **gap** | `the reactions item loop stops at the ceiling, and stops counting too` |
 | the result carries the emitted items | `items: [],` | 463 / 13 | covered | — |
 | the result reports how many nodes were inspected | `visitedNodes: 0, ⏎ truncated:` | 473 / 3 | covered | — |
 | the truncated flag reflects the truncation | `truncated: false,` | 475 / 1 | covered | — |
@@ -1367,6 +1390,9 @@ the site.
 | encodedBytes defaults to MAX_TEXT_BYTES | `encodedBytes: limits?.encodedBytes ?? 1,` | 465 / 11 | covered | — |
 | cancellation is checked at a batch boundary in the reactions item loop | delete it | 476 / 0 | **gap** | — *(open)* |
 | the reactions item loop checks cancellation on every item | `visitedNodes += 1` | 476 / 0 | **gap** | `the reactions item loop checks cancellation on every item` |
+| an UPDATE_MEDIA_RUNTIME action is reported as updateMediaRuntime | `case "UPDATE_MEDIA_RUNTIME_X": {` | 630 / 2 | covered | — |
+| a URL action is reported as openLink | `case "URL_X": {` | 630 / 2 | covered | — |
+| a NODE action is reported as its navigation kind | `case "NODE_X": {` | 624 / 8 | covered | — |
 
 **`plugin/src/read/fonts.ts`**
 
@@ -1431,3 +1457,4 @@ the site.
 | fonts are emitted in first-seen order | `for (const [key, usage] of [...collected].reverse()) {` | 472 / 4 | covered | — |
 | cancellation is checked at a batch boundary in the font walk | delete it | 476 / 0 | **gap** | — *(open)* |
 | the font loop checks cancellation on every font | `for (const [key, usage] of collected) {` | 600 / 0 | **gap** | `the font loop checks cancellation on every font` |
+| the font catalogue read checks cancellation before it starts | `try {` | 615 / 0 | **gap** | `the font catalogue read checks cancellation before it starts` |
