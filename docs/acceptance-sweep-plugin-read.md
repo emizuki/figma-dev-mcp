@@ -116,8 +116,8 @@ the site.
 | cancellation is checked before a nodeId lookup | `const node = await lookupNode(selector.nodeId)` | 476 / 0 | **gap** | `cancellation is checked before a nodeId lookup and before an explicit page load` |
 | cancellation is checked before an explicit page lookup | `const node = await lookupNode(id)` | 476 / 0 | **gap** | `cancellation is checked before a nodeId lookup and before an explicit page load` |
 | a missing id among nodeIds fails the whole call | `if (node === null \|\| node === undefined) { ⏎ continue ⏎ } ⏎ const verdict = visibilityOf(node) ⏎ if…` | 475 / 1 | covered | — |
-| loading document pages checks cancellation on every root | `if (!isRecord(root) \|\| root.type !== "DOCUMENT") continue` | 615 / 0 | **gap** | — *(open)* |
-| loading document pages checks cancellation on every page | `await loadPageIfNeeded(child)` | 615 / 0 | **gap** | — *(open)* |
+| loading document pages checks cancellation on every root | `if (!isRecord(root) \|\| root.type !== "DOCUMENT") continue` | 615 / 0 | **gap** | `loading document pages checks cancellation before each document root` |
+| loading document pages checks cancellation on every page | `await loadPageIfNeeded(child)` | 615 / 0 | **gap** | `loading document pages checks cancellation before each page is loaded` |
 | get_selection checks cancellation on every selected id | `const node = await lookupNode(id) ⏎ if (node === null \|\| node === undefined) continue ⏎ const verdict = visib…` | 615 / 0 | **gap** | `get_selection checks cancellation on every selected id` |
 | get_nodes checks cancellation on every requested id | `if (lookup === undefined) {` | 615 / 0 | **gap** | `get_nodes checks cancellation on every requested id` |
 | a selection scope checks cancellation on every selected id | `const node = await lookupNode(id) ⏎ if (node === null \|\| node === undefined) continue ⏎ const verdict = visib…` | 615 / 0 | **gap** | `a selection scope checks cancellation on every selected id` |
@@ -524,8 +524,8 @@ the site.
 | a switched-on node keeps the walk going | `if (hostGet(current, "visible") !== false) return "hidden"` | 317 / 159 | covered | — |
 | the walk climbs to the parent | `current = undefined` | 455 / 21 | covered | — |
 | the ancestor walk allows 1024 steps | `const MAX_ANCESTOR_WALK = 1` | 327 / 149 | covered | — |
-| a cycle past 64 steps is caught by the seen set | `const CYCLE_WATCH_AFTER = 1000000` | 476 / 0 | **gap** | — *(open)* |
-| a revisited node yields undetermined | `if (false) return "undetermined"` | 476 / 0 | **gap** | — *(open)* |
+| a cycle past 64 steps is caught by the seen set | `const CYCLE_WATCH_AFTER = 1000000` | 476 / 0 | **gap** | `a cycle is cut at its own length rather than at the walk bound` |
+| a revisited node yields undetermined | `if (false) return "undetermined"` | 476 / 0 | **gap** | `a cycle is cut at its own length rather than at the walk bound` |
 | exhausting the walk bound yields undetermined | `return "renders" ⏎ }` | 474 / 2 | covered | — |
 | only a renders verdict passes the child filter | `return visibilityOf(node) !== "hidden"` | 474 / 2 | covered | — |
 | a throwing host getter costs the field, not the walk | `return node[key]` | 475 / 1 | covered | — |
@@ -1014,7 +1014,7 @@ the site.
 | a track carries its id | `result.push({ ⏎ id: "", ⏎ keyframeOperation, ⏎ keyframes: keyframes(track.keyframes), ⏎ })` | 475 / 1 | covered | — |
 | a track carries its keyframe operation | `keyframeOperation: "SET", ⏎ keyframes: keyframes(track.keyframes),` | 476 / 0 | **gap** | `all three keyframe operations survive, and a track keeps the one it has` |
 | a track carries its keyframes | `keyframes: [],` | 475 / 1 | covered | — |
-| a binding with a tracks field is a keyframe binding | `Object.hasOwn(value, "tracks_x") \|\| Object.hasOwn(value, "timelineDuration")` | 476 / 0 | **gap** | — *(open)* |
+| a binding with a tracks field is a keyframe binding | `Object.hasOwn(value, "tracks_x") \|\| Object.hasOwn(value, "timelineDuration")` | 476 / 0 | **gap** | `an indexed item that declares tracks is a keyframe binding, not a property bag` |
 | a binding with a timelineDuration is a keyframe binding | `Object.hasOwn(value, "tracks") \|\| Object.hasOwn(value, "timelineDuration_x")` | 476 / 0 | **gap** | `a binding is recognised by tracks or by timelineDuration alone` |
 | a manual binding is recognised by its keyframes field | `return Object.hasOwn(value, "keyframes_x") && Object.hasOwn(value, "id")` | 474 / 2 | covered | — |
 | a manual binding is recognised by its id field | `return Object.hasOwn(value, "keyframes") && Object.hasOwn(value, "id_x")` | 474 / 2 | covered | — |
@@ -1026,7 +1026,7 @@ the site.
 | a manual binding carries its id | `return { field, id: "", baseValue, keyframes: keyframes(value.keyframes) }` | 476 / 0 | **gap** | `manual tracks carry id and base value, on properties and inside collections` |
 | a manual binding carries its base value | `return { field, id, baseValue: { type: "BOOL", value: true }, keyframes: keyframes(value.keyframes) } ⏎ }` | 476 / 0 | **gap** | `manual tracks carry id and base value, on properties and inside collections` |
 | a manual binding carries its keyframes | `return { field, id, baseValue, keyframes: [] } ⏎ }` | 475 / 1 | covered | — |
-| the three indexed collections are excluded from the plain property scan | `.filter(() => true)` | 476 / 0 | **gap** | — *(open)* |
+| the three indexed collections are excluded from the plain property scan | `.filter(() => true)` | 476 / 0 | **gap** | `the three indexed collections are read once, as collections, not also as properties` |
 | a node's plain animated properties are scanned | `return [] ⏎ .filter` | 473 / 3 | covered | — |
 | a numeric index in an indexed collection is walked | `.filter(() => false)` | 475 / 1 | covered | — |
 | indexed-collection entries come back in ascending index order | `.sort((left, right) => right - left)` | 475 / 1 | covered | — |
@@ -1144,7 +1144,7 @@ the site.
 | a collected component keeps its walk order | `void id` | 469 / 7 | covered | — |
 | a collected instance keeps its walk order | `void id` | 470 / 6 | covered | — |
 | a truncated forest walk marks the result truncated | `void walked` | 475 / 1 | covered | — |
-| the component loop stops once the emission ceiling is hit | `if (component !== undefined && !emission.pushComponent(component)) continue ⏎ } catch` | 476 / 0 | **gap** | — *(open)* |
+| the component loop stops once the emission ceiling is hit | `if (component !== undefined && !emission.pushComponent(component)) continue ⏎ } catch` | 476 / 0 | **gap** | `the component loop stops reading nodes once the ceiling is reached` |
 | a read error raised while serializing a component ends the call | `if (false) { ⏎ throw error ⏎ } ⏎ } ⏎ }` | 476 / 0 | **gap** | `a read error raised while serializing a component ends the whole call` |
 | main components are looked up sixteen at a time | `const lookupBatch = 1` | 476 / 0 | **gap** | `main components are looked up sixteen at a time, and the pass stops at the ceiling` |
 | the instance pass stops once the emission ceiling is hit | `if (false) break ⏎ if (Date.now() - budgetStarted >= budgetMs) { ⏎ emission.mark({ ⏎ reason: "nodeLimit",` | 476 / 0 | **gap** | `main components are looked up sixteen at a time, and the pass stops at the ceiling` |
@@ -1455,6 +1455,6 @@ the site.
 | encodedBytes defaults to MAX_TEXT_BYTES | `encodedBytes: limits?.encodedBytes ?? 1,` | 469 / 7 | covered | — |
 | the cancellation batch counter advances with the walk | `index += 0` | 476 / 0 | **gap** | — *(open)* |
 | fonts are emitted in first-seen order | `for (const [key, usage] of [...collected].reverse()) {` | 472 / 4 | covered | — |
-| cancellation is checked at a batch boundary in the font walk | delete it | 476 / 0 | **gap** | — *(open)* |
+| cancellation is checked at a batch boundary in the font walk | delete it | 476 / 0 | **gap** | `the walk visitor checks cancellation before it collects a node` |
 | the font loop checks cancellation on every font | `for (const [key, usage] of collected) {` | 600 / 0 | **gap** | `the font loop checks cancellation on every font` |
 | the font catalogue read checks cancellation before it starts | `try {` | 615 / 0 | **gap** | `the font catalogue read checks cancellation before it starts` |

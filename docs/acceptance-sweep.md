@@ -1914,13 +1914,13 @@ enumeration: nothing imports the file. See the maintenance edges below.)
 It groups into **1,380 accept paths**, one row per mutation that answers
 exactly one row. Every mutation below was applied to production code, built,
 measured and reverted; the committed diff adds tests only. Baseline before this
-task: **476 pass / 0 fail / 2,100 expect() calls / 28 files**. After: **638 pass
-/ 0 fail / 2,481 expect() calls / 28 files**.
+task: **476 pass / 0 fail / 2,100 expect() calls / 28 files**. After: **645 pass
+/ 0 fail / 2,495 expect() calls / 28 files**.
 
 **950 covered, 430 gaps, 0 not applicable.** 950 + 430 = 1,380. Of the 430
-gaps, **369 are closed** by the new tests and **61 stay open**; 369 + 61 = 430.
-The diff adds 163 test names, one of which replaces a test that asserted
-nothing, so the suite grows by 162.
+gaps, **377 are closed** by the new tests and **53 stay open**; 377 + 53 = 430.
+The diff adds 170 test names, one of which replaces a test that asserted
+nothing, so the suite grows by 169.
 
 Twenty-seven of those rows were found after the baseline runs — see *How this
 enumeration went wrong* — and their Suite result is measured against the suite
@@ -1933,28 +1933,30 @@ or the refusal has no meaningful opposite. **No row here meets it**, so the
 column is empty for this area. An earlier draft used it for eleven rows of
 live-but-unread code — dead fields, a set member consulted after an earlier
 `return`, a context field no walker reads — and that was a second, unstated rule:
-structurally identical code elsewhere (the fifteen subsumed batch checks,
-`PASS_THROUGH` and `NORMAL` in `BLEND_MODES`) was recorded as a gap. Unobservable
-code is now uniformly a **gap that stays open**, with the reason in the prose
-below, so the three-way split follows from one rule a reader can apply.
+structurally identical code elsewhere (the batch cancellation checks,
+`PASS_THROUGH` and `NORMAL` in `BLEND_MODES`) was recorded as a gap. A row no
+test was found for is now uniformly a **gap that stays open**, marked
+`not probed`, so the three-way split follows from one rule a reader can apply —
+and, as `fonts.ts:230` shows, from a rule that does not quietly retire a row
+before someone has aimed at it.
 
 By file — rows, then covered / gap, then of the gaps closed / open:
 
 | File | Rows | Covered | Gap | Closed | Open |
 |---|---|---|---|---|---|
 | `serialize.ts` | 387 | 251 | 136 | 125 | 11 |
-| `motion.ts` | 154 | 111 | 43 | 37 | 6 |
+| `motion.ts` | 154 | 111 | 43 | 39 | 4 |
 | `reactions.ts` | 124 | 91 | 33 | 30 | 3 |
 | `variables.ts` | 106 | 74 | 32 | 22 | 10 |
 | `render.ts` | 100 | 64 | 36 | 31 | 5 |
-| `navigation.ts` | 104 | 78 | 26 | 24 | 2 |
+| `navigation.ts` | 104 | 78 | 26 | 26 | 0 |
 | `search.ts` | 91 | 62 | 29 | 28 | 1 |
-| `components.ts` | 87 | 59 | 28 | 23 | 5 |
+| `components.ts` | 87 | 59 | 28 | 24 | 4 |
 | `dev-mode.ts` | 74 | 52 | 22 | 17 | 5 |
 | `styles.ts` | 69 | 47 | 22 | 16 | 6 |
-| `fonts.ts` | 60 | 40 | 20 | 15 | 5 |
+| `fonts.ts` | 60 | 40 | 20 | 16 | 4 |
 | `common.ts` | 14 | 13 | 1 | 1 | 0 |
-| `visibility.ts` | 10 | 8 | 2 | 0 | 2 |
+| `visibility.ts` | 10 | 8 | 2 | 2 | 0 |
 
 387 + 154 + 124 + 106 + 100 + 104 + 91 + 87 + 74 + 69 + 60 + 14 + 10 = 1,380.
 
@@ -1995,8 +1997,9 @@ question here. Deleting each of those fifteen calls one at a time is `B01`–`B1
 all fifteen stay green, confirming that measurement site by site.
 
 Thirteen of the fifteen sit beside an unconditional `signal?.throwIfAborted()`
-on the same signal; `fonts.ts:230` sits inside a walk visitor, where the poll
-that subsumes it is `walkNode`'s, *before* the visitor rather than after; and
+on the same signal; `fonts.ts:230` sits inside a walk visitor, with `walkNode`'s
+poll *before* the visitor rather than after — which is not the same thing as
+being subsumed by it, as the rest of this section works out; and
 `components.ts:339`'s twin is `B32`, found later. Deleting fifteen unconditional
 checks one at a time is `B16`–`B30`: **fourteen of the fifteen stay green**
 against the suite as it stood. The single exception is `serializeNode`'s own
@@ -2008,10 +2011,10 @@ was part of how the census defect below stayed hidden: `variables.ts:503` and
 `components.ts:259` are in that set and sit beside no batch call, while
 `components.ts:339`, which does, was missing from it.)
 
-**That measurement was right and the conclusion first drawn from it was half
+**That measurement was right and the conclusion first drawn from it was
 wrong.** An earlier draft of this section said none of the twenty-nine could be
-closed from the test side. That holds for the fifteen batch calls. It is false
-for the fourteen twins, because `throwIfAbortedAtBatch` is **index-gated** —
+closed from the test side. It is false for the fourteen twins, because
+`throwIfAbortedAtBatch` is **index-gated** —
 `if (index % batchSize === 0)` with `batchSize` 100 (`CANCEL_CHECK_BATCH`). A
 fixture that aborts at an index *not* divisible by 100, inside a loop shorter
 than 100 iterations, leaves the batched check looking at nothing. The twin is
@@ -2041,23 +2044,37 @@ has **35** unconditional `signal?.throwIfAborted()` sites and **15**
 `throwIfAbortedAtBatch` calls. Every one of the 50 now has a row. Of the 35
 unconditional checks: **4 were already covered** — `serializeNode`'s
 (`B20`), the search walk's (`B41`), `lookupCollection`'s (`B43`) and the one
-after each screenshot encode (`R88`) — **29 are gaps this sweep closed**, and
-**2 stay open**: `navigation.ts:130` and `:134`, the two polls in
-`loadDocumentPages`. 4 + 29 + 2 = 35. Both were probed and the probe is written
-down below. All 15 batch calls are gaps that stay open.
+after each screenshot encode (`R88`) — and **31 are gaps this sweep closed**.
+4 + 31 = 35; none stays open. Of the **15** batch calls, one — `fonts.ts:230`
+— is a gap this sweep closed, and 14 stay open.
 
-So the read area polls cancellation at 50 places, of which 33 are individually
-load-bearing and pinned, and 17 are subsumed by another poll on the same read.
+So the read area polls cancellation at 50 places, of which **36 are
+individually load-bearing and individually pinned** and 14 stay open.
 
-So the shape of the finding is: every read path polls cancellation at several
-points; **`throwIfAbortedAtBatch` is subsumed at all fifteen of its call
-sites**, and 31 of the 35 unconditional checks are individually load-bearing and
-now individually pinned. The follow-up worth taking is narrower than the first
-draft claimed: `throwIfAbortedAtBatch` and its fifteen call sites can be deleted
-without losing a single detection, and the suite would be strictly more sensitive
-for it — but that is a production change and belongs in its own review.
+**The recommendation this section used to carry is disproven.** Through three
+rounds it said `throwIfAbortedAtBatch` was subsumed at all fifteen of its call
+sites, and that the helper and its fifteen calls could therefore be deleted
+"without losing a single detection". `fonts.ts:230` is load-bearing.
+`walkNode` polls the signal, then reports progress, then calls the visitor
+(`serialize.ts:1144`, `:1156`, `:1157`), so an abort raised from a progress
+reporter lands between the poll and the gate; and on a host with no
+`listAvailableFontsAsync` and a childless page, nothing polls afterwards.
+Delete the gate and `getFonts` **returns a `GetFontsResult` to a caller who
+cancelled**, with the whole committed suite green. A reader acting on the old
+recommendation would have deleted a live check. **No production change is
+recommended here.**
 
-**Four resisted a first probe; two of those four were the probe's fault.**
+The other fourteen have a different shape from `fonts.ts:230`, read at their
+sites: each is immediately followed by an unconditional
+`signal?.throwIfAborted()` on the same signal at the same index — `styles.ts`
+`:256`, `:288`; `components.ts` `:278`, `:338`; `dev-mode.ts:290`;
+`motion.ts:674`; `reactions.ts:484`; `variables.ts` `:456`, `:477` — or by a
+call whose first statement is one: `serialize.ts:1043` → `serializeNode`,
+`:1165` → `walkNode`, and `:1210`, `:1261`, `:1318` → each pre-pass's own
+`visit`. `fonts.ts:230` was the one call site with neither, and it is the one
+that turned out to matter. The fourteen are **not probed**; 9 + 5 = 14.
+
+**Four resisted a first probe. All four were the probe's fault.**
 That correction is the most useful thing in this section, so it is written out
 rather than summarised:
 
@@ -2073,23 +2090,34 @@ rather than summarised:
   without it the read returns a *resolved alias* to a caller who cancelled.
   Closed by `a variable lookup checks cancellation before it starts`.
 
-**The two that still resist, and what the read does instead.** Both are the
-`loadDocumentPages` polls. Second probes were written from scratch, with the
-abort landing after `resolveDesignRoots`' own poll so that `loadDocumentPages`
-is genuinely entered aborted — the first pair never reached it at all.
+- **`B34` and `B35` were closable, and the reason they looked otherwise is the
+  most useful thing on this branch.** Both are the `loadDocumentPages` polls.
+  Three probes were written for them and all three measured the same thing:
+  delete either poll and the read *still cancels*, because
+  `serializeNodeForest` runs on every path and `serializeNode`'s first
+  statement is a poll (`serialize.ts:936`). That measurement is correct and it
+  is not the sweep's question. **The question a mutation answers is "would a
+  test go red?", not "does the read still cancel?"** The two diverge exactly
+  when a poll's effect is *how much host work happens after the abort* — which
+  is what a cancellation poll is for. Asked the right question both rows close
+  at once:
 
-| Row | Probe | Alone | Plus `serializeNode`'s poll |
-|---|---|---|---|
-| `B34` | two `DOCUMENT` roots via a `nodeIds` scope, the second aborting from its `parent` getter | 639 / 0 — the read still cancels | **the read resolves**; probe fails |
-| `B35` | one `DOCUMENT` root, two page children, the first page's `loadAsync` aborting | 639 / 0 — still cancels | **the read resolves**; probe fails |
+  - `navigation.ts:134` deleted → a **second page is loaded** from the host
+    after the caller cancelled. Fixture: one `DOCUMENT` root via a `nodeIds`
+    scope with two `PAGE` children, the first page's `loadAsync` raising the
+    abort; the read rejects either way, and `loads` is `["0:p1"]` intact and
+    `["0:p1", "0:p2"]` mutated. Closed by
+    `loading document pages checks cancellation before each page is loaded`.
+  - `navigation.ts:130` deleted → a **second document's `children` is read**
+    after the caller cancelled. Fixture: two `DOCUMENT` roots with counting
+    `children` getters, the first root's only page raising the abort;
+    `loadDocumentPages` reads the getter twice per root, so the assertion
+    filters to the second document, which is read `[]` times intact and twice
+    mutated. Closed by
+    `loading document pages checks cancellation before each document root`.
 
-The second column is what makes this a measurement rather than an argument:
-deleting the row's own poll leaves the read cancelling, and deleting
-`serializeNode`'s poll as well makes it *return a serialized forest* to a caller
-who cancelled. So the poll that answers instead is `serialize.ts:936` — a row
-this record already lists as covered. The probes are not committed: a test that
-cannot fail for its own reason is the `toBeDefined()` pattern complained about
-below.
+  Each fails alone under its own deletion — 644 pass / 1 fail, the one failure
+  being its own test.
 
 ### The milestone test that asserted nothing
 
@@ -2175,88 +2203,113 @@ consulting, and the forest walk context's `depth`, which `walkNode` never reads.
 
 ### What is left open
 
-Sixty-one rows, in six kinds. **This section states what was measured, not what
-is possible**, and it states it in the form that turned out to matter: for a row
-that stays open, what the read did *instead* of what the row asks for. That
-phrasing is not stylistic. Every negative result on this area that was written
-as a conclusion — "another guard gets there first" — has been overturned by
-someone re-aiming the probe; every one written as "the read returned X instead"
-has held, because the next reader can see the aim and correct it.
+Fifty-three rows, in six kinds.
 
-The tally is worth stating plainly: **eight negative claims about this area have
-been examined and five were wrong.** Four impossibility claims, disproved by
-runs. Then a rule requiring the failed probe be written beside the claim, which
-made the claims checkable — and three of the five probes written under it
-(`B40`, `B42`, `R98`) were aimed wrong and their rows closed. A written-down
-probe makes a negative result *auditable*; it does not make it *true*, and it is
-exactly as fallible as the test it imitates.
+**The rule this section is written under.** Nine negative claims about this
+area had been examined by the third review and **nine were wrong**: four
+impossibility claims disproved by runs; one more, `R98`, reasoned from a
+pre-flight and never probed; and the four probes the evidence rule actually
+produced — `B40`, `B42`, `B34`, `B35` — every one of them aimed wrong. (An
+earlier draft of this paragraph called `R98` a fifth probe. It was not; the
+rule produced four, and all four failed. Counting an unprobed claim as a probe
+flatters the rule, which is the one thing the tally exists to prevent.) This
+round examined five more claims and all five were wrong too:
 
-- **A cancellation poll another poll on the same read reaches first (17).**
-  `B01`–`B15`, the fifteen `throwIfAbortedAtBatch` calls: each is either
-  followed by an unconditional poll of the same signal at the same index
-  (`styles.ts:256-257`), or followed by a call whose first statement is one
-  (`serialize.ts:1043` → `serializeNode`), or — for `fonts.ts:230`, inside a
-  walk visitor — preceded by `walkNode`'s. **Not probed individually**; the poll
-  that subsumes each is adjacent and identifiable by reading, which is the same
-  kind of reasoning that failed three times above, so treat these as the least
-  settled of the six kinds. Plus `B34` and `B35`, whose probes and the
-  double-deletion that identifies their subsumer are in the table above: with
-  their own poll gone the read still cancels; with `serializeNode`'s gone too it
-  **returns a serialized forest to a caller who cancelled**.
+1. *`throwIfAbortedAtBatch` is subsumed at all fifteen of its call sites* —
+   `fonts.ts:230` is load-bearing.
+2. *`visibility.ts`'s cycle watch and walk bound change step count and nothing
+   else* — step count is host reads, and host reads are assertable.
+3. *The six `break`/`continue` rows return byte-identical output* — true of the
+   payload, and beside the point for `components.ts:262`, which reads a third
+   component from the host after the ceiling.
+4. and 5. *`M76` and `M88` are shapes no real host produces* — both close with
+   an ordinary `get_motion` fixture.
+
+**Fourteen examined, fourteen wrong.** At that rate the honest posture is not a
+better probe standard; it is abstention. So: **every row here that could not be
+closed is recorded `not probed`. No row asserts, implies or hedges that a test
+could not reach it.** What each kind still says is what the *production code*
+does — the next reader needs that to aim a probe — and it stops there.
+
+The diagnosis behind rounds three and four is worth carrying out of this
+section, because it is not about diligence: **the question a mutation answers
+is "would a test go red?", not "does the read still cancel?"** Three careful
+probes measured the second question for `B34` and `B35` and got a correct
+answer to the wrong question. The two diverge whenever a check's effect is *how
+much host work happens after it* — a cancellation poll, a `break` at a ceiling,
+a classification that stops a scan. That class is assertable with a counting
+host getter, and this record had already used the technique (`visitedNodes` for
+`dev-mode`/`motion`/`reactions`, `harness.lookedUp` in `render.test.ts`)
+without recognising it as the general answer.
+
+- **Batch cancellation calls (14).** Fourteen of the fifteen
+  `throwIfAbortedAtBatch` calls. Each is immediately followed by an
+  unconditional `signal?.throwIfAborted()` on the same signal at the same index
+  (`styles.ts` `:256`, `:288`; `components.ts` `:278`, `:338`;
+  `dev-mode.ts:290`; `motion.ts:674`; `reactions.ts:484`; `variables.ts`
+  `:456`, `:477`), or by a call whose first statement is one (`serialize.ts`
+  `:1043` → `serializeNode`, `:1165` → `walkNode`, `:1210`, `:1261`, `:1318` →
+  each pre-pass's own `visit`). The fifteenth, `fonts.ts:230`, had neither and
+  is closed. **Not probed.**
 - **Eleven dead fields (11).** The seven `visitedNodes` limits, `decodedBytes`
   and `base64Bytes`, motion's `VARIABLE_ALIAS` easing entry, and the walk
-  context's `depth` — each written and never read, verified by reading the whole
-  call graph for each. **Not probed**: a field nothing reads has no observable
-  to assert against.
-- **A guard whose twin fires first (7).** `resolve`'s
-  `if (this.budget.exhausted) return EXHAUSTED` can only run if the deadline
-  passes between two consecutive synchronous clock reads with no `await` between
-  (`V37`); `lookupVariable`'s budget gate is checked again by every caller before
-  it (`V24`); `visibility.ts`'s cycle watch and walk bound both answer
-  `undetermined`, so removing either changes step count and nothing else
-  (`Z699`, `Z700`); a second `depthLimit` is always identical to the first, since
-  `appliedDepth` is a constant of the read (`Z459`); and `blendMode()` answers
-  `undefined` whether or not `PASS_THROUGH` / `NORMAL` are in the table
-  (`Z070`, `Z071`). **Not probed**, except that this kind lost a member this
-  round: `R98` claimed `readNodes`' per-item capability arm could not be reached
-  because the pre-flight throws first, and that was wrong — the host is read
-  *twice*, so a host that stops offering `getNodeByIdAsync` between the two
-  reads lands squarely on it. Closed.
-- **A `break` a `continue` cannot be distinguished from (6).** Three of the
-  original nine were closable and are closed: `dev-mode`, `motion` and
-  `reactions` return `visitedNodes` in the result, so `continue` keeps counting
-  where `break` stops. **The other six were probed and the probes are
-  committed**: `the component loop stops at the emission ceiling`, `the instance
-  batch stops at the emission ceiling`, `the font loop stops at the emission
-  ceiling`, `the local pass stops at the node ceiling rather than considering the
-  rest`, and `the collection loop stops at both ceilings rather than considering
-  the rest` (two rows). Under the mutation each returns byte-identical output,
-  because those readers publish no visited count and the truncation's own count
-  is latched at the first refusal.
-- **The first-truncation-wins guard, called once (5).** `mark()` keeps the first
-  walk truncation, but in five readers it is called exactly once per read.
-  `components.ts` is the exception — its budget marks a second time — and that
-  row is closed. **Not probed.**
-- **A shape no real host produces, or bookkeeping the next line discards (15).**
-  `styles.ts`'s `isMixedStyleId` compares a style id against `figma.mixed` behind
-  a `typeof value !== "string"` gate, and every real host's `figma.mixed` is a
-  symbol (`ST22`). `byteLength`'s lone-surrogate branch needs a lone surrogate to
-  survive `JSON.stringify` — **measured, not reasoned**: `JSON.stringify("\ud800")`
-  on this runtime returns the eight ASCII characters `"\ud800"`, so the branch
-  cannot see one (`Z463`). A settled screenshot validation clears its timeout and
+  context's `depth` — each written, and no read of it found anywhere in the
+  call graph. **Not probed.**
+- **A guard whose twin fires first (5).** `resolve`'s
+  `if (this.budget.exhausted) return EXHAUSTED` runs only if the deadline
+  passes between two consecutive synchronous clock reads with no `await`
+  between them (`V37`); `lookupVariable`'s budget gate is read again by every
+  caller before it (`V24`); a second `depthLimit` is identical to the first,
+  since `appliedDepth` is a constant of the read (`Z459`); and `blendMode()`
+  answers `undefined` both for a mode missing from the table and for
+  `PASS_THROUGH` / `NORMAL` (`Z070`, `Z071`). **Not probed.** This kind lost
+  three members: `R98` — a `getScreenshot` row in `render.ts`, whose per-item
+  capability arm the pre-flight was said to make unreachable, when in fact the
+  host is read *twice* — and `Z699` / `Z700`, the two visibility cycle guards,
+  closed together by counting `parent` reads: 65 for a self-cycle, not the
+  1024 the bound allows.
+- **A `break` a `continue` cannot be told apart from in the payload (5).**
+  `the instance batch stops at the emission ceiling`, `the font loop stops at
+  the emission ceiling`, `the local pass stops at the node ceiling rather than
+  considering the rest`, and `the collection loop stops at both ceilings rather
+  than considering the rest` (two rows). In each, the truncation latches its
+  count at the first refusal, so the emitted result is byte-identical under the
+  mutation; the probes are committed. Four of the original nine were closable
+  and are closed: `dev-mode`, `motion` and `reactions` return `visitedNodes` in
+  the result, so `continue` keeps counting where `break` stops, and
+  `components.ts:262` reads a third component from the host with the `break`
+  turned into a `continue`.
+- **The first-truncation-wins guard, called once (5).** `mark()` keeps the
+  first walk truncation, and in five readers it is called exactly once per
+  read. `components.ts` is the exception — its budget marks a second time — and
+  that row is closed. **Not probed.**
+- **A shape no fixture here has produced, or bookkeeping the next line
+  discards (13).** `styles.ts`'s `isMixedStyleId` compares a style id against
+  `figma.mixed` behind a `typeof value !== "string"` gate, and the harness's
+  `figma.mixed` is a symbol (`ST22`). `byteLength`'s lone-surrogate branch needs
+  a lone surrogate to survive `JSON.stringify` — **measured, not reasoned**:
+  `JSON.stringify("\ud800")` on this runtime returns the eight ASCII characters
+  `"\ud800"` (`Z463`). A settled screenshot validation clears its timeout and
   unhooks its abort listener (`R22`, `R23`) — both act on an id already removed
-  from the pending map — and a cancelled validation's `CANCELLED` item (`R35`) is
-  produced and then discarded by the `signal?.throwIfAborted()` on the next line.
-  `SE58`, `D20`, `D48`, `M76`, `M88`, `V30`, `V36`, `V43`, `Z270` and `F56` are
-  the same shape. **Not probed** apart from `Z463`.
+  from the pending map — and a cancelled validation's `CANCELLED` item (`R35`)
+  is produced and then discarded by the `signal?.throwIfAborted()` on the next
+  line. `SE58`, `D20`, `D48`, `V30`, `V36`, `V43`, `Z270` and `F56` are the same
+  shape. **Not probed** apart from `Z463`. Two members left this kind this
+  round: `M76`, where an indexed item declaring `tracks` is classified as a
+  keyframe binding and the classification is what stops the scan of its
+  `properties`; and `M88`, where `fills`, `strokes` and `effects` are read by
+  the indexed pass and so skipped by the plain property scan. Both show up as
+  an extra binding in the emitted list.
 
-17 + 11 + 7 + 6 + 5 + 15 = 61.
+14 + 11 + 5 + 5 + 5 + 13 = 53.
 
 The narrowing of `not applicable` above rests on this partition: under a wider
-rule of "unobservable by construction", kinds 1, 2, 3 and 5 — **40 of the 61** —
-would move, and the verdict would stop distinguishing much. Kind 4 shows the
-wider rule would also have been wrong on the merits: three of its nine rows were
-observable all along, and so were three rows in kinds 1 and 3.
+rule of "unobservable by construction", kinds 1, 2, 3 and 5 — **35 of the 53** —
+would move, and the verdict would stop distinguishing much. The wider rule would
+also have been wrong on the merits, in every kind it touches and one it does
+not: four of kind 4's original nine rows were observable all along, and so were
+three of kind 1's seventeen, three of kind 3's eight and two of kind 6's
+fifteen.
 
 ### Two maintenance edges
 
@@ -2338,7 +2391,7 @@ guard *inside* them (`C76`, `N65`, `R77`) or by the parse conditions above them
 
 ### Verification
 
-`cd plugin && bun run build && bun run test` — **638 pass / 0 fail / 2,481
+`cd plugin && bun run build && bun run test` — **645 pass / 0 fail / 2,495
 expect() calls / 28 files**, from a baseline of 476 / 0 / 2,100 / 28.
 `bun run format:check` and `bun run typecheck` clean. No Rust file was touched.
 
@@ -2348,8 +2401,8 @@ and compares SHA-256 against the pre-mutation value; a run that does not restore
 byte for byte aborts the batch. `git status --porcelain --untracked-files=all`
 was empty before every commit.
 
-Each of the 369 closed rows was re-measured with its mutation re-applied after
+Each of the 377 closed rows was re-measured with its mutation re-applied after
 the test that closes it was in place, and the test named in the last column is
 the one the run reported failing — the attribution is measured, not asserted.
-The 61 open rows were re-measured against the finished suite and are green
+The 53 open rows were re-measured against the finished suite and are green
 there.
