@@ -1,35 +1,13 @@
+use super::{contains_ident, instructs, workspace_root};
 use figma_dev_mcp_prompts::extracted_tool_references;
 use figma_dev_mcp_protocol::{PROMPT_NAMES, TOOL_NAMES};
 use std::collections::BTreeSet;
-use std::{fs, path::PathBuf};
-
-fn workspace_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("tests crate must sit in the workspace")
-        .to_path_buf()
-}
+use std::fs;
 
 fn prompt_body(name: &str) -> String {
     let path = workspace_root().join(format!("crates/prompts/bodies/{name}.md"));
     fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("prompt body {} must exist: {error}", path.display()))
-}
-
-fn contains_ident(haystack: &str, needle: &str) -> bool {
-    haystack.match_indices(needle).any(|(index, _)| {
-        let before = haystack[..index].chars().next_back();
-        let after = haystack[index + needle.len()..].chars().next();
-        !before.is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
-            && !after.is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
-    })
-}
-
-fn instructs(haystack: &str, phrase: &str) -> bool {
-    haystack.match_indices(phrase).any(|(index, _)| {
-        let prefix = haystack[..index].trim_end();
-        !prefix.ends_with("do not") && !prefix.ends_with("never") && !prefix.ends_with("without")
-    })
 }
 
 #[test]

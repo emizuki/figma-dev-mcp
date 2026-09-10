@@ -5,18 +5,12 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
+use super::{contains_ident, instructs, workspace_root};
 use figma_dev_mcp_prompts::{RESOURCE_URI_PREFIX, resource_uri};
 use figma_dev_mcp_protocol::wire::{BrokerToPlugin, ReadOperation};
 use figma_dev_mcp_protocol::{PROMPT_NAMES, TOOL_NAMES};
 use figma_dev_mcp_tools::tools_catalog;
 use serde_json::{Value, json};
-
-fn workspace_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("tests crate sits in the workspace")
-        .to_path_buf()
-}
 
 /// Whether `production_typescript` would open this path: a `.ts` file that is
 /// neither a test nor the typecheck fixture. Extracted so the walk and the
@@ -845,27 +839,6 @@ fn operator_documentation() -> String {
         combined.push('\n');
     }
     combined
-}
-
-fn contains_ident(haystack: &str, needle: &str) -> bool {
-    haystack.match_indices(needle).any(|(index, _)| {
-        let before = haystack[..index].chars().next_back();
-        let after = haystack[index + needle.len()..].chars().next();
-        !before.is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
-            && !after.is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
-    })
-}
-
-fn instructs(haystack: &str, phrase: &str) -> bool {
-    haystack.match_indices(phrase).any(|(index, _)| {
-        let prefix = haystack[..index].trim_end();
-        !prefix.ends_with("do not")
-            && !prefix.ends_with("does not")
-            && !prefix.ends_with("never")
-            && !prefix.ends_with("without")
-            && !prefix.ends_with("no")
-            && !prefix.ends_with("not")
-    })
 }
 
 fn table_first_cell_identifiers(markdown: &str) -> Vec<String> {
@@ -1767,16 +1740,13 @@ fn the_operator_documentation_scan_reaches_all_four_files_and_instructs_still_fi
     // `instructs`, in both directions, on planted text. Nothing in the real
     // corpus exercises either branch.
     //
-    // Deliberately only on prefixes *both* implementations of `instructs`
-    // exempt. This module exempts six prefixes and `prompts.rs` exempts three,
-    // and the three that differ (`does not`, `no`, `not`) are a disagreement
-    // this sweep raises rather than settles. An assertion here about one of
-    // those three would freeze it one-directionally — measured: reconciling
-    // toward the shorter list would cost a test edit while reconciling toward
-    // the longer one is free — so the divergent prefixes are pinned by neither
-    // control, and the disagreement stays as free to fix in either direction as
-    // it was before this test existed. `do not` and `never` are common to both,
-    // and pin exactly the property this task is about.
+    // `instructs` is now a single shared implementation in `super` (formerly
+    // duplicated here and in `prompts.rs` with two different exemption
+    // lists — a six-prefix one here and a three-prefix one there, which
+    // disagreed on the same sentence). The full three-prefix exemption list
+    // is pinned by `the_shared_instructs_exempts_exactly_three_negation_prefixes`
+    // below; this block only pins that the doc scan actually reaches a live
+    // `instructs` call along the plain-instruction and `do not`/`never` paths.
     assert!(
         instructs("you may save to a path when exporting", "save to a path"),
         "instructs no longer reports a plain instruction, so every phrase the \
@@ -1828,6 +1798,26 @@ fn the_operator_documentation_scan_reaches_all_four_files_and_instructs_still_fi
         "DIAGNOSTIC_CALL_NAMES no longer names test_missing_capability, the \
          diagnostic the README table rule was written about"
     );
+}
+
+#[test]
+fn the_shared_instructs_exempts_exactly_three_negation_prefixes() {
+    assert!(
+        instructs("you may save to a path when exporting", "save to a path"),
+        "a plain statement must read as an instruction"
+    );
+    for exempt in ["do not", "never", "without"] {
+        assert!(
+            !instructs(&format!("{exempt} save to a path"), "save to a path"),
+            "`{exempt}` must be exempt"
+        );
+    }
+    for not_exempt in ["does not", "no", "not", "cannot"] {
+        assert!(
+            instructs(&format!("{not_exempt} save to a path"), "save to a path"),
+            "`{not_exempt}` must NOT be exempt — widening the list weakens the scan"
+        );
+    }
 }
 
 const ACCEPTANCE_RECORD: &str = "docs/acceptance-sweep.md";
