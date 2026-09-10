@@ -331,7 +331,10 @@ points (8 + 4 = 12)**; all three grep-invisible additions are comparisons.
 ### Which supply points count, and why `ws.rs` does not
 
 A supply point earns a place in the enumeration when a mutation there is not
-already answered by a mutation at a comparison that is itself counted.
+already answered by a mutation at a counted **enforcement site** — not merely at
+a counted *comparison*. The distinction is what decides `ws.rs`: the thing that
+answers `ws.rs:78` is `config.rs:47`, which is itself a supply point, so a rule
+phrased over comparisons alone would let `ws.rs` back in.
 
 - `config.rs:46`, `:47` and `crates/broker/src/rpc.rs:31` feed comparisons in
   dependencies, so nothing in this repository stands for them otherwise. They are
@@ -344,12 +347,14 @@ already answered by a mutation at a comparison that is itself counted.
   deliberately rather than by oversight. The comparison it feeds, `:426`, *is*
   counted in tree — but the two mutations are not equivalent and did not give the
   same answer. `:426`'s only pin is
-  `streaming_encoder_aborts_at_cap_without_serializing_the_remaining_items`,
-  whose `CappedWriter::new(8)` fixes an arbitrary cap of 8 bytes: it holds the
-  comparison's shape and says nothing whatever about *which* cap `encode_frame`
-  supplies. Mutating `:374` to `MAX_ENVELOPE_BYTES - 1` accordingly leaves the
-  suite green at 283 / 0, where mutating `:426` turns it red at 282 / 1. Two
-  separate facts, two rows.
+  `streaming_encoder_aborts_at_cap_without_serializing_the_remaining_items`, and
+  that test fixes its own caps in both halves — `encode_frame_with_maximum(…, 32)`
+  asserting `TooLarge { actual: 33, maximum: 32 }`, then `CappedWriter::new(8)`
+  taking exactly 8 bytes and refusing the 9th. Both caps are arbitrary and
+  neither is `MAX_ENVELOPE_BYTES`: the test holds the comparison's shape and says
+  nothing whatever about *which* cap `encode_frame` supplies. Mutating `:374` to
+  `MAX_ENVELOPE_BYTES - 1` accordingly leaves the suite green at 283 / 0, where
+  mutating `:426` turns it red at 282 / 1. Two separate facts, two rows.
 
 ### Ruling: `config.rs:46` and `:47` are two sites, and `ws.rs` is not a third
 
@@ -376,7 +381,18 @@ in one frame (tungstenite 0.30.0):
 Those three, and tokio-util's two below, are written as prose line numbers on
 purpose: they point into a pinned dependency rather than into this repository, so
 the citation scan cannot resolve them and would refuse a `file.rs:NNN` it cannot
-check. The version pin is what keeps them honest.
+check. `Cargo.lock` pins tungstenite at `0.30.0` and tokio-util at `0.7.19`, and
+that pin is the whole of what keeps these five honest.
+
+**Which makes them the strictest citations in this file, not the loosest.** An
+unverifiable citation has to be right, because nothing downstream will ever say
+otherwise: a wrong line here fails silently and forever, where a wrong
+`file.rs:NNN` fails the next time anyone runs the suite. One of these five was
+wrong on first writing — the encoder line below was cited as 607, a blank line,
+against the comparison at 608 — and no gate in this repository could have caught
+it. All five have since been re-derived by grep against the pinned sources in a
+single pass. Re-derive all five, not one, whenever any of them is touched, and
+re-derive them on any `Cargo.lock` bump past those two versions.
 
 The third is the one this ruling turns on, and naming it exactly matters, because
 the obvious guess is wrong: the fragmented path runs
@@ -419,7 +435,13 @@ are measured through `:46`/`:47`; `Limits::checked` = 2 (comparisons).**
 | A test `Limits` set to exactly the production frame ceiling is accepted — **a configured limit, not a payload** | `Limits::checked` (`crates/broker/src/config.rs:73`): `max_frame_bytes > production.max_frame_bytes` → `>=` | 263 / 20 | covered — but incidentally: the 20 reds are every test that hands `Limits::production()` to `BrokerConfig::for_test`, not a test written about this ceiling, and they arrive as `.unwrap()` panics in test setup rather than as assertions. A fragile pin, too: 46 test call sites use `Limits::reduced_for_test()` and only a handful use `Limits::production()`, so the day the last of those moves this becomes a gap with nothing to announce it | — |
 | The same for the configured message ceiling | `crates/broker/src/config.rs:75`: `max_message_bytes > production.max_message_bytes` → `>=` | 263 / 20 | covered — the same 20, by the same mechanism, equally incidentally and equally fragile | — |
 
-**Eleven mutations: 8 gaps and 3 covered (8 + 3 = 11).** Scoped as the task was
+**Eleven mutations: 8 gaps and 3 covered (8 + 3 = 11).** This eleven is not the
+other one: the table's rows are **7 comparisons + 4 supply points = 11**, whereas
+the *in-tree comparison* count of 11 keeps those 7, drops the 4 supply points,
+and adds the 4 comparisons measured in the section above — `deferred.rs`'s three
+guards and `validate_body_length` (**7 + 4 = 11**, a different four). Two sums
+that land on the same number by coincidence; read the label, not the digit.
+Scoped as the task was
 framed — the eight sites the sweep had never reached — it is **8 gaps and 0
 covered**; all three covered rows are sites the grep could not see, and all three
 were found by reading the code rather than by searching it. Every mutation above
@@ -435,7 +457,7 @@ refuses `+ 1`; the four supply points hand the constant over unmodified, and hav
 no operator to disagree with. The five comparisons outside this repository agree
 too: tokio-util 0.7.19's `LengthDelimitedCodec` is `n > max_frame_len` in both
 its decoder (`src/codec/length_delimited.rs`, line 522) and its encoder (line
-607), and all three tungstenite comparisons tabulated above accept the ceiling
+608), and all three tungstenite comparisons tabulated above accept the ceiling
 exactly. **11 + 5 = 16 comparisons, and no two of them sit a byte apart.** After
 `8768b1c` closed the one-byte disagreement in `deferred.rs`, nothing here
 disagrees with anything else.
