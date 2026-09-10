@@ -8,7 +8,6 @@ export const MAX_DISPLAY_TEXT_BYTES = 1_024
 export const MAX_VISITED_NODES = 10_000
 export const MAX_RETURNED_NODES = 2_000
 export const MAX_TEXT_BYTES = 8 * 1_024 * 1_024
-export const MAX_ENVELOPE_BYTES = 24 * 1_024 * 1_024
 export const MAX_RASTER_SIDE = 4_096
 export const MAX_RASTER_PIXELS = 16_000_000
 export const MAX_RASTER_DECODED_BYTES = 12 * 1_024 * 1_024
