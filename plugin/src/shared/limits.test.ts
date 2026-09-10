@@ -7,7 +7,6 @@ import {
   INACTIVITY_TIMEOUT_SECS,
   MAX_DEPTH,
   MAX_DISPLAY_TEXT_BYTES,
-  MAX_ENVELOPE_BYTES,
   MAX_IDENTIFIER_BYTES,
   MAX_IN_FLIGHT,
   MAX_INPUT_IDS,
@@ -37,7 +36,6 @@ describe("reviewed resource ceilings", () => {
     expect(MAX_VISITED_NODES).toBe(10_000)
     expect(MAX_RETURNED_NODES).toBe(2_000)
     expect(MAX_TEXT_BYTES).toBe(8 * 1024 * 1024)
-    expect(MAX_ENVELOPE_BYTES).toBe(24 * 1024 * 1024)
     expect(MAX_RASTER_SIDE).toBe(4_096)
     expect(MAX_RASTER_PIXELS).toBe(16_000_000)
     expect(MAX_RASTER_DECODED_BYTES).toBe(12 * 1024 * 1024)
