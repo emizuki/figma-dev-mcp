@@ -177,4 +177,41 @@ mod tests {
             "refused for the wrong reason: {error}"
         );
     }
+
+    /// `decode_raw` is the third of this file's three ceiling guards, and the
+    /// only one nothing reached: narrowing it left the suite green where the
+    /// other two turn a test red. It is the guard on every read-operation
+    /// input arriving from the wire (`wire.rs` dispatches all of them through
+    /// here), so an unpinned ceiling here is an unpinned ceiling on the whole
+    /// read surface.
+    ///
+    /// Both directions are pinned, because both are ways to get it wrong: a
+    /// payload one byte over must be refused, and one of exactly
+    /// `MAX_ENVELOPE_BYTES` must be accepted — every other enforcement of this
+    /// constant uses `>`, so the limit is inclusive by the protocol's own
+    /// convention.
+    #[test]
+    fn decode_raw_refuses_one_byte_over_the_ceiling_and_accepts_the_ceiling() {
+        // {"a":"<pad>"} is 8 bytes of syntax: 2 braces, 3 for the quoted name,
+        // 1 colon, 2 quotes around the value.
+        let at_ceiling = raw(&format!(
+            "{{\"a\":\"{}\"}}",
+            "x".repeat(MAX_ENVELOPE_BYTES - 8)
+        ));
+        assert_eq!(at_ceiling.get().len(), MAX_ENVELOPE_BYTES);
+        decode_raw::<Box<RawValue>, serde_json::Error>(&at_ceiling)
+            .expect("exactly the ceiling is within the ceiling");
+
+        let over = raw(&format!(
+            "{{\"a\":\"{}\"}}",
+            "x".repeat(MAX_ENVELOPE_BYTES - 7)
+        ));
+        assert_eq!(over.get().len(), MAX_ENVELOPE_BYTES + 1);
+        let error = decode_raw::<Box<RawValue>, serde_json::Error>(&over)
+            .expect_err("one byte over the ceiling must be refused");
+        assert!(
+            error.to_string().contains("deferred JSON exceeds"),
+            "refused for the wrong reason: {error}"
+        );
+    }
 }
