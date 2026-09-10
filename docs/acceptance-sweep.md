@@ -194,10 +194,18 @@ Two are worth ruling on first:
   Every other bound in the crate has at least one side held.
 - **`deferred.rs` is not a pair at all.** It holds a third, independent
   implementation of the envelope ceiling that `validate_body_length` knows
-  nothing about, and nothing in the suite touches any of its three checks.
-  Re-probed against the finished tree: turning `insert`'s
-  `next > MAX_ENVELOPE_BYTES` into `>=` still leaves the workspace at
-  **279 / 0**.
+  nothing about. **Measured on the pre-branch tree at `847d35a`**, nothing in the
+  suite touched any of its three checks: turning `insert`'s
+  `next > MAX_ENVELOPE_BYTES` into `>=` left the workspace at **279 / 0**.
+
+  **That sentence is history, not a reading of the current tree** — it was
+  written before `8768b1c` and the branch falsified it. Re-measured against
+  `a6ff923` on 2026-09-10, one guard at a time: `insert`'s gives **282 / 1** and
+  `decode`'s gives **282 / 1**, the sole red in both being
+  `an_object_encoding_to_exactly_the_ceiling_is_accepted`. `decode_raw`'s still
+  gives **283 / 0** and remains unpinned, so it is **two of the three checks that
+  are now held (2 + 1 = 3)**, not all three. See the "Since fixed" note at the
+  end of the next section.
 
 ### A real bug: `deferred.rs`'s two implementations of one ceiling are a byte apart
 
@@ -1182,6 +1190,13 @@ untested member of a group whose siblings were pinned.
 
 ## tests/policy
 
+> **Read this area as of `847d35a`.** Everywhere below that speaks of *two*
+> `instructs` implementations — the two mutation rows, the gate-evaluation table,
+> and the section that raises the disagreement — describes the tree as it was
+> when the sweep ran. Commit `28af10c` reconciled them into one. The measurements
+> stand as history; the present tense does not. See "Since fixed" at the end of
+> "Two implementations of `instructs` that disagreed — raised here, fixed since".
+
 The Scope row above says 8 refusal-only and 0 already paired, and re-running
 the plan's command confirms it: 8 names match, none of them also matches the
 accept regex. The row is correct and is also beside the point here, and the
@@ -1329,7 +1344,7 @@ Both are Task 4's wrong-reason class, and both are sharper here than they were
 there: in `tests/integration` the wrong reason produced a plausible-looking
 error; here it produces a *pass*.
 
-### Two implementations of `instructs` that disagree, reported not fixed
+### Two implementations of `instructs` that disagreed — raised here, fixed since
 
 `prompts.rs` and `read_only.rs` each define a private `instructs(haystack,
 phrase)`, and they exempt different negation prefixes. `prompts.rs` exempts
@@ -1367,6 +1382,27 @@ The general lesson, since it cost a review round: a positive control asserts a
 predicate *fires*, and the sample it fires on carries opinions. Choosing that
 sample from the region two implementations disagree about turns a control into
 a vote.
+
+**Since fixed.** Commit `28af10c` reconciled the disagreement toward the shorter
+list, and everything above this paragraph is now history. There is one
+`pub(crate) fn instructs` in `tests/policy/mod.rs`, used by both scans; neither
+`prompts.rs` nor `read_only.rs` keeps a private copy, and `read_only.rs` no
+longer exempts six. The surviving list is exactly three — `do not`, `never`,
+`without` — and it is pinned in **both** directions by
+`the_shared_instructs_exempts_exactly_three_negation_prefixes`, which asserts
+that those three are exempt *and* that `does not`, `no`, `not` and `cannot` are
+not. That second half is the point: these scans assert `!instructs(..)`, so every
+prefix added to the list makes the scan weaker rather than stricter, and `not` in
+particular is a suffix of `cannot`, `do not` and `does not`, so exempting it
+would swallow cases nobody chose to exempt. The policy binary moved 41 → **42 /
+0** with that test.
+
+This paragraph exists because the record described a defect this branch had
+already fixed, in the present tense — which is worse than never having raised it,
+since a reader goes looking for a bug that is gone and then has to work out
+whether the code or the record is lying. The sibling defect in `deferred.rs` got
+its "Since fixed" note and this one did not, purely because no task's brief owned
+the seam between them.
 
 ### The record's own citations, and the one that did not resolve
 
