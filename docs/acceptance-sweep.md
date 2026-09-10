@@ -180,7 +180,7 @@ fixed** (reported for a ruling on scope):
 | A `NodeBatch` **decoded** with exactly `MAX_INPUT_IDS` items is accepted | its visitor: `while items.len() < MAX_INPUT_IDS` → `+ 1 <` | 259 / 1 | covered — `recursive_results_enforce_depth_and_global_returned_node_budgets` | — |
 | An error item list of exactly `MAX_INPUT_IDS` items is accepted, **built** | `error.rs` `validate_item_count`: `count > MAX_INPUT_IDS` → `>=` | 260 / 0 | **gap** | none — reported, not fixed |
 | An error item list of exactly `MAX_INPUT_IDS` items is accepted, **decoded** | `error.rs` `ErrorItemListVisitor`: `while items.len() < MAX_INPUT_IDS` → `+ 1 <` | 260 / 0 | **gap** — this pair has *neither* half pinned | none — reported, not fixed |
-| A deferred JSON payload of exactly `MAX_ENVELOPE_BYTES` is accepted | `deferred.rs`: all three `> MAX_ENVELOPE_BYTES` → `>=` (lines 38, 65, 79) | 260 / 0 | **gap** — a third, independent implementation of the envelope ceiling | none — reported, not fixed |
+| A deferred JSON payload of exactly `MAX_ENVELOPE_BYTES` is accepted | `deferred.rs`: all three `> MAX_ENVELOPE_BYTES` → `>=` — the guards in `insert`, `decode` and `decode_raw` | 260 / 0 | **gap** — a third, independent implementation of the envelope ceiling | none when measured — fixed since, see the end of the next section |
 | A node whose children fill the remaining node budget exactly is accepted | `validate_node`: `node.children.len() > MAX_RETURNED_NODES - *count` → `>=` | 259 / 1 | covered — `outbound_node_collections_reject_wide_roots_and_children_without_auxiliary_growth` | — |
 | A `NodeIdList` / `PageIdList` / `NodeTypeList` **built** at exactly its ceiling is accepted | `bounded_list_newtype!`'s `TryFrom` (`domain/common.rs:446`): `values.len() > $maximum` → `>=` | 260 / 0 | **gap** — the decode half is in the main table above, the builder half is in neither | none — reported, not fixed |
 
@@ -194,10 +194,18 @@ Two are worth ruling on first:
   Every other bound in the crate has at least one side held.
 - **`deferred.rs` is not a pair at all.** It holds a third, independent
   implementation of the envelope ceiling that `validate_body_length` knows
-  nothing about, and nothing in the suite touches any of its three checks.
-  Re-probed against the finished tree: turning `insert`'s
-  `next > MAX_ENVELOPE_BYTES` into `>=` still leaves the workspace at
-  **279 / 0**.
+  nothing about. **Measured on the pre-branch tree at `847d35a`**, nothing in the
+  suite touched any of its three checks: turning `insert`'s
+  `next > MAX_ENVELOPE_BYTES` into `>=` left the workspace at **279 / 0**.
+
+  **That sentence is history, not a reading of the current tree** — it was
+  written before `8768b1c` and the branch falsified it. Re-measured against
+  `a6ff923` on 2026-09-10, one guard at a time: `insert`'s gives **282 / 1** and
+  `decode`'s gives **282 / 1**, the sole red in both being
+  `an_object_encoding_to_exactly_the_ceiling_is_accepted`. `decode_raw`'s still
+  gives **283 / 0** and remains unpinned, so it is **two of the three checks that
+  are now held (2 + 1 = 3)**, not all three. See the "Since fixed" note at the
+  end of the next section.
 
 ### A real bug: `deferred.rs`'s two implementations of one ceiling are a byte apart
 
@@ -239,6 +247,282 @@ leaves the workspace green, which is the row above. A fix belongs in its own
 change — either make `insert` account `name.len() + 3` for the first field and
 `+ 4` thereafter, or drop the estimate and measure the encoded buffer once —
 and it needs the accept-side test the row above already names as missing.
+
+**Since fixed.** That own change landed as `8768b1c`. `insert` and `decode` now
+compute through one `field_cost`, `decode` carries a `debug_assert_eq!` that
+makes every decode in the suite a witness to the two halves agreeing, and the
+accept-side test this paragraph asked for exists as
+`an_object_encoding_to_exactly_the_ceiling_is_accepted`. `decode`'s own guard is
+still unreachable *through `insert`*, which refuses first — but it is reached
+directly, by a hand-built accumulator, in
+`decodes_ceiling_check_refuses_an_oversized_field_set`. The three guards sit in
+`insert`, `decode` and `decode_raw`; the row above records what was measured
+before that change, not what the tree does now. Cite them by function name: the
+fix moved every one of their line numbers, and the earlier prose citation of
+"lines 38, 65, 79" had already rotted, because the citation scan matches
+`file.rs:NNN` and does not see line numbers written as prose.
+
+## The envelope ceiling: the whole enumeration, measured
+
+The section above measured four sites that compare against `MAX_ENVELOPE_BYTES`.
+This section measures the rest, and for each says **what quantity it bounds** —
+because two sites bounding different quantities are not in disagreement however
+differently they behave, and naming the quantity is the whole substance here.
+
+### Producing the count rather than repeating it
+
+`grep -rn MAX_ENVELOPE_BYTES crates --include='*.rs'` returns 26 lines. Five are
+`use` imports; one is the definition (`crates/protocol/src/limits.rs:13`); three
+are the `{MAX_ENVELOPE_BYTES}` interpolations inside `deferred.rs`'s error
+messages; four are inside `deferred.rs`'s own test module; and one
+(`crates/protocol/src/rpc.rs:492`) is the `maximum:` field of the error value
+being returned rather than a comparison. **26 − 5 − 1 − 3 − 4 − 1 = 12** sites
+that name the constant.
+
+The grep finds only the sites that *spell* it. Three more compare against it
+without naming it, and one of those is the site that matters most:
+
+- **A thirteenth site: `CappedWriter::write`
+  (`crates/protocol/src/rpc.rs:426`).** `crates/protocol/src/rpc.rs:374` holds no
+  comparison at all — it hands `MAX_ENVELOPE_BYTES` to
+  `encode_frame_with_maximum`, which stores it on the writer, and the byte
+  comparison happens two functions away as `buffer.len() > remaining`. A grep for
+  the constant cannot see it, and it is the only envelope-ceiling comparison in
+  the tree that the suite pins at its boundary.
+- **A fourteenth and fifteenth: `Limits::checked`
+  (`crates/broker/src/config.rs:73` and `:75`).** Both compare a caller-supplied
+  limit against `Limits::production()`'s fields, which *are*
+  `MAX_ENVELOPE_BYTES`.
+
+**12 named + 1 + 2 = 15 enforcement sites in `crates`.**
+
+### Two categories, because this count has moved four times
+
+This number has been nine, ten, twelve and fifteen across the life of this sweep,
+and re-grepping never settled it, because the word "site" was doing two jobs at
+once. Define both, and every count below then names which one it means.
+
+- A **comparison** holds an operator that tests a byte count against the ceiling.
+  This is where an off-by-one can live, and it is what a `>` → `>=` mutation
+  moves.
+- A **supply point** holds no operator. It hands `MAX_ENVELOPE_BYTES`, or a field
+  equal to it, to a comparison that lives somewhere else. A mutation here moves
+  *where* the ceiling sits, not the shape of the test, so the equivalent mutation
+  is `MAX_ENVELOPE_BYTES - 1`.
+- An **enforcement site** is either of those — a place where this ceiling is
+  imposed.
+
+Four of the fifteen are supply points, not comparisons:
+
+| Supply point | What is there | The comparison it feeds |
+|---|---|---|
+| `crates/broker/src/config.rs:46` | `max_frame_bytes: MAX_ENVELOPE_BYTES,` — a struct field | tungstenite's frame reader |
+| `crates/broker/src/config.rs:47` | `max_message_bytes: MAX_ENVELOPE_BYTES,` — a struct field | tungstenite's `check_max_size` **or** `IncompleteMessage::extend` |
+| `crates/broker/src/rpc.rs:31` | `.max_frame_length(MAX_ENVELOPE_BYTES)` — a builder argument | tokio-util's `LengthDelimitedCodec`, both halves |
+| `crates/protocol/src/rpc.rs:374` | `encode_frame_with_maximum(value, MAX_ENVELOPE_BYTES)` — a call argument | `CappedWriter::write` at `:426` |
+
+So the two counts, each with its sum:
+
+- **In-tree comparisons: 11** — `crates/tools/src/content.rs:266`, `:296`,
+  `:311`; `crates/broker/src/lib.rs:268`; `crates/protocol/src/deferred.rs:47`,
+  `:79`, `:93`; `crates/protocol/src/rpc.rs:426`, `:489`;
+  `crates/broker/src/config.rs:73`, `:75`. **3 + 1 + 3 + 2 + 2 = 11.**
+- **In-tree supply points: 4** — the table above.
+- **In-tree enforcement sites: 11 + 4 = 15.**
+- **Out-of-tree comparisons: 5** — tokio-util ×2 and tungstenite ×3, named in the
+  ruling below.
+- **Comparisons anywhere: 11 + 5 = 16.**
+
+Of the 12 sites that name the constant, **8 are comparisons and 4 are supply
+points (8 + 4 = 12)**; all three grep-invisible additions are comparisons.
+
+### Which supply points count, and why `ws.rs` does not
+
+A supply point earns a place in the enumeration when a mutation there is not
+already answered by a mutation at a counted **enforcement site** — not merely at
+a counted *comparison*. The distinction is what decides `ws.rs`: the thing that
+answers `ws.rs:78` is `config.rs:47`, which is itself a supply point, so a rule
+phrased over comparisons alone would let `ws.rs` back in.
+
+- `config.rs:46`, `:47` and `crates/broker/src/rpc.rs:31` feed comparisons in
+  dependencies, so nothing in this repository stands for them otherwise. They are
+  counted, and they are also where the constant is named.
+- `crates/broker/src/ws.rs:78` and `:79` are **not counted.** They hand the same
+  two values to the same tungstenite comparisons that `:46` and `:47` already
+  stand for, and a mutation at `ws.rs:78` has precisely the effect of a mutation
+  at `config.rs:47`. Counting both would count one enforcement twice.
+- `crates/protocol/src/rpc.rs:374` is the exception to the first rule, counted
+  deliberately rather than by oversight. The comparison it feeds, `:426`, *is*
+  counted in tree — but the two mutations are not equivalent and did not give the
+  same answer. `:426`'s only pin is
+  `streaming_encoder_aborts_at_cap_without_serializing_the_remaining_items`, and
+  that test fixes its own caps in both halves — `encode_frame_with_maximum(…, 32)`
+  asserting `TooLarge { actual: 33, maximum: 32 }`, then `CappedWriter::new(8)`
+  taking exactly 8 bytes and refusing the 9th. Both caps are arbitrary and
+  neither is `MAX_ENVELOPE_BYTES`: the test holds the comparison's shape and says
+  nothing whatever about *which* cap `encode_frame` supplies. Mutating `:374` to
+  `MAX_ENVELOPE_BYTES - 1` accordingly leaves the suite green at 283 / 0, where
+  mutating `:426` turns it red at 282 / 1. Two separate facts, two rows.
+
+### Ruling: `config.rs:46` and `:47` are two sites, and `ws.rs` is not a third
+
+`crates/broker/src/config.rs:46` and `:47` are **two sites, not one.** They set
+two different tungstenite limits and either can bind without the other:
+`max_frame_size` bounds the payload of a single websocket frame as it is parsed,
+`max_message_size` bounds the message reassembled across fragments. A peer
+sending 24 MiB as one frame is checked by both; a peer fragmenting the same
+24 MiB into 24 one-MiB frames is checked only by the second. They are separately
+mutable, and they were measured separately below.
+
+The point where tungstenite applies them — `crates/broker/src/ws.rs:78` and
+`:79` — is **not a third site**, under the rule above: it is a hand-off feeding
+the comparisons `:46` and `:47` already stand for. Those comparisons are
+**three**, not two, and which of them runs depends on whether the message arrived
+in one frame (tungstenite 0.30.0):
+
+| Comparison | Where (tungstenite 0.30.0) | Bounds |
+|---|---|---|
+| the frame reader's `*len > max_size as u64` | `src/protocol/frame/mod.rs`, line 181 | one frame's payload, always |
+| `check_max_size`'s `size > max_size` | `src/protocol/mod.rs`, line 786, reached from line 699 | a message that arrived **unfragmented** |
+| `IncompleteMessage::extend`'s `my_size > max_size \|\| portion_size > max_size - my_size` | `src/protocol/message.rs`, line 121, reached from lines 686 and 707 | a message **reassembled across fragments** |
+
+Those three, and tokio-util's two below, are written as prose line numbers on
+purpose: they point into a pinned dependency rather than into this repository, so
+the citation scan cannot resolve them and would refuse a `file.rs:NNN` it cannot
+check. `Cargo.lock` pins tungstenite at `0.30.0` and tokio-util at `0.7.19`, and
+that pin is the whole of what keeps these five honest.
+
+**Which makes them the strictest citations in this file, not the loosest.** An
+unverifiable citation has to be right, because nothing downstream will ever say
+otherwise: a wrong line here fails silently and forever, where a wrong
+`file.rs:NNN` fails the next time anyone runs the suite. One of these five was
+wrong on first writing — the encoder line below was cited as 607, a blank line,
+against the comparison at 608 — and no gate in this repository could have caught
+it. All five have since been re-derived by grep against the pinned sources in a
+single pass. Re-derive all five, not one, whenever any of them is touched, and
+re-derive them on any `Cargo.lock` bump past those two versions.
+
+The third is the one this ruling turns on, and naming it exactly matters, because
+the obvious guess is wrong: the fragmented path runs
+`(Some(payload), false) → extend` and then
+`(OpData::Continue, Some(incomplete)) → extend`, and never reaches
+`check_max_size` at all. `extend` refuses when `my_size + portion_size` would
+exceed `max_size` and accepts equality, so the reassembled message takes the
+ceiling exactly — which is what makes `:47` the guard that catches the
+24-fragment peer, and what makes `:46` and `:47` two sites rather than one. All
+three are inclusive at the ceiling, matching every comparison in this repository.
+
+Mutating `:46` and `:47` drives that whole chain — the mutated value reaches
+`accept_socket` in every integration test that builds `Limits::production()` —
+which is why no separate `ws.rs` probe appears below.
+
+Two things follow that a bare count would hide. First, both tungstenite limits
+are **inbound only**: `max_frame_size` is read by `read_message_frame` and by
+nothing on the write path, so the broker's *outbound* message to the plugin is
+bounded by `encoded_plugin_send` and by nothing else. Second, `Limits::checked`'s
+two clauses **are** sites, precisely because unlike `ws.rs` they hold a
+comparison of their own.
+
+The ruling, with its sum: **`:46` + `:47` = 2 enforcement sites (supply points);
+`ws.rs` = 0; tungstenite's own three comparisons are outside this repository and
+are measured through `:46`/`:47`; `Limits::checked` = 2 (comparisons).**
+
+### What each site bounds, and whether it takes the ceiling exactly
+
+| Accept path | Mutation | Suite result | Verdict | Test added |
+|---|---|---|---|---|
+| A screenshot result whose MCP envelope is exactly `MAX_ENVELOPE_BYTES` is accounted rather than refused — **the serialized JSON-RPC response body** the server writes to its MCP client, reached from `dispatch.rs` through `account_screenshot_result` | `account_screenshot_call_tool_result` (`crates/tools/src/content.rs:266`): `envelope.len() > MAX_ENVELOPE_BYTES` → `>=` | 283 / 0 | **gap** | none — measured, not fixed |
+| The same body for a non-screenshot tool — the other half of the same pair, on the path `service.rs` takes for every other call | `account_call_tool_result` (`crates/tools/src/content.rs:311`): the identical comparison | 283 / 0 | **gap** | none — measured, not fixed |
+| An arbitrary value serializing to exactly the ceiling passes `reject_oversize_frame` — **a standalone `serde_json::to_vec` of any `Serialize`**, exported at `crates/tools/src/lib.rs:14` and called by no production file, only by `tests/contracts/response_accounting.rs` | `crates/tools/src/content.rs:296`: `encoded.len() > MAX_ENVELOPE_BYTES` → `>=` | 283 / 0 | **gap** — and its two existing calls, both in `plugin_and_rpc_frames_use_the_same_24_mib_check`, sit at `+ 1` and at the one-key object `{"ok": true}`, so neither is anywhere near the boundary | none — measured, not fixed |
+| A broker→plugin message whose JSON is exactly the ceiling is queued — **the text of one `BrokerToPlugin`**, measured on a throwaway serialization whose bytes are then dropped; the copy that reaches the socket is a second `serde_json::to_string` at `crates/broker/src/ws.rs:150` | `encoded_plugin_send` (`crates/broker/src/lib.rs:268`): `encoded.len() > …::MAX_ENVELOPE_BYTES` → `>=` | 283 / 0 | **gap** — the two serializations produce identical bytes for the same value, so this is a duplicated allocation of up to 24 MiB, not a ceiling guarding the wrong quantity | none — measured, not fixed |
+| A websocket **message** from the plugin of exactly the ceiling is read — the payload after fragment reassembly, inbound only | `Limits::production` (`crates/broker/src/config.rs:47`): `max_message_bytes: MAX_ENVELOPE_BYTES` → `MAX_ENVELOPE_BYTES - 1` | 283 / 0 | **gap** | none — measured, not fixed |
+| A single websocket **frame** of exactly the ceiling is read — one fragment's payload, before reassembly, inbound only | `crates/broker/src/config.rs:46`: `max_frame_bytes: MAX_ENVELOPE_BYTES` → `MAX_ENVELOPE_BYTES - 1` | 283 / 0 | **gap** | none — measured, not fixed |
+| A frontend RPC frame declaring exactly the ceiling is decoded by the codec — **the body length carried in the 4-byte prefix, prefix excluded**; tokio-util compares the raw length field, `n > max_frame_len`, on the encode side as well as the decode side | `framed` (`crates/broker/src/rpc.rs:31`): `.max_frame_length(MAX_ENVELOPE_BYTES)` → `MAX_ENVELOPE_BYTES - 1` | 283 / 0 | **gap** — the same quantity `validate_body_length` bounds, in a second implementation | none — measured, not fixed |
+| `encode_frame` gives `CappedWriter` the whole ceiling rather than one byte less — **the serialized JSON body of one frame, prefix excluded**, so a frame at the ceiling is `4 + MAX_ENVELOPE_BYTES` bytes on the wire | `crates/protocol/src/rpc.rs:374`: `encode_frame_with_maximum(value, MAX_ENVELOPE_BYTES)` → `MAX_ENVELOPE_BYTES - 1` | 283 / 0 | **gap** — the supply point is unpinned even though the comparison it feeds is not | none — measured, not fixed |
+| A write that exactly fills the remaining cap is taken rather than refused — **the running byte count inside the streaming encoder**, the thirteenth site | `CappedWriter::write` (`crates/protocol/src/rpc.rs:426`): `buffer.len() > remaining` → `>=` | 282 / 1 | covered — `rpc::tests::streaming_encoder_aborts_at_cap_without_serializing_the_remaining_items`, whose `CappedWriter::new(8)` takes exactly 8 bytes and then refuses the 9th | — |
+| A test `Limits` set to exactly the production frame ceiling is accepted — **a configured limit, not a payload** | `Limits::checked` (`crates/broker/src/config.rs:73`): `max_frame_bytes > production.max_frame_bytes` → `>=` | 263 / 20 | covered — but incidentally: the 20 reds are every test that hands `Limits::production()` to `BrokerConfig::for_test`, not a test written about this ceiling, and they arrive as `.unwrap()` panics in test setup rather than as assertions. A fragile pin, too: 46 test call sites use `Limits::reduced_for_test()` and only a handful use `Limits::production()`, so the day the last of those moves this becomes a gap with nothing to announce it | — |
+| The same for the configured message ceiling | `crates/broker/src/config.rs:75`: `max_message_bytes > production.max_message_bytes` → `>=` | 263 / 20 | covered — the same 20, by the same mechanism, equally incidentally and equally fragile | — |
+
+**Eleven mutations: 8 gaps and 3 covered (8 + 3 = 11).** This eleven is not the
+other one: the table's rows are **7 comparisons + 4 supply points = 11**, whereas
+the *in-tree comparison* count of 11 keeps those 7, drops the 4 supply points,
+and adds the 4 comparisons measured in the section above — `deferred.rs`'s three
+guards and `validate_body_length` (**7 + 4 = 11**, a different four). Two sums
+that land on the same number by coincidence; read the label, not the digit.
+Scoped as the task was
+framed — the eight sites the sweep had never reached — it is **8 gaps and 0
+covered**; all three covered rows are sites the grep could not see, and all three
+were found by reading the code rather than by searching it. Every mutation above
+was applied to production code, built, measured, and restored from a
+byte-identical copy verified by `shasum`; this task's committed diff is this file
+and nothing else. Baseline before and after: **283 passed / 0 failed**.
+
+### No further disagreement — and the evidence for saying so
+
+**All eleven in-tree comparisons use `>`**, against the constant or against a
+value derived from it, so every one accepts exactly `MAX_ENVELOPE_BYTES` and
+refuses `+ 1`; the four supply points hand the constant over unmodified, and have
+no operator to disagree with. The five comparisons outside this repository agree
+too: tokio-util 0.7.19's `LengthDelimitedCodec` is `n > max_frame_len` in both
+its decoder (`src/codec/length_delimited.rs`, line 522) and its encoder (line
+608), and all three tungstenite comparisons tabulated above accept the ceiling
+exactly. **11 + 5 = 16 comparisons, and no two of them sit a byte apart.** After
+`8768b1c` closed the one-byte disagreement in `deferred.rs`, nothing here
+disagrees with anything else.
+
+The fifteen enforcement sites fall into five quantities, and the sum is the check
+on the enumeration:
+
+1. **The MCP response body** the server writes to its client — `content.rs:266`,
+   `:296`, `:311`. **3 sites, 3 comparisons.**
+2. **One broker↔plugin websocket message** — `broker/src/lib.rs:268` outbound,
+   `config.rs:47` (reassembled message) and `config.rs:46` (single frame)
+   inbound. **3 sites, 1 comparison** — the two inbound ones are supply points.
+3. **One broker↔frontend RPC frame body, 4-byte prefix excluded** —
+   `protocol/src/rpc.rs:374`, `:426`, `:489`, and `broker/src/rpc.rs:31`.
+   **4 sites, 2 comparisons** — `:374` and `broker/src/rpc.rs:31` are supply
+   points.
+4. **One deferred JSON object** — `deferred.rs`'s guards in `insert`, `decode`
+   and `decode_raw`. **3 sites, 3 comparisons.**
+5. **A configured limit rather than a payload** — `config.rs:73` and `:75`.
+   **2 sites, 2 comparisons.**
+
+**3 + 3 + 4 + 3 + 2 = 15 sites**, and **3 + 1 + 2 + 3 + 2 = 11 comparisons.**
+
+Three observations that are not disagreements but that a consolidation decision
+should carry:
+
+- **The plugin mirrors the constant and never reads it.**
+  `plugin/src/shared/limits.ts:11` exports `MAX_ENVELOPE_BYTES` with the same
+  value, and no production file under `plugin/src` imports it — only
+  `plugin/src/shared/limits.test.ts`, which asserts the number. The plugin
+  enforces no envelope ceiling of its own, so a plugin→broker message is bounded
+  only by the broker's inbound tungstenite limits, and a broker→plugin message
+  only by `encoded_plugin_send`. Raised, not fixed.
+- **`reject_oversize_frame` is public production API with no production caller.**
+  It is exported from `crates/tools`, and the only two calls in the tree are in
+  `tests/contracts/response_accounting.rs`. Whether it should be a guard or be
+  deleted is a decision, not a measurement.
+- **Nothing in the eight gaps is expensive to close.** Four of them
+  (`config.rs:46`, `:47`, `broker/src/rpc.rs:31`, `protocol/src/rpc.rs:374`) take
+  a length or a declared size rather than a real buffer. The rest need a real
+  24 MiB body, and the suite already builds one:
+  `the_wire_read_path_takes_a_ceiling_frame_and_consumes_exactly_it` resizes a
+  body to `MAX_ENVELOPE_BYTES` and frames it. The cost was evidently acceptable
+  once.
+
+Every test in the tree that touches this ceiling does so at `+ 1`
+(`plugin_and_rpc_frames_use_the_same_24_mib_check`,
+`production_config_is_fixed_loopback_and_test_limits_cannot_raise_ceilings`,
+`rpc_frames_are_length_prefixed_and_reject_oversize_before_body_read`) or well
+under it — except the four sites the section above already measured. That is the
+same class this record has found everywhere else: the refusal above the ceiling
+is what a test reaches for, and the acceptance *at* it is what nobody writes.
+
+Cited by test name rather than by line, deliberately: this section's own rule,
+200 lines above, keeps a number only where it points into production code,
+because a line into a test file does not say whether it means the `assert!` or
+the message five lines inside it.
 
 ## plugin shared/validation.ts and shared/result-validation.ts
 
@@ -906,6 +1190,13 @@ untested member of a group whose siblings were pinned.
 
 ## tests/policy
 
+> **Read this area as of `847d35a`.** Everywhere below that speaks of *two*
+> `instructs` implementations — the two mutation rows, the gate-evaluation table,
+> and the section that raises the disagreement — describes the tree as it was
+> when the sweep ran. Commit `28af10c` reconciled them into one. The measurements
+> stand as history; the present tense does not. See "Since fixed" at the end of
+> "Two implementations of `instructs` that disagreed — raised here, fixed since".
+
 The Scope row above says 8 refusal-only and 0 already paired, and re-running
 the plan's command confirms it: 8 names match, none of them also matches the
 accept regex. The row is correct and is also beside the point here, and the
@@ -1053,7 +1344,7 @@ Both are Task 4's wrong-reason class, and both are sharper here than they were
 there: in `tests/integration` the wrong reason produced a plausible-looking
 error; here it produces a *pass*.
 
-### Two implementations of `instructs` that disagree, reported not fixed
+### Two implementations of `instructs` that disagreed — raised here, fixed since
 
 `prompts.rs` and `read_only.rs` each define a private `instructs(haystack,
 phrase)`, and they exempt different negation prefixes. `prompts.rs` exempts
@@ -1091,6 +1382,27 @@ The general lesson, since it cost a review round: a positive control asserts a
 predicate *fires*, and the sample it fires on carries opinions. Choosing that
 sample from the region two implementations disagree about turns a control into
 a vote.
+
+**Since fixed.** Commit `28af10c` reconciled the disagreement toward the shorter
+list, and everything above this paragraph is now history. There is one
+`pub(crate) fn instructs` in `tests/policy/mod.rs`, used by both scans; neither
+`prompts.rs` nor `read_only.rs` keeps a private copy, and `read_only.rs` no
+longer exempts six. The surviving list is exactly three — `do not`, `never`,
+`without` — and it is pinned in **both** directions by
+`the_shared_instructs_exempts_exactly_three_negation_prefixes`, which asserts
+that those three are exempt *and* that `does not`, `no`, `not` and `cannot` are
+not. That second half is the point: these scans assert `!instructs(..)`, so every
+prefix added to the list makes the scan weaker rather than stricter, and `not` in
+particular is a suffix of `cannot`, `do not` and `does not`, so exempting it
+would swallow cases nobody chose to exempt. The policy binary moved 41 → **42 /
+0** with that test.
+
+This paragraph exists because the record described a defect this branch had
+already fixed, in the present tense — which is worse than never having raised it,
+since a reader goes looking for a bug that is gone and then has to work out
+whether the code or the record is lying. The sibling defect in `deferred.rs` got
+its "Since fixed" note and this one did not, purely because no task's brief owned
+the seam between them.
 
 ### The record's own citations, and the one that did not resolve
 

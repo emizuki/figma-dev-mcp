@@ -14,6 +14,16 @@ struct DeferredField {
     value: Box<RawValue>,
 }
 
+/// The bytes one field contributes to the encoded object: `"name":value`,
+/// plus the comma that precedes every field except the first.
+///
+/// `decode` writes those same bytes by hand; the test module asserts the two
+/// agree, because this function alone cannot enforce it.
+fn field_cost(name_len: usize, value_len: usize, is_first: bool) -> usize {
+    let separator = usize::from(!is_first);
+    name_len + 3 + value_len + separator
+}
+
 impl DeferredObject {
     pub(crate) fn new() -> Self {
         Self {
@@ -29,11 +39,10 @@ impl DeferredObject {
         if self.fields.iter().any(|field| field.name == name) {
             return Err(E::duplicate_field(name));
         }
-        let syntax_bytes = name.len().saturating_add(4);
+        let cost = field_cost(name.len(), value.get().len(), self.fields.is_empty());
         let next = self
             .encoded_bytes
-            .checked_add(syntax_bytes)
-            .and_then(|bytes| bytes.checked_add(value.get().len()))
+            .checked_add(cost)
             .ok_or_else(|| E::custom("deferred JSON length overflow"))?;
         if next > MAX_ENVELOPE_BYTES {
             return Err(E::custom(format_args!(
@@ -62,6 +71,11 @@ impl DeferredObject {
             encoded.extend_from_slice(field.value.get().as_bytes());
         }
         encoded.push(b'}');
+        debug_assert_eq!(
+            encoded.len(),
+            self.encoded_bytes,
+            "insert's estimate drifted from decode's encoding"
+        );
         if encoded.len() > MAX_ENVELOPE_BYTES {
             return Err(E::custom(format_args!(
                 "deferred JSON exceeds {MAX_ENVELOPE_BYTES} bytes"
@@ -82,4 +96,85 @@ where
         )));
     }
     serde_json::from_str(raw.get()).map_err(E::custom)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::value::RawValue;
+
+    fn raw(json: &str) -> Box<RawValue> {
+        RawValue::from_string(json.to_owned()).expect("valid JSON")
+    }
+
+    /// The estimate `insert` accumulates must equal the bytes `decode`
+    /// actually produces. This is the whole guarantee: `field_cost` removes
+    /// the duplicated arithmetic, but `decode` still writes its own byte
+    /// sequence by hand, so only an equality check catches drift between them.
+    #[test]
+    fn the_running_estimate_equals_the_bytes_decode_produces() {
+        const NAMES: [&str; 4] = ["a", "detail", "", "a_rather_longer_field_name"];
+        for count in 0..=4usize {
+            for value in ["1", "\"\"", "\"xyz\"", "{\"nested\":[1,2,3]}"] {
+                let mut object = DeferredObject::new();
+                // `.copied()` matters: `insert` takes `&'static str`, and
+                // `.iter()` alone yields `&&'static str`.
+                for name in NAMES.iter().copied().take(count) {
+                    object
+                        .insert::<serde_json::Error>(name, raw(value))
+                        .expect("within the ceiling");
+                }
+                let estimate = object.encoded_bytes;
+                let decoded: Box<RawValue> = object
+                    .decode::<Box<RawValue>, serde_json::Error>()
+                    .expect("decodes");
+                assert_eq!(
+                    estimate,
+                    decoded.get().len(),
+                    "estimate and actual disagree at {count} field(s) of value {value}"
+                );
+            }
+        }
+    }
+
+    /// Every other enforcement of this ceiling uses `>`, so exactly
+    /// `MAX_ENVELOPE_BYTES` is legal. Before the fix `insert` refused it.
+    #[test]
+    fn an_object_encoding_to_exactly_the_ceiling_is_accepted() {
+        // {"a":"<pad>"} is 8 bytes of syntax: 2 braces, 3 for the quoted name,
+        // 1 colon, 2 quotes around the value. Derived the same way through
+        // field_cost: 2 + (1 + 3 + (pad + 2) + 0) = pad + 8.
+        let padding = "x".repeat(MAX_ENVELOPE_BYTES - 8);
+        let mut object = DeferredObject::new();
+        object
+            .insert::<serde_json::Error>("a", raw(&format!("\"{padding}\"")))
+            .expect("exactly the ceiling is within the ceiling");
+        let decoded: Box<RawValue> = object
+            .decode::<Box<RawValue>, serde_json::Error>()
+            .expect("decodes at the ceiling");
+        assert_eq!(decoded.get().len(), MAX_ENVELOPE_BYTES);
+    }
+
+    /// `decode`'s ceiling check is unreachable through `insert`, which refuses
+    /// first. It is not unreachable: a directly constructed accumulator gets
+    /// there, and this pins that the guard still refuses when it does.
+    #[test]
+    fn decodes_ceiling_check_refuses_an_oversized_field_set() {
+        let oversized = "x".repeat(MAX_ENVELOPE_BYTES + 2);
+        let value = raw(&format!("\"{oversized}\""));
+        // Self-consistent, so the standing `debug_assert_eq!` in `decode`
+        // holds and only the ceiling check is what refuses.
+        let encoded_bytes = 2 + field_cost("a".len(), value.get().len(), true);
+        let object = DeferredObject {
+            fields: vec![DeferredField { name: "a", value }],
+            encoded_bytes,
+        };
+        let error = object
+            .decode::<Box<RawValue>, serde_json::Error>()
+            .expect_err("the guard must refuse an oversized field set");
+        assert!(
+            error.to_string().contains("deferred JSON exceeds"),
+            "refused for the wrong reason: {error}"
+        );
+    }
 }
